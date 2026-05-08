@@ -28,6 +28,7 @@ interface ActiveSession {
   presenceObserver?: { stop?: () => void };
   syncStatusObserver?: { cancel?: () => void };
   subscriptionHandles: Map<string, { cancel: () => void }>;
+  presenceCoalesceTimer?: NodeJS.Timeout;
 }
 
 const SYNC_STATUS_HANDLE_ID = '__sync_status';
@@ -151,6 +152,7 @@ export class DittoManager {
     const s = this.session;
     if (!s) { return; }
     this.session = null;
+    if (s.presenceCoalesceTimer) { clearTimeout(s.presenceCoalesceTimer); }
     try {
       for (const h of s.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
       try { s.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
@@ -210,10 +212,10 @@ export class DittoManager {
   // ─── private ─────────────────────────────────────────────────
 
   private attachPresenceObserver(ditto: Ditto) {
-    let coalesceTimer: NodeJS.Timeout | null = null;
     let pending: PresenceGraph | null = null;
     const flush = () => {
-      coalesceTimer = null;
+      if (!this.session) { return; }
+      this.session.presenceCoalesceTimer = undefined;
       if (pending) {
         this.latestPresence = pending;
         pending = null;
@@ -222,7 +224,9 @@ export class DittoManager {
     };
     const observer = ditto.presence.observe((graph: PresenceGraph) => {
       pending = graph;
-      if (!coalesceTimer) { coalesceTimer = setTimeout(flush, 250); }
+      if (this.session && !this.session.presenceCoalesceTimer) {
+        this.session.presenceCoalesceTimer = setTimeout(flush, 250);
+      }
     });
     if (this.session) { this.session.presenceObserver = observer as any; }
   }
@@ -239,6 +243,7 @@ export class DittoManager {
     }
     try {
       const obs = ditto.store.registerObserver(query, (result: any) => {
+        if (!this.session) { return; }
         const next = new Map<string, SyncStatusRow>();
         for (const item of result.items) {
           const row = parseSyncStatusRow(item.value);
