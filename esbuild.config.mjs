@@ -18,6 +18,21 @@ const extensionCtx = await esbuild.context({
   logLevel: 'info'
 });
 
+const webviewCtx = await esbuild.context({
+  entryPoints: {
+    editor: 'webview-ui/editor/main.ts',
+    subscription: 'webview-ui/subscription/main.ts',
+    peers: 'webview-ui/peers/main.ts'
+  },
+  bundle: true,
+  outdir: 'dist/webview-ui',
+  platform: 'browser',
+  target: 'es2022',
+  format: 'iife',
+  sourcemap: true,
+  logLevel: 'info'
+});
+
 // Mark dist/ as CJS so Node's ESM loader doesn't reject the bundle
 // (root package.json is "type": "module", but the extension bundle is CJS).
 const distDir = path.join(__dirname, 'dist');
@@ -25,10 +40,10 @@ fs.mkdirSync(distDir, { recursive: true });
 fs.writeFileSync(path.join(distDir, 'package.json'), '{"type":"commonjs"}\n');
 
 if (watch) {
-  await extensionCtx.watch();
+  await Promise.all([extensionCtx.watch(), webviewCtx.watch()]);
   console.log('[esbuild] watching…');
 } else {
-  await extensionCtx.rebuild();
-  await extensionCtx.dispose();
+  await Promise.all([extensionCtx.rebuild(), webviewCtx.rebuild()]);
+  await Promise.all([extensionCtx.dispose(), webviewCtx.dispose()]);
   console.log('[esbuild] build finished.');
 }

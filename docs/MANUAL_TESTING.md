@@ -49,3 +49,11 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 2. Click the Ditto icon in the activity bar of the Extension Development Host.
 
 **Expected:** The Databases view appears with no entries. Clicking the `＋` button shows a transient info message about "Register Database — not implemented yet".
+
+### T3 · Open the Database Editor panel (UI placeholder)
+
+**Steps:**
+1. Press `F5`.
+2. Open the Ditto sidebar; click the `＋` button in the Databases title bar.
+
+**Expected:** A new editor tab opens with title "Register Database" containing the text "Database editor — UI under construction." (UI replaced in T4.)

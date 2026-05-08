@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ConfigStore } from './storage/ConfigStore.js';
 import { SecretStore } from './storage/SecretStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
+import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
 
 let output: vscode.OutputChannel;
 
@@ -19,10 +20,11 @@ export function activate(context: vscode.ExtensionContext) {
   // placeholder commands (real impls in later tasks)
   context.subscriptions.push(
     vscode.commands.registerCommand('dittoVsce.registerDatabase', () => {
-      vscode.window.showInformationMessage('Register Database — not implemented yet (Task 7).');
+      DatabaseEditorPanel.show(context, configStore, secretStore);
     }),
-    vscode.commands.registerCommand('dittoVsce.editDatabase', () => {
-      vscode.window.showInformationMessage('Edit Database — not implemented yet (Task 7).');
+    vscode.commands.registerCommand('dittoVsce.editDatabase', (node) => {
+      if (node?.kind !== 'database') { return; }
+      DatabaseEditorPanel.show(context, configStore, secretStore, node.config);
     }),
     vscode.commands.registerCommand('dittoVsce.deleteDatabase', async (node) => {
       if (node?.kind !== 'database') { return; }
