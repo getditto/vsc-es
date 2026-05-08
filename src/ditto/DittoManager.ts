@@ -1,12 +1,24 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { Ditto, DittoConfig, Authenticator } from '@dittolive/ditto';
-import type { StoredDittoConfig, SecretSet, PeerSnapshot, RemotePeer, StoredSubscription } from '../models/DittoConfig.js';
+import {
+  Ditto,
+  DittoConfig,
+  Authenticator,
+  type PresenceGraph,
+} from '@dittolive/ditto';
+import type {
+  StoredDittoConfig,
+  SecretSet,
+  StoredSubscription,
+  PeerListSnapshot,
+  LocalPeerInfo,
+} from '../models/DittoConfig.js';
 import type { DatabaseStatus } from '../tree/DatabaseTreeProvider.js';
+import { mergePeerList, parseSyncStatusRow, type SyncStatusRow } from './peer-info.js';
 
 type StatusListener = (status: DatabaseStatus, configId: string | null) => void;
-type PresenceListener = (snapshot: PeerSnapshot) => void;
+type PresenceListener = (snapshot: PeerListSnapshot) => void;
 type SyncListener = (sync: SyncState, configId: string | null) => void;
 export type SyncState = 'active' | 'idle';
 
@@ -14,8 +26,11 @@ interface ActiveSession {
   configId: string;
   ditto: Ditto;
   presenceObserver?: { stop?: () => void };
+  syncStatusObserver?: { cancel?: () => void };
   subscriptionHandles: Map<string, { cancel: () => void }>;
 }
+
+const SYNC_STATUS_HANDLE_ID = '__sync_status';
 
 export class DittoManager {
   private session: ActiveSession | null = null;
@@ -24,7 +39,12 @@ export class DittoManager {
   private statusListeners = new Set<StatusListener>();
   private presenceListeners = new Set<PresenceListener>();
   private syncListeners = new Set<SyncListener>();
-  private latestSnapshot: PeerSnapshot = { local: null, remote: [] };
+
+  private latestPresence: PresenceGraph | null = null;
+  private syncStatusByPeerKey = new Map<string, SyncStatusRow>();
+  private localPeerInfo: LocalPeerInfo | null = null;
+  private previousOrder: string[] = [];
+  private latestSnapshot: PeerListSnapshot = { local: null, remote: [] };
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -38,7 +58,7 @@ export class DittoManager {
   }
 
   getActiveConfigId(): string | null { return this.session?.configId ?? null; }
-  getLatestSnapshot(): PeerSnapshot { return this.latestSnapshot; }
+  getLatestSnapshot(): PeerListSnapshot { return this.latestSnapshot; }
   getSyncState(): SyncState { return this.syncState; }
 
   onStatusChange(l: StatusListener): vscode.Disposable {
@@ -56,7 +76,11 @@ export class DittoManager {
     return new vscode.Disposable(() => this.syncListeners.delete(l));
   }
 
-  async connect(config: StoredDittoConfig, secrets: SecretSet, initialSubs: StoredSubscription[] = []): Promise<void> {
+  async connect(
+    config: StoredDittoConfig,
+    secrets: SecretSet,
+    initialSubs: StoredSubscription[] = []
+  ): Promise<void> {
     if (this.session) { await this.disconnect(); }
     this.setStatus('activating', config.id);
     try {
@@ -72,7 +96,7 @@ export class DittoManager {
       );
       const ditto = await Ditto.open(dittoCfg);
 
-      ditto.updateTransportConfig((c: any) => {
+      ditto.updateTransportConfig((c) => {
         c.peerToPeer.bluetoothLE.isEnabled = false;
         c.peerToPeer.awdl.isEnabled = false;
         c.peerToPeer.lan.isEnabled = true;
@@ -81,7 +105,7 @@ export class DittoManager {
       });
 
       if (config.mode === 'server' && ditto.auth.loginSupported) {
-        await ditto.auth.setExpirationHandler(async (instance: any) => {
+        await ditto.auth.setExpirationHandler(async (instance) => {
           if (instance.auth.loginSupported) {
             await instance.auth.login(secrets.token, Authenticator.DEVELOPMENT_PROVIDER);
           }
@@ -92,8 +116,15 @@ export class DittoManager {
 
       ditto.sync.start();
 
-      this.session = { configId: config.id, ditto, subscriptionHandles: new Map() };
+      this.session = {
+        configId: config.id,
+        ditto,
+        subscriptionHandles: new Map(),
+      };
+
       this.attachPresenceObserver(ditto);
+      this.attachSyncStatusObserver(ditto);
+      await this.loadLocalPeerInfo(ditto);
 
       // Re-register persisted subscriptions
       for (const sub of initialSubs) {
@@ -107,6 +138,7 @@ export class DittoManager {
 
       this.setSyncState('active', config.id);
       this.setStatus('active', config.id);
+      this.firePresence();
       this.output.appendLine(`Connected to "${config.name}".`);
     } catch (err) {
       this.output.appendLine(`Connect failed: ${err instanceof Error ? err.stack : String(err)}`);
@@ -121,12 +153,17 @@ export class DittoManager {
     this.session = null;
     try {
       for (const h of s.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
+      try { s.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
       try { s.presenceObserver?.stop?.(); } catch { /* ignore */ }
       try { s.ditto.sync.stop(); } catch { /* ignore */ }
       try { await s.ditto.close(); } catch { /* ignore */ }
     } finally {
+      this.latestPresence = null;
+      this.syncStatusByPeerKey.clear();
+      this.localPeerInfo = null;
+      this.previousOrder = [];
       this.latestSnapshot = { local: null, remote: [] };
-      this.firePresence(this.latestSnapshot);
+      this.firePresence();
       this.setSyncState('idle', null);
       this.setStatus('idle', null);
       this.output.appendLine('Disconnected.');
@@ -160,29 +197,95 @@ export class DittoManager {
     this.session.subscriptionHandles.delete(subId);
   }
 
+  /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel. */
+  async executeQuery(query: string): Promise<{ rows: Record<string, unknown>[]; durationMs: number }> {
+    if (!this.session) { throw new Error('No active database.'); }
+    const start = performance.now();
+    const result = await this.session.ditto.store.execute(query);
+    const rows = (result as any).items.map((i: any) => i.value as Record<string, unknown>);
+    const durationMs = Math.round(performance.now() - start);
+    return { rows, durationMs };
+  }
+
   // ─── private ─────────────────────────────────────────────────
+
   private attachPresenceObserver(ditto: Ditto) {
-    const presence: any = (ditto as any).presence;
-    if (!presence?.observe) {
-      this.output.appendLine('Presence API not available on this SDK.');
-      return;
-    }
     let coalesceTimer: NodeJS.Timeout | null = null;
-    let pending: any = null;
+    let pending: PresenceGraph | null = null;
     const flush = () => {
       coalesceTimer = null;
-      if (pending) { this.firePresence(toSnapshot(pending)); pending = null; }
+      if (pending) {
+        this.latestPresence = pending;
+        pending = null;
+        this.firePresence();
+      }
     };
-    const observer = presence.observe((graph: any) => {
+    const observer = ditto.presence.observe((graph: PresenceGraph) => {
       pending = graph;
       if (!coalesceTimer) { coalesceTimer = setTimeout(flush, 250); }
     });
-    if (this.session) { this.session.presenceObserver = observer; }
+    if (this.session) { this.session.presenceObserver = observer as any; }
   }
 
-  private firePresence(snapshot: PeerSnapshot) {
-    this.latestSnapshot = snapshot;
-    for (const l of this.presenceListeners) { l(snapshot); }
+  private attachSyncStatusObserver(ditto: Ditto) {
+    if (!this.session) { return; }
+    const query = 'SELECT * FROM __sync_status';
+    try {
+      const subHandle = ditto.sync.registerSubscription(query);
+      this.session.subscriptionHandles.set(SYNC_STATUS_HANDLE_ID, subHandle);
+    } catch (err) {
+      this.output.appendLine(`__sync_status subscription failed: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    try {
+      const obs = ditto.store.registerObserver(query, (result: any) => {
+        const next = new Map<string, SyncStatusRow>();
+        for (const item of result.items) {
+          const row = parseSyncStatusRow(item.value);
+          if (row) { next.set(row._id, row); }
+        }
+        this.syncStatusByPeerKey = next;
+        this.firePresence();
+      });
+      this.session.syncStatusObserver = obs as any;
+    } catch (err) {
+      this.output.appendLine(`__sync_status observer failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private async loadLocalPeerInfo(ditto: Ditto) {
+    try {
+      const result = await ditto.store.execute(
+        'SELECT ditto_sdk_language, ditto_sdk_platform, ditto_sdk_version FROM __small_peer_info'
+      );
+      const items: any[] = (result as any).items ?? [];
+      const first = items[0]?.value ?? {};
+      this.localPeerInfo = {
+        deviceName: 'VS Code',
+        sdkLanguage: typeof first.ditto_sdk_language === 'string' ? first.ditto_sdk_language : '',
+        sdkPlatform: typeof first.ditto_sdk_platform === 'string' ? first.ditto_sdk_platform : '',
+        sdkVersion: typeof first.ditto_sdk_version === 'string' ? first.ditto_sdk_version : '',
+      };
+    } catch (err) {
+      this.output.appendLine(`__small_peer_info query failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.localPeerInfo = null;
+    }
+  }
+
+  private firePresence() {
+    if (this.latestPresence) {
+      const snap = mergePeerList(
+        this.latestPresence as any,
+        this.syncStatusByPeerKey,
+        this.localPeerInfo,
+        this.previousOrder,
+      );
+      this.previousOrder = snap.remote.map(p => p.id);
+      this.latestSnapshot = snap;
+    } else {
+      this.latestSnapshot = { local: this.localPeerInfo, remote: [] };
+    }
+    for (const l of this.presenceListeners) { l(this.latestSnapshot); }
   }
 
   private setStatus(s: DatabaseStatus, configId: string | null) {
@@ -195,31 +298,4 @@ export class DittoManager {
     this.syncState = s;
     for (const l of this.syncListeners) { l(s, configId); }
   }
-}
-
-// ─── presence-graph adapter ────────────────────────────────────
-// The exact shape from `ditto.presence.observe(...)` is verified during
-// integration. This adapter narrows a best-guess shape into our
-// PeerSnapshot type, falling back gracefully when fields are missing.
-function toSnapshot(graph: any): PeerSnapshot {
-  const local = graph?.localPeer ? {
-    deviceName: graph.localPeer.deviceName ?? 'unknown',
-    sdkLanguage: graph.localPeer.sdkLanguage ?? 'JS',
-    sdkPlatform: graph.localPeer.platform ?? 'Node',
-    sdkVersion: graph.localPeer.sdkVersion ?? 'unknown'
-  } : null;
-
-  const remoteRaw: any[] = Array.isArray(graph?.remotePeers) ? graph.remotePeers : [];
-  const remote: RemotePeer[] = remoteRaw.map(r => ({
-    id: String(r.peerKey ?? r.id ?? r._id ?? 'unknown'),
-    deviceName: r.deviceName,
-    sdkVersion: r.sdkVersion,
-    os: r.os ?? r.platform ?? 'unknown',
-    connections: Array.isArray(r.connections)
-      ? r.connections.map((c: any) => ({ type: (c.type ?? c.kind ?? 'unknown'), address: c.address }))
-      : [],
-    lastUpdate: Date.now()
-  }));
-
-  return { local, remote };
 }

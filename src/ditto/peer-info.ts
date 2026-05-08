@@ -1,9 +1,9 @@
 import type {
   ConnectionInfo,
-  ConnectionTypeV2,
+  ConnectionType,
   PeerInfo,
   PeerListSnapshot,
-  PeerOSv2,
+  PeerOS,
   SyncSessionStatus,
   LocalPeerInfo,
 } from '../models/DittoConfig.js';
@@ -55,9 +55,9 @@ export function parseSyncStatusRow(raw: unknown): SyncStatusRow | null {
 interface PresencePeerLike {
   peerKey: string;
   deviceName: string;
-  os?: PeerOSv2;
+  os?: PeerOS;
   dittoSdkVersion?: string;
-  connections: Array<{ id: string; connectionType: ConnectionTypeV2; peer1: string; peer2: string }>;
+  connections: Array<{ id: string; connectionType: ConnectionType; peer1: string; peer2: string }>;
   peerMetadata: Record<string, unknown>;
   identityServiceMetadata: Record<string, unknown>;
   isConnectedToDittoServer: boolean;
@@ -131,7 +131,7 @@ export function mergePeerList(
 
 export type DominantType = 'cloud' | 'WebSocket' | 'AccessPoint' | 'P2PWiFi' | 'Bluetooth' | 'unknown';
 
-const TYPE_PRIORITY: ConnectionTypeV2[] = ['WebSocket', 'AccessPoint', 'P2PWiFi', 'Bluetooth'];
+const TYPE_PRIORITY: ConnectionType[] = ['WebSocket', 'AccessPoint', 'P2PWiFi', 'Bluetooth'];
 
 export function dominantConnectionType(peer: PeerInfo): DominantType {
   if (peer.isDittoServer) { return 'cloud'; }

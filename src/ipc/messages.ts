@@ -1,4 +1,8 @@
-import type { StoredDittoConfig, SecretSet, StoredSubscription, PeerSnapshot } from '../models/DittoConfig.js';
+import type {
+  StoredDittoConfig,
+  SecretSet,
+  PeerListSnapshot,
+} from '../models/DittoConfig.js';
 
 // ─── Database editor panel ─────────────────────────────────────
 export type EditorIn =
@@ -22,4 +26,4 @@ export type PeerIn =
   | { type: 'peer.toggleSync' };
 
 export type PeerOut =
-  | { type: 'peer.state'; snapshot: PeerSnapshot; sync: 'active' | 'idle' };
+  | { type: 'peer.state'; snapshot: PeerListSnapshot; sync: 'active' | 'idle' };
