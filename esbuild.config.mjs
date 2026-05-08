@@ -39,6 +39,13 @@ const distDir = path.join(__dirname, 'dist');
 fs.mkdirSync(distDir, { recursive: true });
 fs.writeFileSync(path.join(distDir, 'package.json'), '{"type":"commonjs"}\n');
 
+// Copy @vscode/codicons assets to dist/webview-ui/ for webview consumption.
+const codiconSrc = path.join(__dirname, 'node_modules', '@vscode', 'codicons', 'dist');
+const webviewUiDir = path.join(distDir, 'webview-ui');
+fs.mkdirSync(webviewUiDir, { recursive: true });
+fs.copyFileSync(path.join(codiconSrc, 'codicon.css'), path.join(webviewUiDir, 'codicon.css'));
+fs.copyFileSync(path.join(codiconSrc, 'codicon.ttf'), path.join(webviewUiDir, 'codicon.ttf'));
+
 if (watch) {
   await Promise.all([extensionCtx.watch(), webviewCtx.watch()]);
   console.log('[esbuild] watching…');
