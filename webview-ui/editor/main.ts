@@ -1,3 +1,7 @@
-// Stub — real UI implemented in Task 8.
+import './editor-element.js';
+
 const root = document.getElementById('root');
-if (root) { root.textContent = 'Database editor — UI under construction.'; }
+if (root) {
+  const el = document.createElement('ditto-database-editor');
+  root.appendChild(el);
+}

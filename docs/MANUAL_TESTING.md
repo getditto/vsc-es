@@ -57,3 +57,29 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 2. Open the Ditto sidebar; click the `＋` button in the Databases title bar.
 
 **Expected:** A new editor tab opens with title "Register Database" containing the text "Database editor — UI under construction." (UI replaced in T4.)
+
+### T4 · Register a database
+
+**Pre-conditions:** none.
+
+**Steps:**
+1. Press `F5`.
+2. Click `＋` in the Databases view title bar.
+3. With Server selected, fill in `Name` = "test-cloud", `Database ID` = your real Ditto app ID, `Token` = your playground token, `Auth URL` = your auth URL, `Websocket URL` = your websocket URL.
+4. Click Save.
+
+**Expected:**
+- Panel closes; toast "Saved database 'test-cloud'." appears.
+- Databases view shows a new row: `○ test-cloud (Server, idle)`.
+
+**Edit flow:**
+5. Right-click the row → "Edit Configuration".
+6. The editor reopens prefilled. Change the name to "test-cloud-renamed" → Save.
+7. The row updates to `○ test-cloud-renamed`.
+
+**Delete flow:**
+8. Right-click the row → "Delete" → confirm.
+9. The row disappears.
+
+**Small Peers Only mode:**
+10. Repeat with Small Peers Only — confirm only the Optional Shared Secret Key section is visible (no Auth/Websocket URL fields).
