@@ -69,6 +69,11 @@
         "command": "dittoVsce.deleteSubscription",
         "title": "Delete Subscription",
         "icon": "$(trash)"
+      },
+      {
+        "command": "dittoVsce.editSubscription",
+        "title": "Edit Subscription",
+        "icon": "$(edit)"
       }
     ],
     "menus": {
@@ -109,6 +114,11 @@
           "command": "dittoVsce.newSubscription",
           "when": "view == dittoDatabases && viewItem == subscriptionsParent",
           "group": "inline"
+        },
+        {
+          "command": "dittoVsce.editSubscription",
+          "when": "view == dittoDatabases && viewItem == subscription",
+          "group": "1@0"
         },
         {
           "command": "dittoVsce.deleteSubscription",

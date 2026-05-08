@@ -5,6 +5,7 @@ import { SubscriptionStore } from './storage/SubscriptionStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
 import { PeerListingPanel } from './panels/PeerListingPanel.js';
+import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 
 let output: vscode.OutputChannel;
@@ -76,8 +77,19 @@ export function activate(context: vscode.ExtensionContext) {
       if (!databaseId) { return; }
       PeerListingPanel.show(context, manager, configStore, databaseId);
     }),
-    vscode.commands.registerCommand('dittoVsce.newSubscription', () => {
-      vscode.window.showInformationMessage('New Subscription — not implemented yet (Task 14).');
+    vscode.commands.registerCommand('dittoVsce.newSubscription', (node) => {
+      const databaseId = node?.kind === 'subscriptionsParent'
+        ? node.databaseId
+        : manager.getActiveConfigId();
+      if (!databaseId) {
+        vscode.window.showWarningMessage('Connect to a database first.');
+        return;
+      }
+      SubscriptionEditorPanel.show(context, subscriptionStore, manager, databaseId);
+    }),
+    vscode.commands.registerCommand('dittoVsce.editSubscription', (node) => {
+      if (node?.kind !== 'subscription') { return; }
+      SubscriptionEditorPanel.show(context, subscriptionStore, manager, node.databaseId, node.sub);
     })
   );
 
