@@ -125,3 +125,24 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 
 **Presence Graph tab:**
 5. Click `Presence Graph` segment. See the "Coming soon" placeholder.
+
+### T7 · Add, edit, and delete subscriptions
+
+**Pre-conditions:** A database connected (T5).
+
+**Add:**
+1. Hover over `Subscriptions` in the tree; click the `＋` button.
+2. Enter Name = "tasks-all", Query = `SELECT * FROM tasks`. Click Save.
+
+**Expected:**
+- Toast "Saved subscription 'tasks-all'." appears.
+- Tree shows `tasks-all   SELECT * FROM tasks` as a leaf under `Subscriptions`.
+
+**Edit:**
+3. Right-click the leaf → "Edit Subscription".
+4. Change Name to "tasks-renamed". Save.
+5. Tree leaf updates.
+
+**Delete:**
+6. Right-click → "Delete Subscription" → confirm.
+7. Leaf disappears.

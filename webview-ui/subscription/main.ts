@@ -1,3 +1,7 @@
-// Stub — real UI implemented in Task 15.
+import './sub-element.js';
+
 const root = document.getElementById('root');
-if (root) { root.textContent = 'Subscription editor — UI under construction.'; }
+if (root) {
+  const el = document.createElement('ditto-subscription-editor');
+  root.appendChild(el);
+}
