@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Ditto, DittoConfig, Authenticator } from '@dittolive/ditto';
-import type { StoredDittoConfig, SecretSet, PeerSnapshot, RemotePeer } from '../models/DittoConfig.js';
+import type { StoredDittoConfig, SecretSet, PeerSnapshot, RemotePeer, StoredSubscription } from '../models/DittoConfig.js';
 import type { DatabaseStatus } from '../tree/DatabaseTreeProvider.js';
 
 type StatusListener = (status: DatabaseStatus, configId: string | null) => void;
@@ -56,7 +56,7 @@ export class DittoManager {
     return new vscode.Disposable(() => this.syncListeners.delete(l));
   }
 
-  async connect(config: StoredDittoConfig, secrets: SecretSet): Promise<void> {
+  async connect(config: StoredDittoConfig, secrets: SecretSet, initialSubs: StoredSubscription[] = []): Promise<void> {
     if (this.session) { await this.disconnect(); }
     this.setStatus('activating', config.id);
     try {
@@ -94,6 +94,16 @@ export class DittoManager {
 
       this.session = { configId: config.id, ditto, subscriptionHandles: new Map() };
       this.attachPresenceObserver(ditto);
+
+      // Re-register persisted subscriptions
+      for (const sub of initialSubs) {
+        try {
+          const handle = ditto.sync.registerSubscription(sub.query);
+          this.session.subscriptionHandles.set(sub.id, handle);
+        } catch (err) {
+          this.output.appendLine(`Failed to register subscription "${sub.name}": ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
 
       this.setSyncState('active', config.id);
       this.setStatus('active', config.id);

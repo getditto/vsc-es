@@ -146,3 +146,17 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 **Delete:**
 6. Right-click → "Delete Subscription" → confirm.
 7. Leaf disappears.
+
+### T8 · Subscriptions persist across reconnect
+
+**Pre-conditions:** A database connected (T5) with at least one subscription saved (T7).
+
+**Steps:**
+1. Right-click the active database → "Disconnect".
+2. Right-click again → "Connect".
+
+**Expected:**
+- Status dot transitions through `◐` to `●`.
+- The subscription leaves remain visible after reconnect.
+- Output panel does not show any "Failed to register subscription" messages.
+- (Optional) If you have another Ditto peer (your SwiftUI app) inserting into the subscribed collection, verify the data syncs into the VS Code Ditto instance — there's no inline collection viewer in the POC, but you can confirm via the presence observer activity in Output if your SDK build emits that level of logging at `debug` log level.

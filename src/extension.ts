@@ -49,8 +49,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dittoVsce.connect', async (node) => {
       if (node?.kind !== 'database') { return; }
       const secrets = await secretStore.read(node.config.id);
+      const initialSubs = subscriptionStore.list(node.config.id);
       try {
-        await manager.connect(node.config, secrets);
+        await manager.connect(node.config, secrets, initialSubs);
       } catch (err) {
         vscode.window.showErrorMessage(`Connect failed: ${err instanceof Error ? err.message : String(err)}`);
       }
