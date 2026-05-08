@@ -18,6 +18,12 @@ const extensionCtx = await esbuild.context({
   logLevel: 'info'
 });
 
+// Mark dist/ as CJS so Node's ESM loader doesn't reject the bundle
+// (root package.json is "type": "module", but the extension bundle is CJS).
+const distDir = path.join(__dirname, 'dist');
+fs.mkdirSync(distDir, { recursive: true });
+fs.writeFileSync(path.join(distDir, 'package.json'), '{"type":"commonjs"}\n');
+
 if (watch) {
   await extensionCtx.watch();
   console.log('[esbuild] watching…');
