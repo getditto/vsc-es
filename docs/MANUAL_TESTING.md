@@ -160,3 +160,31 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 - The subscription leaves remain visible after reconnect.
 - Output panel does not show any "Failed to register subscription" messages.
 - (Optional) If you have another Ditto peer (your SwiftUI app) inserting into the subscribed collection, verify the data syncs into the VS Code Ditto instance — there's no inline collection viewer in the POC, but you can confirm via the presence observer activity in Output if your SDK build emits that level of logging at `debug` log level.
+
+## Troubleshooting
+
+### The Output panel shows `SPIKE: failed: …`
+
+The `@dittolive/ditto` native binary couldn't load. Check:
+- `node --version` is ≥ 20.
+- `ls node_modules/@dittolive/ditto/dist/*.node` lists a binary matching your platform/arch (e.g. `ditto-darwin-arm64.node` on Apple Silicon).
+- `npm install` ran without errors.
+
+### Connect transitions `○` → `◐` → `⊗` (error)
+
+Open the Output panel. The error log shows the failing call. Common causes:
+- Invalid token (expired or wrong) — re-issue from https://portal.ditto.live.
+- Wrong Auth URL or Websocket URL.
+- No network connectivity.
+
+### Peer Listing shows "No sync status available"
+
+Cause: no Ditto peers are reachable. Either no other peers exist on your LAN / Cloud account, or the SDK's presence observer hasn't yet emitted a snapshot. Wait ~10 seconds, then check.
+
+### Tree view appears empty even though a database was registered
+
+A possible globalState key collision. Open the Command Palette → "Developer: Reload Window" in the Extension Development Host. If still empty, run "Help → Toggle Developer Tools" and inspect `Storage → Local Storage` for the `dittoConfigs.v1` key.
+
+### Reset everything
+
+To wipe stored configs and secrets during development, open the Extension Development Host's Command Palette → "Developer: Reset Extension Host". This clears `globalState` and `SecretStorage` for the dev profile.

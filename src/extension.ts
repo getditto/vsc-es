@@ -96,6 +96,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push({ dispose: () => manager.disconnect() });
   output.appendLine('Ditto Edge Studio extension activated.');
+
+  process.on('uncaughtException', (err) => {
+    output.appendLine(`UNCAUGHT EXCEPTION: ${err.stack ?? err.message}`);
+  });
+  process.on('unhandledRejection', (reason) => {
+    output.appendLine(`UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : String(reason)}`);
+  });
 }
 
 export function deactivate() {
