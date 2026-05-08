@@ -51,6 +51,7 @@ export class PeerListingPanel {
     this.panel.webview.onDidReceiveMessage((msg: PeerIn) => this.handle(msg), undefined, this.disposables);
     this.disposables.push(this.manager.onPresence(() => this.pushState()));
     this.disposables.push(this.manager.onStatusChange(() => this.pushState()));
+    this.disposables.push(this.manager.onSyncChange(() => this.pushState()));
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 
     setTimeout(() => this.pushState(), 50);
@@ -67,7 +68,7 @@ export class PeerListingPanel {
     this.post({
       type: 'peer.state',
       snapshot: active ? this.manager.getLatestSnapshot() : { local: null, remote: [] },
-      sync: active ? 'active' : 'idle'
+      sync: active ? this.manager.getSyncState() : 'idle'
     });
   }
 
@@ -75,8 +76,8 @@ export class PeerListingPanel {
 
   private async handle(msg: PeerIn) {
     if (msg.type === 'peer.toggleSync') {
-      const next = await this.manager.toggleSync();
-      this.post({ type: 'peer.state', snapshot: this.manager.getLatestSnapshot(), sync: next });
+      await this.manager.toggleSync();
+      // pushState fires automatically via onSyncChange listener.
     }
   }
 

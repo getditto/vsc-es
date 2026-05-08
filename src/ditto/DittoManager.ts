@@ -7,6 +7,8 @@ import type { DatabaseStatus } from '../tree/DatabaseTreeProvider.js';
 
 type StatusListener = (status: DatabaseStatus, configId: string | null) => void;
 type PresenceListener = (snapshot: PeerSnapshot) => void;
+type SyncListener = (sync: SyncState, configId: string | null) => void;
+export type SyncState = 'active' | 'idle';
 
 interface ActiveSession {
   configId: string;
@@ -18,8 +20,10 @@ interface ActiveSession {
 export class DittoManager {
   private session: ActiveSession | null = null;
   private status: DatabaseStatus = 'idle';
+  private syncState: SyncState = 'idle';
   private statusListeners = new Set<StatusListener>();
   private presenceListeners = new Set<PresenceListener>();
+  private syncListeners = new Set<SyncListener>();
   private latestSnapshot: PeerSnapshot = { local: null, remote: [] };
 
   constructor(
@@ -35,6 +39,7 @@ export class DittoManager {
 
   getActiveConfigId(): string | null { return this.session?.configId ?? null; }
   getLatestSnapshot(): PeerSnapshot { return this.latestSnapshot; }
+  getSyncState(): SyncState { return this.syncState; }
 
   onStatusChange(l: StatusListener): vscode.Disposable {
     this.statusListeners.add(l);
@@ -44,6 +49,11 @@ export class DittoManager {
   onPresence(l: PresenceListener): vscode.Disposable {
     this.presenceListeners.add(l);
     return new vscode.Disposable(() => this.presenceListeners.delete(l));
+  }
+
+  onSyncChange(l: SyncListener): vscode.Disposable {
+    this.syncListeners.add(l);
+    return new vscode.Disposable(() => this.syncListeners.delete(l));
   }
 
   async connect(config: StoredDittoConfig, secrets: SecretSet): Promise<void> {
@@ -85,6 +95,7 @@ export class DittoManager {
       this.session = { configId: config.id, ditto, subscriptionHandles: new Map() };
       this.attachPresenceObserver(ditto);
 
+      this.setSyncState('active', config.id);
       this.setStatus('active', config.id);
       this.output.appendLine(`Connected to "${config.name}".`);
     } catch (err) {
@@ -106,17 +117,22 @@ export class DittoManager {
     } finally {
       this.latestSnapshot = { local: null, remote: [] };
       this.firePresence(this.latestSnapshot);
+      this.setSyncState('idle', null);
       this.setStatus('idle', null);
       this.output.appendLine('Disconnected.');
     }
   }
 
-  async toggleSync(): Promise<'active' | 'idle'> {
+  async toggleSync(): Promise<SyncState> {
     if (!this.session) { return 'idle'; }
     const ditto = this.session.ditto;
-    const wasActive = (ditto.sync as any).isActive ?? true;
-    if (wasActive) { ditto.sync.stop(); return 'idle'; }
+    if (this.syncState === 'active') {
+      ditto.sync.stop();
+      this.setSyncState('idle', this.session.configId);
+      return 'idle';
+    }
     ditto.sync.start();
+    this.setSyncState('active', this.session.configId);
     return 'active';
   }
 
@@ -162,6 +178,12 @@ export class DittoManager {
   private setStatus(s: DatabaseStatus, configId: string | null) {
     this.status = s;
     for (const l of this.statusListeners) { l(s, configId); }
+  }
+
+  private setSyncState(s: SyncState, configId: string | null) {
+    if (this.syncState === s) { return; }
+    this.syncState = s;
+    for (const l of this.syncListeners) { l(s, configId); }
   }
 }
 
