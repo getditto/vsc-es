@@ -1,0 +1,42 @@
+{
+  "name": "ditto-vsce",
+  "displayName": "Ditto Edge Studio",
+  "description": "Debug and inspect Ditto databases from VS Code (POC).",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.95.0", "node": ">=20" },
+  "type": "module",
+  "main": "./dist/extension.js",
+  "publisher": "ditto",
+  "categories": ["Other"],
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dittoVsce",
+          "title": "Ditto",
+          "icon": "$(database)"
+        }
+      ]
+    },
+    "views": {
+      "dittoVsce": [
+        { "id": "dittoDatabases", "name": "Databases" }
+      ]
+    },
+    "commands": []
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "test": "node --import tsx --test 'src/test/**/*.test.ts'",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.95.0",
+    "esbuild": "^0.23.0",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3"
+  }
+}

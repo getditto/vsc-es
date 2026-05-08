@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "build",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "silent" },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "type": "npm",
+      "script": "watch",
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": {
+        "owner": "esbuild",
+        "pattern": [{ "regexp": "^$" }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*\\[esbuild\\] watching.*",
+          "endsPattern": ".*build finished.*"
+        }
+      }
+    }
+  ]
+}
