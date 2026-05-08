@@ -104,3 +104,24 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 **Error path:**
 5. Edit the database, change Token to garbage, save. Right-click → Connect.
 6. Expect dot transitions `○` → `◐` → `⊗` (error). Toast `Connect failed: …`. Output logs the failure.
+
+### T6 · Peer Listing panel
+
+**Pre-conditions:** A database connected (T5).
+
+**Steps:**
+1. Expand the active database.
+2. Click `Peer Listing`.
+
+**Expected:**
+- A new editor tab opens labeled `Peers — <name>`.
+- Header: green dot + "Sync Active" + Stop Sync button.
+- "Connected Peers" tab is active. The Local Peer card shows your device name, SDK language (JS), platform (Node), version.
+- If other Ditto peers are on the same LAN or your Cloud has connected peers, their cards appear in the grid with peer ID, OS, SDK version, connection types, last update.
+
+**Sync toggle:**
+3. Click "Stop Sync". The dot turns red and the button label becomes "Start Sync". Wait a few seconds. Remote peer cards may disappear as the sync session tears down.
+4. Click "Start Sync". Sync resumes; cards repopulate.
+
+**Presence Graph tab:**
+5. Click `Presence Graph` segment. See the "Coming soon" placeholder.

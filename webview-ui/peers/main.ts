@@ -1,3 +1,7 @@
-// Stub — real UI implemented in Task 13.
+import './peers-element.js';
+
 const root = document.getElementById('root');
-if (root) { root.textContent = 'Peer listing — UI under construction.'; }
+if (root) {
+  const el = document.createElement('ditto-peer-listing');
+  root.appendChild(el);
+}
