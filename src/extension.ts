@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ConfigStore } from './storage/ConfigStore.js';
 import { SecretStore } from './storage/SecretStore.js';
+import { SubscriptionStore } from './storage/SubscriptionStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
@@ -13,9 +14,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   const configStore = new ConfigStore(context.globalState);
   const secretStore = new SecretStore(context.secrets);
+  const subscriptionStore = new SubscriptionStore(context.globalState);
   const manager = new DittoManager(context, output);
 
-  const treeProvider = new DatabaseTreeProvider(configStore, id => manager.getStatus(id));
+  const treeProvider = new DatabaseTreeProvider(configStore, id => manager.getStatus(id), subscriptionStore);
   context.subscriptions.push(manager.onStatusChange(() => treeProvider.refresh()));
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
@@ -37,6 +39,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (ok === 'Delete') {
         await configStore.delete(node.config.id);
         await secretStore.deleteAll(node.config.id);
+        await subscriptionStore.deleteAll(node.config.id);
         const dir = vscode.Uri.joinPath(context.globalStorageUri, 'dittoData', node.config.id);
         try { await vscode.workspace.fs.delete(dir, { recursive: true, useTrash: false }); } catch { /* fine if missing */ }
       }
@@ -52,6 +55,18 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
       await manager.disconnect();
+    }),
+    vscode.commands.registerCommand('dittoVsce.deleteSubscription', async (node) => {
+      if (node?.kind !== 'subscription') { return; }
+      const ok = await vscode.window.showWarningMessage(
+        `Delete subscription "${node.sub.name}"?`, { modal: true }, 'Delete'
+      );
+      if (ok === 'Delete') {
+        await subscriptionStore.delete(node.databaseId, node.sub.id);
+        if (manager.getActiveConfigId() === node.databaseId) {
+          manager.cancelSubscription(node.sub.id);
+        }
+      }
     }),
     vscode.commands.registerCommand('dittoVsce.openPeerListing', () => {
       vscode.window.showInformationMessage('Peer Listing — not implemented yet (Task 11).');

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { ConfigStore } from '../storage/ConfigStore.js';
+import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DatabaseTreeNode } from './DatabaseTreeItem.js';
 
 export type DatabaseStatus = 'idle' | 'activating' | 'active' | 'error';
@@ -11,9 +12,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
 
   constructor(
     private readonly configs: ConfigStore,
-    private readonly statusFor: StatusResolver
+    private readonly statusFor: StatusResolver,
+    private readonly subs: SubscriptionStore
   ) {
     configs.onDidChange(() => this._changeEmitter.fire(undefined));
+    subs.onDidChange(() => this._changeEmitter.fire(undefined));
   }
 
   refresh(node?: DatabaseTreeNode) { this._changeEmitter.fire(node); }
@@ -34,7 +37,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         { kind: 'peerListing', databaseId: node.config.id }
       ];
     }
-    if (node.kind === 'subscriptionsParent') { return []; /* filled in Task 11 */ }
+    if (node.kind === 'subscriptionsParent') {
+      return this.subs.list(node.databaseId).map(sub => ({
+        kind: 'subscription' as const,
+        databaseId: node.databaseId,
+        sub
+      }));
+    }
     return [];
   }
 

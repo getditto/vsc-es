@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ConfigStore } from '../storage/ConfigStore.js';
 import { DatabaseTreeProvider } from '../tree/DatabaseTreeProvider.js';
 import { newConfig } from '../models/DittoConfig.js';
+import { SubscriptionStore } from '../storage/SubscriptionStore.js';
 
 class FakeMemento {
   private map = new Map<string, unknown>();
@@ -14,10 +15,11 @@ class FakeMemento {
 }
 
 function makeStore(): ConfigStore { return new ConfigStore(new FakeMemento() as any); }
+function emptySubs(): SubscriptionStore { return new SubscriptionStore(new FakeMemento() as any); }
 
 test('getRootChildren returns [] when no configs', async () => {
   const cfg = makeStore();
-  const provider = new DatabaseTreeProvider(cfg, () => 'idle');
+  const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs());
   assert.deepEqual(await provider.getRootChildren(), []);
 });
 
@@ -25,7 +27,7 @@ test('getRootChildren returns one database node per stored config (idle by defau
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
   await cfg.save({ ...newConfig(), id: '2', name: 'B', databaseId: 'dbB' });
-  const provider = new DatabaseTreeProvider(cfg, () => 'idle');
+  const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs());
   const roots = await provider.getRootChildren();
   assert.equal(roots.length, 2);
   assert.equal(roots[0].kind, 'database');
@@ -36,7 +38,7 @@ test('getRootChildren returns one database node per stored config (idle by defau
 test('idle database has no children', async () => {
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
-  const provider = new DatabaseTreeProvider(cfg, () => 'idle');
+  const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs());
   const [root] = await provider.getRootChildren();
   const children = await provider.getNodeChildren(root);
   assert.deepEqual(children, []);
@@ -45,10 +47,25 @@ test('idle database has no children', async () => {
 test('active database has Subscriptions parent and Peer Listing as children', async () => {
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
-  const provider = new DatabaseTreeProvider(cfg, () => 'active');
+  const provider = new DatabaseTreeProvider(cfg, () => 'active', emptySubs());
   const [root] = await provider.getRootChildren();
   const children = await provider.getNodeChildren(root);
   assert.equal(children.length, 2);
   assert.equal(children[0].kind, 'subscriptionsParent');
   assert.equal(children[1].kind, 'peerListing');
+});
+
+test('Subscriptions parent expands to leaves from SubscriptionStore', async () => {
+  const cfg = makeStore();
+  await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
+  const subs = new SubscriptionStore(new FakeMemento() as any);
+  await subs.save('1', { id: 's1', name: 'tasks-all', query: 'SELECT * FROM tasks' });
+  const provider = new DatabaseTreeProvider(cfg, () => 'active', subs);
+  const [root] = await provider.getRootChildren();
+  const dbChildren = await provider.getNodeChildren(root);
+  const subsParent = dbChildren.find(n => n.kind === 'subscriptionsParent')!;
+  const leaves = await provider.getNodeChildren(subsParent);
+  assert.equal(leaves.length, 1);
+  assert.equal(leaves[0].kind, 'subscription');
+  assert.equal(leaves[0].kind === 'subscription' && leaves[0].sub.name, 'tasks-all');
 });
