@@ -68,16 +68,39 @@ interface PresenceGraphLike {
   remotePeers: PresencePeerLike[];
 }
 
-function toConnections(raw: PresencePeerLike['connections']): ConnectionInfo[] {
-  return raw.map(c => ({
-    id: c.id,
-    connectionType: c.connectionType,
-    peer1: c.peer1,
-    peer2: c.peer2,
-  }));
+/**
+ * Filter a peer's connections to only those where the local peer is a direct
+ * endpoint, then deduplicate by connectionType (the SDK returns A→B and B→A
+ * as separate Connection objects with the same type but different IDs).
+ *
+ * Mirrors `extractPeerEnrichment` in the SwiftUI Edge Studio
+ * (SystemRepository.swift lines 147-177): keep first-seen per type.
+ */
+function filterAndDedupeConnections(
+  raw: PresencePeerLike['connections'],
+  localKey: string,
+): ConnectionInfo[] {
+  const direct = raw.filter(c => c.peer1 === localKey || c.peer2 === localKey);
+  const seenTypes = new Set<string>();
+  const result: ConnectionInfo[] = [];
+  for (const c of direct) {
+    if (seenTypes.has(c.connectionType)) { continue; }
+    seenTypes.add(c.connectionType);
+    result.push({
+      id: c.id,
+      connectionType: c.connectionType,
+      peer1: c.peer1,
+      peer2: c.peer2,
+    });
+  }
+  return result;
 }
 
-function toPeerInfo(peer: PresencePeerLike, syncRow: SyncStatusRow | undefined): PeerInfo {
+function toPeerInfo(
+  peer: PresencePeerLike,
+  syncRow: SyncStatusRow | undefined,
+  localKey: string,
+): PeerInfo {
   const isDittoServer = syncRow?.is_ditto_server ?? peer.isConnectedToDittoServer;
   const peerMetadata = Object.keys(peer.peerMetadata).length > 0 ? peer.peerMetadata : undefined;
   const identityMetadata = Object.keys(peer.identityServiceMetadata).length > 0
@@ -91,7 +114,7 @@ function toPeerInfo(peer: PresencePeerLike, syncRow: SyncStatusRow | undefined):
     dittoSdkVersion: peer.dittoSdkVersion,
     peerMetadata,
     identityMetadata,
-    connections: toConnections(peer.connections),
+    connections: filterAndDedupeConnections(peer.connections, localKey),
     syncSessionStatus: syncRow?.sync_session_status ?? 'Unknown',
     syncedUpToLocalCommitId: syncRow?.synced_up_to_local_commit_id,
     lastUpdateReceivedTime: syncRow?.last_update_received_time,
@@ -104,9 +127,17 @@ export function mergePeerList(
   local: LocalPeerInfo | null,
   previousOrder: readonly string[],
 ): PeerListSnapshot {
+  // SwiftUI parity: presenceGraph.remotePeers includes multihop peers (X→Y→Z).
+  // Only keep peers where the local device is an endpoint of at least one
+  // connection. See SystemRepository.swift:231-235.
+  const localKey = presence.localPeer.peerKey;
+  const directRemotePeers = presence.remotePeers.filter(peer =>
+    peer.connections.some(c => c.peer1 === localKey || c.peer2 === localKey)
+  );
+
   const byId = new Map<string, PeerInfo>();
-  for (const peer of presence.remotePeers) {
-    byId.set(peer.peerKey, toPeerInfo(peer, syncStatusByPeerKey.get(peer.peerKey)));
+  for (const peer of directRemotePeers) {
+    byId.set(peer.peerKey, toPeerInfo(peer, syncStatusByPeerKey.get(peer.peerKey), localKey));
   }
 
   // Order preservation:

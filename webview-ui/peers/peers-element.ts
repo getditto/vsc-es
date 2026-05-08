@@ -187,7 +187,7 @@ export class PeerListing extends LitElement {
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(260px, 520px));
       gap: 16px;
     }
 
@@ -399,8 +399,8 @@ export class PeerListing extends LitElement {
     }
     return html`
       <div class="grid">
-        ${local ? this.renderLocalCard(local) : nothing}
         ${repeat(remote, p => p.id, p => this.renderRemoteCard(p))}
+        ${local ? this.renderLocalCard(local) : nothing}
       </div>
     `;
   }
@@ -438,7 +438,7 @@ export class PeerListing extends LitElement {
       <div class="card" style=${style}>
         <div class="card-header">
           <div class="card-title-block">
-            <h3 class="card-name" title=${peer.deviceName}>${peer.deviceName || '(unnamed)'}</h3>
+            <h3 class="card-name" title=${peer.deviceName}>${peer.deviceName || (peer.isDittoServer ? 'Ditto Server' : 'Peer Device')}</h3>
             <div class="card-os">
               <i class="codicon ${osIcon(peer.os)}"></i>
               <span>${osDisplay(peer.os)}</span>
