@@ -138,6 +138,20 @@ test('isDittoServer precedence: __sync_status.is_ditto_server overrides presence
   assert.equal(snapshot.remote[0].isDittoServer, true);
 });
 
+test('isDittoServer defaults to false when no sync row, even if peer.isConnectedToDittoServer is true', () => {
+  // SwiftUI parity: `isConnectedToDittoServer` means the peer connects to a
+  // Ditto server (true for every peer in a cloud-attached mesh) — it must NOT
+  // be used as a fallback for `is_ditto_server` (which means the peer IS the server).
+  const peer = makeRemotePeer('k1', 'AccessPoint', { isConnectedToDittoServer: true });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [peer] } as any,
+    new Map(),
+    null,
+    [],
+  );
+  assert.equal(snapshot.remote[0].isDittoServer, false);
+});
+
 test('order preservation: existing peers keep position, new peers append, absent peers drop', () => {
   // First emission: peers a, b, c.
   let snap = mergePeerList(

@@ -101,7 +101,12 @@ function toPeerInfo(
   syncRow: SyncStatusRow | undefined,
   localKey: string,
 ): PeerInfo {
-  const isDittoServer = syncRow?.is_ditto_server ?? peer.isConnectedToDittoServer;
+  // Match SwiftUI: default to `false` when no sync row matches.
+  // Do NOT fall back to `peer.isConnectedToDittoServer` — that field means
+  // "this peer connects to a Ditto Server", not "this peer IS the server".
+  // In a cloud-attached mesh, every peer has it set to true, which would
+  // wrongly paint every card with the cloud gradient.
+  const isDittoServer = syncRow?.is_ditto_server ?? false;
   const peerMetadata = Object.keys(peer.peerMetadata).length > 0 ? peer.peerMetadata : undefined;
   const identityMetadata = Object.keys(peer.identityServiceMetadata).length > 0
     ? peer.identityServiceMetadata
