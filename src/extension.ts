@@ -4,6 +4,7 @@ import { SecretStore } from './storage/SecretStore.js';
 import { SubscriptionStore } from './storage/SubscriptionStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
+import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 
 let output: vscode.OutputChannel;
@@ -68,8 +69,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
     }),
-    vscode.commands.registerCommand('dittoVsce.openPeerListing', () => {
-      vscode.window.showInformationMessage('Peer Listing — not implemented yet (Task 11).');
+    vscode.commands.registerCommand('dittoVsce.openPeerListing', (databaseIdOrNode) => {
+      const databaseId = typeof databaseIdOrNode === 'string'
+        ? databaseIdOrNode
+        : databaseIdOrNode?.databaseId;
+      if (!databaseId) { return; }
+      PeerListingPanel.show(context, manager, configStore, databaseId);
     }),
     vscode.commands.registerCommand('dittoVsce.newSubscription', () => {
       vscode.window.showInformationMessage('New Subscription — not implemented yet (Task 14).');
