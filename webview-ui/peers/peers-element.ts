@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
 
 // ─── Types (mirror src/models/DittoConfig.ts; can't import from ext host) ──
@@ -399,7 +400,7 @@ export class PeerListing extends LitElement {
     return html`
       <div class="grid">
         ${local ? this.renderLocalCard(local) : nothing}
-        ${remote.map(p => this.renderRemoteCard(p))}
+        ${repeat(remote, p => p.id, p => this.renderRemoteCard(p))}
       </div>
     `;
   }
