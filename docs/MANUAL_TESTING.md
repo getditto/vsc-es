@@ -83,3 +83,24 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 
 **Small Peers Only mode:**
 10. Repeat with Small Peers Only — confirm only the Optional Shared Secret Key section is visible (no Auth/Websocket URL fields).
+
+### T5 · Connect & disconnect
+
+**Pre-conditions:** A registered database with valid credentials (T4).
+
+**Steps:**
+1. Right-click the database row → "Connect".
+
+**Expected:**
+- Status dot transitions `○` → `◐` → `●` within a few seconds.
+- Row auto-expands showing `Subscriptions` and `Peer Listing` children.
+- Output panel logs `Connected to "<name>".`
+
+**Disconnect:**
+2. Right-click the active row → "Disconnect".
+3. Status dot returns to `○` and children collapse.
+4. Output logs `Disconnected.`
+
+**Error path:**
+5. Edit the database, change Token to garbage, save. Right-click → Connect.
+6. Expect dot transitions `○` → `◐` → `⊗` (error). Toast `Connect failed: …`. Output logs the failure.

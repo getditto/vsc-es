@@ -3,6 +3,7 @@ import { ConfigStore } from './storage/ConfigStore.js';
 import { SecretStore } from './storage/SecretStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
+import { DittoManager } from './ditto/DittoManager.js';
 
 let output: vscode.OutputChannel;
 
@@ -12,12 +13,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   const configStore = new ConfigStore(context.globalState);
   const secretStore = new SecretStore(context.secrets);
+  const manager = new DittoManager(context, output);
 
-  const treeProvider = new DatabaseTreeProvider(configStore, () => 'idle');
+  const treeProvider = new DatabaseTreeProvider(configStore, id => manager.getStatus(id));
+  context.subscriptions.push(manager.onStatusChange(() => treeProvider.refresh()));
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
 
-  // placeholder commands (real impls in later tasks)
   context.subscriptions.push(
     vscode.commands.registerCommand('dittoVsce.registerDatabase', () => {
       DatabaseEditorPanel.show(context, configStore, secretStore);
@@ -28,19 +30,28 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('dittoVsce.deleteDatabase', async (node) => {
       if (node?.kind !== 'database') { return; }
+      if (manager.getActiveConfigId() === node.config.id) { await manager.disconnect(); }
       const ok = await vscode.window.showWarningMessage(
         `Delete database "${node.config.name}"?`, { modal: true }, 'Delete'
       );
       if (ok === 'Delete') {
         await configStore.delete(node.config.id);
         await secretStore.deleteAll(node.config.id);
+        const dir = vscode.Uri.joinPath(context.globalStorageUri, 'dittoData', node.config.id);
+        try { await vscode.workspace.fs.delete(dir, { recursive: true, useTrash: false }); } catch { /* fine if missing */ }
       }
     }),
-    vscode.commands.registerCommand('dittoVsce.connect', () => {
-      vscode.window.showInformationMessage('Connect — not implemented yet (Task 9).');
+    vscode.commands.registerCommand('dittoVsce.connect', async (node) => {
+      if (node?.kind !== 'database') { return; }
+      const secrets = await secretStore.read(node.config.id);
+      try {
+        await manager.connect(node.config, secrets);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Connect failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }),
-    vscode.commands.registerCommand('dittoVsce.disconnect', () => {
-      vscode.window.showInformationMessage('Disconnect — not implemented yet (Task 9).');
+    vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
+      await manager.disconnect();
     }),
     vscode.commands.registerCommand('dittoVsce.openPeerListing', () => {
       vscode.window.showInformationMessage('Peer Listing — not implemented yet (Task 11).');
@@ -50,6 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  context.subscriptions.push({ dispose: () => manager.disconnect() });
   output.appendLine('Ditto Edge Studio extension activated.');
 }
 
