@@ -42,6 +42,11 @@ export async function activate(context: vscode.ExtensionContext) {
     });
 
     if (ditto.auth.loginSupported) {
+      await ditto.auth.setExpirationHandler(async (instance: any) => {
+        if (instance.auth.loginSupported) {
+          await instance.auth.login(token, Authenticator.DEVELOPMENT_PROVIDER);
+        }
+      });
       const result = await ditto.auth.login(token, Authenticator.DEVELOPMENT_PROVIDER);
       if (result.error) {
         output.appendLine(`SPIKE: login failed: ${result.error}`);
