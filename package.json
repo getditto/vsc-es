@@ -3,11 +3,16 @@
   "displayName": "Ditto Edge Studio",
   "description": "Debug and inspect Ditto databases from VS Code (POC).",
   "version": "0.0.1",
-  "engines": { "vscode": "^1.95.0", "node": ">=20" },
+  "engines": {
+    "vscode": "^1.95.0",
+    "node": ">=20"
+  },
   "type": "module",
   "main": "./dist/extension.js",
   "publisher": "ditto",
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [],
   "contributes": {
     "viewsContainers": {
@@ -21,7 +26,10 @@
     },
     "views": {
       "dittoVsce": [
-        { "id": "dittoDatabases", "name": "Databases" }
+        {
+          "id": "dittoDatabases",
+          "name": "Databases"
+        }
       ]
     },
     "commands": []
@@ -38,5 +46,9 @@
     "esbuild": "^0.23.0",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3"
+  },
+  "dependencies": {
+    "@dittolive/ditto": "^5.0.0",
+    "dotenv": "^16.6.1"
   }
 }

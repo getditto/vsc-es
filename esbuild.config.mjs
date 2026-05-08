@@ -1,5 +1,9 @@
 import * as esbuild from 'esbuild';
+import * as fs from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const watch = process.argv.includes('--watch');
 
 const extensionCtx = await esbuild.context({
@@ -20,4 +24,5 @@ if (watch) {
 } else {
   await extensionCtx.rebuild();
   await extensionCtx.dispose();
+  console.log('[esbuild] build finished.');
 }
