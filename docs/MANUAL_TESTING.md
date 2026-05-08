@@ -41,3 +41,11 @@ SPIKE: observer saw 1 doc(s): [...]
 ```
 
 If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loading correctly in this environment. **Stop here and resolve before continuing the implementation plan.** Common causes: missing native binary for your platform/arch, mismatched Node version, ESM/CJS interop error.
+
+### T2 · Tree view shows the empty state
+
+**Steps:**
+1. Press `F5`.
+2. Click the Ditto icon in the activity bar of the Extension Development Host.
+
+**Expected:** The Databases view appears with no entries. Clicking the `＋` button shows a transient info message about "Register Database — not implemented yet".

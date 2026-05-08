@@ -17,27 +17,41 @@
   "contributes": {
     "viewsContainers": {
       "activitybar": [
-        {
-          "id": "dittoVsce",
-          "title": "Ditto",
-          "icon": "$(database)"
-        }
+        { "id": "dittoVsce", "title": "Ditto", "icon": "$(database)" }
       ]
     },
     "views": {
       "dittoVsce": [
-        {
-          "id": "dittoDatabases",
-          "name": "Databases"
-        }
+        { "id": "dittoDatabases", "name": "Databases" }
       ]
     },
-    "commands": []
+    "commands": [
+      { "command": "dittoVsce.registerDatabase", "title": "Register Database…", "icon": "$(add)" },
+      { "command": "dittoVsce.editDatabase", "title": "Edit Configuration", "icon": "$(edit)" },
+      { "command": "dittoVsce.deleteDatabase", "title": "Delete", "icon": "$(trash)" },
+      { "command": "dittoVsce.connect", "title": "Connect" },
+      { "command": "dittoVsce.disconnect", "title": "Disconnect" },
+      { "command": "dittoVsce.openPeerListing", "title": "Open Peer Listing" },
+      { "command": "dittoVsce.newSubscription", "title": "New Subscription…", "icon": "$(add)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "dittoVsce.registerDatabase", "when": "view == dittoDatabases", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "dittoVsce.connect", "when": "view == dittoDatabases && viewItem == database.idle", "group": "1_connection@1" },
+        { "command": "dittoVsce.connect", "when": "view == dittoDatabases && viewItem == database.error", "group": "1_connection@1" },
+        { "command": "dittoVsce.disconnect", "when": "view == dittoDatabases && viewItem == database.active", "group": "1_connection@1" },
+        { "command": "dittoVsce.editDatabase", "when": "view == dittoDatabases && viewItem =~ /^database\\./", "group": "2_edit@1" },
+        { "command": "dittoVsce.deleteDatabase", "when": "view == dittoDatabases && viewItem =~ /^database\\./", "group": "2_edit@2" },
+        { "command": "dittoVsce.newSubscription", "when": "view == dittoDatabases && viewItem == subscriptionsParent", "group": "inline" }
+      ]
+    }
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
-    "test": "node --import tsx --test 'src/test/**/*.test.ts'",
+    "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/**/*.test.ts'",
     "vscode:prepublish": "npm run build"
   },
   "devDependencies": {
