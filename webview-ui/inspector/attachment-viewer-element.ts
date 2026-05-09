@@ -10,6 +10,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { postToHost } from '../shared/messaging.js';
+import { codiconStyles } from './codicon-styles.js';
 
 interface AttachmentMetadata {
   id: string;
@@ -63,7 +64,7 @@ export class AttachmentViewerElement extends LitElement {
   @state() private progress: Record<string, number> = {};
   @state() private errors: Record<string, string> = {};
 
-  static styles = css`
+  static styles = [codiconStyles, css`
     :host { display: block; margin-top: 12px; color: var(--vscode-foreground); }
     .att {
       padding: 8px;
@@ -84,7 +85,7 @@ export class AttachmentViewerElement extends LitElement {
     button:hover { background: var(--vscode-button-hoverBackground); }
     .err { color: var(--vscode-charts-red); margin-top: 4px; }
     .progress { color: var(--vscode-descriptionForeground); margin-top: 4px; }
-  `;
+  `];
 
   connectedCallback(): void {
     super.connectedCallback();

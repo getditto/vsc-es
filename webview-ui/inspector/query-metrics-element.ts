@@ -5,6 +5,7 @@
 
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { codiconStyles } from './codicon-styles.js';
 
 interface QueryResultMetadata {
   durationMs?: number;
@@ -19,7 +20,7 @@ interface QueryResultMetadata {
 export class QueryMetricsElement extends LitElement {
   @property({ type: Object }) metadata: QueryResultMetadata | undefined;
 
-  static styles = css`
+  static styles = [codiconStyles, css`
     :host { display: block; padding: 12px; color: var(--vscode-foreground); }
     .empty {
       color: var(--vscode-descriptionForeground);
@@ -49,7 +50,7 @@ export class QueryMetricsElement extends LitElement {
       white-space: pre-wrap;
       word-break: break-word;
     }
-  `;
+  `];
 
   render() {
     const md = this.metadata;

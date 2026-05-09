@@ -6,6 +6,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost } from '../shared/messaging.js';
+import { codiconStyles } from './codicon-styles.js';
 
 type QueryInspectorTab = 'history' | 'favorites' | 'json' | 'metrics' | 'help';
 
@@ -35,7 +36,7 @@ export class DittoInspectorElement extends LitElement {
   @state() private favorites: QueryFavoriteEntry[] = [];
   @state() private helpUris: { subscription?: string; query?: string } = {};
 
-  static styles = css`
+  static styles = [codiconStyles, css`
     :host {
       display: block;
       height: 100%;
@@ -69,7 +70,7 @@ export class DittoInspectorElement extends LitElement {
       height: calc(100% - 40px);
       overflow: auto;
     }
-  `;
+  `];
 
   connectedCallback(): void {
     super.connectedCallback();

@@ -5,12 +5,13 @@
 
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { codiconStyles } from './codicon-styles.js';
 
 @customElement('query-json-element')
 export class QueryJsonElement extends LitElement {
   @property() json: string | undefined;
 
-  static styles = css`
+  static styles = [codiconStyles, css`
     :host { display: block; padding: 12px; color: var(--vscode-foreground); }
     .empty {
       color: var(--vscode-descriptionForeground);
@@ -27,7 +28,7 @@ export class QueryJsonElement extends LitElement {
       white-space: pre-wrap;
       word-break: break-word;
     }
-  `;
+  `];
 
   render() {
     if (!this.json) {

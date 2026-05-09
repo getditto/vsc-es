@@ -6,6 +6,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { postToHost } from '../shared/messaging.js';
+import { codiconStyles } from './codicon-styles.js';
 
 interface QueryHistoryEntry { id: string; query: string; timestamp?: number; }
 
@@ -13,7 +14,7 @@ interface QueryHistoryEntry { id: string; query: string; timestamp?: number; }
 export class QueryHistoryElement extends LitElement {
   @property({ type: Array }) entries: QueryHistoryEntry[] = [];
 
-  static styles = css`
+  static styles = [codiconStyles, css`
     :host { display: block; padding: 8px; color: var(--vscode-foreground); }
     .row {
       display: flex;
@@ -51,7 +52,7 @@ export class QueryHistoryElement extends LitElement {
       background: var(--vscode-toolbar-hoverBackground);
       border-radius: 3px;
     }
-  `;
+  `];
 
   render() {
     if (!this.entries?.length) {
