@@ -20,9 +20,15 @@ export class QueryHistoryStore {
     return this.state.get<QueryHistoryEntry[]>(KEY_PREFIX + databaseId) ?? [];
   }
 
+  /**
+   * Adds a query to history. Mirrors the SwiftUI `HistoryRepository` dedup rule:
+   * if the same query string already exists, drop the older row and insert the
+   * fresh one with a new id + timestamp at the top. Same query never appears
+   * twice; re-running an old query bubbles it back to position 0.
+   */
   async add(databaseId: string, query: string): Promise<QueryHistoryEntry> {
     const entry: QueryHistoryEntry = { id: crypto.randomUUID(), query, executedAt: Date.now() };
-    const cur = this.list(databaseId);
+    const cur = this.list(databaseId).filter(e => e.query !== query);
     const next = [entry, ...cur].slice(0, MAX_ENTRIES);
     await this.state.update(KEY_PREFIX + databaseId, next);
     this._onChange.fire({ databaseId });

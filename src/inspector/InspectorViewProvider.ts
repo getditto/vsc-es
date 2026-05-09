@@ -45,7 +45,17 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       view.webview.onDidReceiveMessage((m: InspectorIn) => { void this.handle(m); }),
     );
     this.disposables.push(
-      this.controller.onContentChange((c) => this.post({ type: 'inspector.contentChanged', content: c })),
+      this.controller.onContentChange((c) => {
+        this.post({ type: 'inspector.contentChanged', content: c });
+        // When content switches to a DB-bound kind, re-push the lists so the
+        // History / Favorites tabs reflect that DB's stored entries even if
+        // no add/delete event has fired since the webview opened.
+        if (c.kind === 'query' || c.kind === 'subscriptions' || c.kind === 'peers') {
+          const dbId = c.databaseId;
+          this.post({ type: 'inspector.historyChanged',  databaseId: dbId, entries: this.history.list(dbId) });
+          this.post({ type: 'inspector.favoritesChanged', databaseId: dbId, entries: this.favorites.list(dbId) });
+        }
+      }),
     );
     this.disposables.push(
       this.history.onChange(({ databaseId }) => this.post({
@@ -60,6 +70,16 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
 
     // Push initial state.
     this.post({ type: 'inspector.contentChanged', content: this.controller.getContent() });
+
+    // Push existing history + favorites for the current DB so the lists show
+    // immediately on first reveal — without this, the user had to run a query
+    // (or a different change event) before any prior-session entries appeared.
+    const cur = this.controller.getContent();
+    if (cur.kind === 'query' || cur.kind === 'subscriptions' || cur.kind === 'peers') {
+      const dbId = cur.databaseId;
+      this.post({ type: 'inspector.historyChanged',  databaseId: dbId, entries: this.history.list(dbId) });
+      this.post({ type: 'inspector.favoritesChanged', databaseId: dbId, entries: this.favorites.list(dbId) });
+    }
 
     // Push help URIs once.
     const helpDir = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview-ui', 'help');

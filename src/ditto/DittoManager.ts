@@ -286,37 +286,50 @@ export class DittoManager {
   }
 
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
-   *  Tries `EXPLAIN <query>` first to harvest plan/index metadata; falls back to
-   *  the plain query if the SDK rejects the prefixed form.
+   *
+   *  Mirrors the SwiftUI `QueryService.executeSelectedAppQuery` pattern: run the
+   *  user's query as-is for real result rows, then issue a SECOND `EXPLAIN <query>`
+   *  call to harvest plan metadata. Running EXPLAIN inline (prefixed) returns the
+   *  plan rows in place of the actual results, which is not what callers want.
    */
   async executeQuery(query: string): Promise<{ rows: Record<string, unknown>[]; durationMs: number; metadata: QueryResultMetadata }> {
     if (!this.session) { throw new Error('No active database.'); }
     const start = performance.now();
-    const explained = `EXPLAIN ${query}`;
-    let result: any;
-    let metadata: QueryResultMetadata = { durationMs: 0, timestamp: Date.now() };
+    const result = await this.session.ditto.store.execute(query);
+    const durationMs = Math.round(performance.now() - start);
+    const rows = (result.items as any[]).map((i: any) => i.value as Record<string, unknown>);
+
+    // Capture the EXPLAIN plan as a separate, non-fatal call. If the user
+    // already prefixed EXPLAIN themselves, skip the recursive lookup.
+    const explain = await this.runExplain(query);
+
+    const metadata: QueryResultMetadata = {
+      dql: query,
+      durationMs,
+      resultCount: rows.length,
+      explain,
+      timestamp: Date.now(),
+    };
+    return { rows, durationMs, metadata };
+  }
+
+  /** Captures `EXPLAIN <query>` output as a pretty-printed JSON string.
+   *  Failures degrade the metrics tab but never break the main query.
+   *  Mirrors `QueryService.runExplain` in the SwiftUI app. */
+  private async runExplain(query: string): Promise<string> {
+    if (!this.session) { return ''; }
+    if (query.trimStart().toUpperCase().startsWith('EXPLAIN')) { return ''; }
     try {
-      result = await this.session.ditto.store.execute(explained);
-      metadata = {
-        durationMs: Math.round(performance.now() - start),
-        resultCount: result.items.length,
-        usedIndex: !!result.metadata?.usedIndex,
-        explain: result.metadata?.explain ?? result.metadata?.queryPlan ?? '',
-        timestamp: Date.now(),
-      };
+      const result = await this.session.ditto.store.execute(`EXPLAIN ${query}`);
+      const first = (result.items as any[])[0]?.value;
+      if (!first) { return ''; }
+      return JSON.stringify(first, null, 2);
     } catch (err) {
-      this.log.warn('EXPLAIN-prefixed execute failed; falling back to plain', {
+      this.log.warn('EXPLAIN failed; metrics tab will show plan unavailable', {
         err: err instanceof Error ? err.message : String(err),
       });
-      result = await this.session.ditto.store.execute(query);
-      metadata = {
-        durationMs: Math.round(performance.now() - start),
-        resultCount: result.items.length,
-        timestamp: Date.now(),
-      };
+      return '';
     }
-    const rows = (result.items as any[]).map((i: any) => i.value as Record<string, unknown>);
-    return { rows, durationMs: metadata.durationMs ?? 0, metadata };
   }
 
   // ─── private ─────────────────────────────────────────────────

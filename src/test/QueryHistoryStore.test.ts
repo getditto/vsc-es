@@ -56,3 +56,21 @@ test('onChange fires on add', async () => {
   await s.add('A', 'q1');
   assert.equal(fired, 'A');
 });
+
+test('dedup: re-adding an existing query moves it to the top with a fresh id', async () => {
+  const s = new QueryHistoryStore(fakeMemento());
+  await s.add('A', 'q1');
+  await s.add('A', 'q2');
+  const reAdded = await s.add('A', 'q1');     // re-run q1
+  const list = s.list('A');
+  assert.equal(list.length, 2, 'no duplicates — q1 only appears once');
+  assert.equal(list[0].query, 'q1', 'q1 moved to top because it was re-run');
+  assert.equal(list[1].query, 'q2');
+  assert.equal(list[0].id, reAdded.id, 'top entry has the new id, not the old one');
+});
+
+test('dedup: many re-runs of the same query keep history at length 1', async () => {
+  const s = new QueryHistoryStore(fakeMemento());
+  for (let i = 0; i < 10; i++) await s.add('A', 'same');
+  assert.equal(s.list('A').length, 1);
+});

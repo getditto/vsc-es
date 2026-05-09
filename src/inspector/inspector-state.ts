@@ -1,6 +1,8 @@
 export type QueryInspectorTab = 'history' | 'favorites' | 'json' | 'metrics' | 'help';
 
 export type QueryResultMetadata = {
+  /** The user's query string, as run (without EXPLAIN prefix). */
+  dql?: string;
   durationMs?: number;
   resultCount?: number;
   usedIndex?: boolean;
