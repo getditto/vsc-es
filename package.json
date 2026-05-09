@@ -27,7 +27,7 @@
         {
           "id": "dittoInspector",
           "title": "Ditto Inspector",
-          "icon": "$(book)"
+          "icon": "resources/ditto-icon.svg"
         }
       ]
     },
