@@ -202,6 +202,94 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 6. Type `SELECT * FROM tasks` (or any collection where you've inserted data via the SwiftUI app or another peer) → confirm real document rows back.
 7. Run a query with heterogeneous documents (e.g., nested objects). Confirm columns reflect the union of keys; missing-key cells render empty; nested values render as `JSON.stringify` strings truncated at 120 chars with full value in tooltip.
 
+### T17 · Switch with open panels
+
+**Pre-conditions:** two registered databases (db-A, db-B) with valid credentials.
+
+**Steps:**
+
+1. Connect db-A.
+2. Open Query Editor and Peer Listing for db-A.
+3. Right-click db-B in the tree → Connect.
+
+**Expected:**
+- Modal warning: "Switching to db-B will close 2 open panels for db-A: • Query — db-A • Peers — db-A — These will reopen automatically the next time you connect to db-A. [Cancel] [Switch]".
+- Click **Switch** → notification fires bottom-right; status bar shows `$(sync~spin) Ditto: …` through phases.
+- db-A's panels close.
+- db-B activates; tree shows `● db-B`.
+- No panels reopen for db-B (its set is empty on first connect).
+
+### T18 · Round-trip restoration
+
+**Pre-conditions:** continuing from T17.
+
+**Steps:**
+
+1. Click db-A in the tree.
+
+**Expected:**
+- No warning modal (db-B's open-panel set is empty).
+- Notification + status bar progress fire.
+- db-A activates; **Query Editor and Peer Listing tabs reopen automatically.**
+
+### T19 · Switch failure with rollback
+
+**Pre-conditions:** db-A registered with valid creds; db-B registered with an intentionally bad token.
+
+**Steps:**
+
+1. Connect db-A.
+2. Right-click db-B → Connect.
+
+**Expected:**
+- Switch starts (warning modal skipped if no panels open, or accept it).
+- After db-A teardown completes, db-B activation fails.
+- Rollback modal: "Connect to db-B failed: <reason>. Reconnect to db-A? [Reconnect to db-A] [Stay disconnected]".
+- Click **Reconnect to db-A** → notification updates to "Reconnecting…" → db-A reactivates with its panels restored.
+
+### T20 · Switch failure, stay disconnected
+
+**Pre-conditions:** same as T19.
+
+**Steps:**
+
+1. Connect db-A.
+2. Right-click db-B → Connect.
+3. On rollback modal, click **Stay disconnected**.
+
+**Expected:**
+- State ends at idle: tree shows db-A as `○ idle` and db-B as `⊗ error`.
+- No panels are open.
+- Output channel logs both phases of the failed switch + the user's choice.
+
+### T21 · Double-click protection
+
+**Pre-conditions:** three registered databases.
+
+**Steps:**
+
+1. Connect db-A.
+2. Right-click db-B → Connect.
+3. Within the first second (while progress notification is showing), right-click db-C → Connect.
+
+**Expected:**
+- The second click shows transient "Switch in progress — please wait." info message.
+- The first switch completes uninterrupted; db-B becomes active.
+- After db-B is active, right-clicking db-C → Connect works normally and triggers a new switch.
+
+### T22 · Plain disconnect with restore
+
+**Steps:**
+
+1. Connect db-A.
+2. Open Query Editor and Peer Listing.
+3. Right-click db-A in the tree → Disconnect.
+4. Right-click db-A → Connect.
+
+**Expected:**
+- Step 3: notification "Disconnecting from db-A…" fires; panels close; tree shows `○ db-A`.
+- Step 4: notification "Connecting to db-A…" fires; db-A activates; **Query Editor and Peer Listing tabs reopen automatically.**
+
 ### T16 · Logging — basic flow + export
 
 **Pre-conditions:** none.
