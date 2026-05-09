@@ -18,6 +18,12 @@ import type {
 import type { DatabaseStatus } from '../tree/DatabaseTreeProvider.js';
 import { mergePeerList, parseSyncStatusRow, type SyncStatusRow } from './peer-info.js';
 import type { Logger } from '../logging/types.js';
+import {
+  reduceLifecycle,
+  isSwitchInProgress as reducerIsSwitchInProgress,
+  type LifecycleState,
+  type LifecycleAction,
+} from './lifecycle-state.js';
 
 type StatusListener = (status: DatabaseStatus, configId: string | null) => void;
 type PresenceListener = (snapshot: PeerListSnapshot) => void;
@@ -48,6 +54,10 @@ export class DittoManager {
   private localPeerInfo: LocalPeerInfo | null = null;
   private previousOrder: string[] = [];
   private latestSnapshot: PeerListSnapshot = { local: null, remote: [] };
+
+  private lifecycleState: LifecycleState = { kind: 'idle' };
+  private readonly lifecycleEmitter = new vscode.EventEmitter<LifecycleState>();
+  readonly onLifecycleStateChange = this.lifecycleEmitter.event;
 
   private readonly log: Logger;
 
@@ -83,11 +93,30 @@ export class DittoManager {
     return new vscode.Disposable(() => this.syncListeners.delete(l));
   }
 
+  getCurrentLifecycleState(): LifecycleState { return this.lifecycleState; }
+  isSwitchInProgress(): boolean { return reducerIsSwitchInProgress(this.lifecycleState); }
+
+  private dispatch(action: LifecycleAction): LifecycleState {
+    const next = reduceLifecycle(this.lifecycleState, action);
+    if (next === this.lifecycleState) { return next; }
+    const from = this.lifecycleState.kind;
+    this.lifecycleState = next;
+    this.log.info('Lifecycle transition', { from, action: action.type });
+    this.lifecycleEmitter.fire(next);
+    return next;
+  }
+
   async connect(
     config: StoredDittoConfig,
     secrets: SecretSet,
     initialSubs: StoredSubscription[] = []
   ): Promise<void> {
+    const wasActive = this.session != null;
+    if (wasActive) {
+      this.dispatch({ type: 'switchStart', toConfigId: config.id });
+    } else {
+      this.dispatch({ type: 'connectStart', configId: config.id });
+    }
     if (this.session) { await this.disconnect(); }
     this.setStatus('activating', config.id);
     try {
@@ -153,12 +182,14 @@ export class DittoManager {
       }
 
       this.setSyncState('active', config.id);
+      this.dispatch({ type: 'connectOk' });
       this.setStatus('active', config.id);
       this.firePresence();
       this.log.info('Connected', { name: config.name, configId: config.id, mode: config.mode });
     } catch (err) {
       this.log.error('Connect failed', { configId: config.id, err: err instanceof Error ? err.stack : String(err) });
       this.setStatus('error', config.id);
+      this.dispatch({ type: 'connectFail', message: err instanceof Error ? err.message : String(err) });
       throw err;
     }
   }
@@ -166,6 +197,7 @@ export class DittoManager {
   async disconnect(): Promise<void> {
     const s = this.session;
     if (!s) { return; }
+    this.dispatch({ type: 'disconnectStart' });
     this.session = null;
     if (s.presenceCoalesceTimer) { clearTimeout(s.presenceCoalesceTimer); }
     try {
@@ -183,6 +215,7 @@ export class DittoManager {
       this.firePresence();
       this.setSyncState('idle', null);
       this.setStatus('idle', null);
+      this.dispatch({ type: 'disconnectOk' });
       this.log.info('Disconnected');
     }
   }
