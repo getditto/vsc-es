@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { panelHtml } from './webview-utils.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
+import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { PeerIn, PeerOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 
@@ -13,6 +14,7 @@ export class PeerListingPanel {
     manager: DittoManager,
     configs: ConfigStore,
     databaseId: string,
+    tracker: OpenPanelsTracker,
     logger: Logger,
   ) {
     if (PeerListingPanel.current) {
@@ -21,7 +23,7 @@ export class PeerListingPanel {
       PeerListingPanel.current.pushState();
       return;
     }
-    PeerListingPanel.current = new PeerListingPanel(context, manager, configs, databaseId, logger);
+    PeerListingPanel.current = new PeerListingPanel(context, manager, configs, databaseId, tracker, logger);
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -33,6 +35,7 @@ export class PeerListingPanel {
     private readonly manager: DittoManager,
     private readonly configs: ConfigStore,
     databaseId: string,
+    private readonly tracker: OpenPanelsTracker,
     private readonly logger: Logger,
   ) {
     this.databaseId = databaseId;
@@ -74,6 +77,9 @@ export class PeerListingPanel {
       this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
     });
     this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
+
+    void tracker.add(databaseId, 'peers');
+    this.disposables.push({ dispose: () => { void tracker.remove(databaseId, 'peers'); } });
 
     setTimeout(() => this.pushState(), 50);
   }

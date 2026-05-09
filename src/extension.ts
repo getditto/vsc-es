@@ -13,6 +13,7 @@ import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
+import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
 import { createLogger } from './logging/Logger.js';
 import type { Logger, LogLevel } from './logging/types.js';
 
@@ -61,6 +62,7 @@ export function activate(context: vscode.ExtensionContext) {
   const configStore = new ConfigStore(context.globalState);
   const secretStore = new SecretStore(context.secrets);
   const subscriptionStore = new SubscriptionStore(context.globalState);
+  const tracker = new OpenPanelsTracker(context.globalState);
   const manager = new DittoManager(context, logger);
 
   const treeProvider = new DatabaseTreeProvider(configStore, id => manager.getStatus(id), subscriptionStore);
@@ -92,6 +94,7 @@ export function activate(context: vscode.ExtensionContext) {
         await configStore.delete(node.config.id);
         await secretStore.deleteAll(node.config.id);
         await subscriptionStore.deleteAll(node.config.id);
+        await tracker.deleteAll(node.config.id);
         const dir = vscode.Uri.joinPath(context.globalStorageUri, 'dittoData', node.config.id);
         try { await vscode.workspace.fs.delete(dir, { recursive: true, useTrash: false }); } catch { /* fine if missing */ }
       }
@@ -126,7 +129,7 @@ export function activate(context: vscode.ExtensionContext) {
         ? databaseIdOrNode
         : databaseIdOrNode?.databaseId;
       if (!databaseId) { return; }
-      PeerListingPanel.show(context, manager, configStore, databaseId, logger);
+      PeerListingPanel.show(context, manager, configStore, databaseId, tracker, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.newSubscription', (node) => {
       const databaseId = node?.kind === 'subscriptionsParent'
@@ -144,7 +147,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
-      QueryEditorPanel.show(context, manager, configStore, databaseId, logger);
+      QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.setApplicationLogLevel', async () => {
       const picked = await pickLogLevel(logger.getChannelLevel(), 'Set Application Log Level');

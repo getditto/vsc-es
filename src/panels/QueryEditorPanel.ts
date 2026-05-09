@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { panelHtml } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
+import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { QueryIn, QueryOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 
@@ -24,6 +25,7 @@ export class QueryEditorPanel {
     manager: DittoManager,
     configs: ConfigStore,
     databaseId: string,
+    tracker: OpenPanelsTracker,
     logger: Logger,
   ) {
     if (QueryEditorPanel.current) {
@@ -31,7 +33,7 @@ export class QueryEditorPanel {
       QueryEditorPanel.current.refreshTitle(databaseId, configs);
       return;
     }
-    QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, logger);
+    QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, logger);
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -43,6 +45,7 @@ export class QueryEditorPanel {
     private readonly manager: DittoManager,
     private readonly configs: ConfigStore,
     databaseId: string,
+    private readonly tracker: OpenPanelsTracker,
     private readonly logger: Logger,
   ) {
     this.databaseId = databaseId;
@@ -77,6 +80,9 @@ export class QueryEditorPanel {
       this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
     });
     this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
+
+    void tracker.add(databaseId, 'query');
+    this.disposables.push({ dispose: () => { void tracker.remove(databaseId, 'query'); } });
   }
 
   private refreshTitle(databaseId: string, configs: ConfigStore) {
