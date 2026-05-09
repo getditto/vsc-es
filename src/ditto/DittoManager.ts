@@ -209,7 +209,20 @@ export class DittoManager {
       try { s.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
       try { s.presenceObserver?.stop?.(); } catch { /* ignore */ }
       try { s.ditto.sync.stop(); } catch { /* ignore */ }
-      try { await s.ditto.close(); } catch { /* ignore */ }
+      // Bound Ditto.close() at 10s; on timeout, force-discard the instance.
+      // SDK can hang when network teardown blocks (Lifecycle spec §3.3 risk).
+      try {
+        await Promise.race([
+          s.ditto.close(),
+          new Promise<void>((_, reject) =>
+            setTimeout(() => reject(new Error('Ditto.close() timed out after 10s')), 10_000),
+          ),
+        ]);
+      } catch (err) {
+        this.log.warn('Ditto.close() failed or timed out — discarding instance', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
     } finally {
       this.latestPresence = null;
       this.syncStatusByPeerKey.clear();
