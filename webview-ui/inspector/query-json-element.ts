@@ -6,6 +6,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { codiconStyles } from './codicon-styles.js';
+import '../shared/json-viewer.js';
 
 @customElement('query-json-element')
 export class QueryJsonElement extends LitElement {
@@ -28,6 +29,14 @@ export class QueryJsonElement extends LitElement {
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .viewer {
+      display: block;
+      max-height: 60vh;
+      overflow: auto;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-panel-border);
+      margin-bottom: 8px;
+    }
   `];
 
   render() {
@@ -46,7 +55,7 @@ export class QueryJsonElement extends LitElement {
       pretty = this.json;
     }
     return html`
-      <pre>${pretty}</pre>
+      <json-viewer class="viewer" .value=${pretty}></json-viewer>
       <attachment-viewer-element .json=${this.json}></attachment-viewer-element>
     `;
   }

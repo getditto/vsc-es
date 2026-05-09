@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
+import '../shared/json-viewer.js';
 
 type In =
   | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: unknown }
@@ -340,6 +341,9 @@ export class QueryEditor extends LitElement {
   }
 
   private renderJson() {
-    return html`<pre class="json">${JSON.stringify(this.rows, null, 2)}</pre>`;
+    return html`<json-viewer
+      .value=${JSON.stringify(this.rows, null, 2)}
+      style="display:block; height: 100%;"
+    ></json-viewer>`;
   }
 }
