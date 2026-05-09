@@ -152,8 +152,16 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dittoVsce.openOutputChannel', () => {
       channel.show();
     }),
-    vscode.commands.registerCommand('dittoVsce.exportLogs', () => {
-      vscode.window.showInformationMessage('Export Logs: implementation pending in Task 13.');
+    vscode.commands.registerCommand('dittoVsce.exportLogs', async () => {
+      const ok = await vscode.window.showWarningMessage(
+        'The exported log may contain document data from your databases. Review before sharing.',
+        { modal: true },
+        'Open in Editor',
+      );
+      if (ok !== 'Open in Editor') { return; }
+      const combined = await logger.readAllLogs();
+      const doc = await vscode.workspace.openTextDocument({ language: 'log', content: combined });
+      await vscode.window.showTextDocument(doc);
     }),
     vscode.commands.registerCommand('dittoVsce.showLogFile', () => {
       vscode.commands.executeCommand(

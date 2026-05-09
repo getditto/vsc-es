@@ -27,6 +27,9 @@ export interface Logger {
 
   withTag(tag: string): Logger;
 
+  /** Flush + read all log files chronologically. Used by the Export Logs command. */
+  readAllLogs(): Promise<string>;
+
   /** Flush + close. Call from extension.deactivate(). */
   dispose(): Promise<void>;
 }

@@ -100,6 +100,10 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
       onDidChangeSdkLevel: sdkLevelEmitter.event,
       withTag: (childTag) => makeLogger(tag ? `${tag}:${childTag}` : childTag),
       flush: () => fileSink.flush(),
+      readAllLogs: async () => {
+        await fileSink.flush();
+        return fileSink.readAllChronological();
+      },
       dispose: async () => {
         await fileSink.dispose();
         channelSink.dispose();
