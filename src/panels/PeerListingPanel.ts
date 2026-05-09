@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
@@ -33,6 +33,7 @@ export class PeerListingPanel {
       PeerListingPanel.current.dispose();
     }
     PeerListingPanel.current = new PeerListingPanel(context, manager, configs, databaseId, tracker, inspector, logger);
+    autoRevealInspectorOnce(context);
   }
 
   static dispose(): void {

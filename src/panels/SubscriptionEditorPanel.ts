@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { StoredSubscription } from '../models/DittoConfig.js';
@@ -33,6 +33,7 @@ export class SubscriptionEditorPanel {
       SubscriptionEditorPanel.current.dispose();
     }
     SubscriptionEditorPanel.current = new SubscriptionEditorPanel(context, subs, manager, databaseId, inspector, logger, existing);
+    autoRevealInspectorOnce(context);
   }
 
   static dispose(): void {

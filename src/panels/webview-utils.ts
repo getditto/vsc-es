@@ -19,6 +19,18 @@ export interface PanelHtmlOptions {
   styleUri?: vscode.Uri;
 }
 
+/**
+ * Reveals the Ditto Inspector view exactly once across the lifetime of the
+ * installed extension (tracked via a globalState flag). Call from each
+ * long-lived panel's `show()` after the panel is constructed.
+ */
+export function autoRevealInspectorOnce(context: vscode.ExtensionContext): void {
+  const flagKey = 'dittoInspectorAutoRevealed.v1';
+  if (context.globalState.get(flagKey)) { return; }
+  void context.globalState.update(flagKey, true);
+  void vscode.commands.executeCommand('dittoVsce.inspector.focus');
+}
+
 export function panelHtml({ title, scriptUri, cspSource, styleUri }: PanelHtmlOptions): string {
   const n = nonce();
   const styleLink = styleUri ? `<link rel="stylesheet" href="${styleUri}">` : '';

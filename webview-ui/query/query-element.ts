@@ -4,7 +4,8 @@ import { postToHost, onHostMessage } from '../shared/messaging.js';
 
 type In =
   | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: unknown }
-  | { type: 'query.error'; message: string };
+  | { type: 'query.error'; message: string }
+  | { type: 'query.setText'; text: string };
 
 type View = 'table' | 'json';
 type RunState = 'idle' | 'running' | 'success' | 'error';
@@ -221,6 +222,8 @@ export class QueryEditor extends LitElement {
         this.columns = [];
         this.state = 'error';
         this.selectedRowIndex = null;
+      } else if (msg.type === 'query.setText') {
+        this.query = msg.text;
       }
     });
   }

@@ -22,6 +22,13 @@
           "title": "Ditto",
           "icon": "$(database)"
         }
+      ],
+      "auxiliaryBar": [
+        {
+          "id": "dittoInspector",
+          "title": "Ditto Inspector",
+          "icon": "$(book)"
+        }
       ]
     },
     "views": {
@@ -37,6 +44,14 @@
         {
           "id": "dittoHelp",
           "name": "Help"
+        }
+      ],
+      "dittoInspector": [
+        {
+          "type": "webview",
+          "id": "dittoVsce.inspector",
+          "name": "Inspector",
+          "when": "dittoVsce.hasActiveDatabase"
         }
       ]
     },
@@ -106,9 +121,28 @@
       {
         "command": "dittoVsce.showLogFile",
         "title": "Ditto: Show Log File in Finder"
+      },
+      {
+        "command": "dittoVsce.toggleInspector",
+        "title": "Ditto: Toggle Inspector",
+        "icon": "$(layout-sidebar-right)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "dittoVsce.toggleInspector",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i"
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "dittoVsce.toggleInspector",
+          "group": "navigation",
+          "when": "activeWebviewPanelId =~ /^(dittoQueryEditor|dittoPeerListing|dittoSubscriptionEditor)$/"
+        }
+      ],
       "view/title": [
         {
           "command": "dittoVsce.registerDatabase",

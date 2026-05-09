@@ -18,6 +18,7 @@ import { performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
 import type { Logger, LogLevel } from './logging/types.js';
 import { InspectorController } from './inspector/InspectorController.js';
+import { InspectorViewProvider } from './inspector/InspectorViewProvider.js';
 import { QueryHistoryStore } from './storage/QueryHistoryStore.js';
 import { QueryFavoritesStore } from './storage/QueryFavoritesStore.js';
 
@@ -125,7 +126,15 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(manager.onLifecycleStateChange(state => {
     if (state.kind !== 'active') inspectorController.clearOnDisconnect();
+    void vscode.commands.executeCommand('setContext', 'dittoVsce.hasActiveDatabase', state.kind === 'active');
   }));
+
+  const inspectorView = new InspectorViewProvider(
+    context, inspectorController, historyStore, favoritesStore, manager, logger,
+  );
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(InspectorViewProvider.viewType, inspectorView),
+  );
 
   const treeProvider = new DatabaseTreeProvider(
     configStore,
@@ -278,7 +287,19 @@ export function activate(context: vscode.ExtensionContext) {
         'revealFileInOS',
         vscode.Uri.joinPath(context.globalStorageUri, 'logs', 'ditto-edge-studio.log'),
       );
-    })
+    }),
+    vscode.commands.registerCommand('dittoVsce.toggleInspector', async () => {
+      await vscode.commands.executeCommand('dittoVsce.inspector.focus');
+    }),
+    vscode.commands.registerCommand('dittoVsce.openQueryEditorWithText', (query: string) => {
+      const cur = manager.getCurrentLifecycleState();
+      if (cur.kind !== 'active') { return; }
+      QueryEditorPanel.show(
+        context, manager, configStore, cur.configId,
+        tracker, inspectorController, historyStore, favoritesStore, logger,
+      );
+      QueryEditorPanel.current?.loadQuery(query);
+    }),
   );
 
   context.subscriptions.push({ dispose: () => manager.disconnect() });

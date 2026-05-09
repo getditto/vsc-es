@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
@@ -21,7 +21,9 @@ function computeColumns(rows: Record<string, unknown>[]): string[] {
 }
 
 export class QueryEditorPanel {
-  private static current: QueryEditorPanel | undefined;
+  private static _current: QueryEditorPanel | undefined;
+
+  static get current(): QueryEditorPanel | undefined { return QueryEditorPanel._current; }
 
   static show(
     context: vscode.ExtensionContext,
@@ -34,23 +36,28 @@ export class QueryEditorPanel {
     favorites: QueryFavoritesStore,
     logger: Logger,
   ) {
-    if (QueryEditorPanel.current) {
-      if (QueryEditorPanel.current.databaseId === databaseId) {
-        QueryEditorPanel.current.panel.reveal();
+    if (QueryEditorPanel._current) {
+      if (QueryEditorPanel._current.databaseId === databaseId) {
+        QueryEditorPanel._current.panel.reveal();
         return;
       }
       // Different DB requested — should not normally happen because the
       // lifecycle disposes us before connecting elsewhere. Fall through and replace.
       logger.warn('QueryEditorPanel.show called for a different DB than current; disposing.', {
-        currentDb: QueryEditorPanel.current.databaseId, requestedDb: databaseId,
+        currentDb: QueryEditorPanel._current.databaseId, requestedDb: databaseId,
       });
-      QueryEditorPanel.current.dispose();
+      QueryEditorPanel._current.dispose();
     }
-    QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, inspector, history, favorites, logger);
+    QueryEditorPanel._current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, inspector, history, favorites, logger);
+    autoRevealInspectorOnce(context);
   }
 
   static dispose(): void {
-    QueryEditorPanel.current?.dispose();
+    QueryEditorPanel._current?.dispose();
+  }
+
+  loadQuery(query: string): void {
+    this.panel.webview.postMessage({ type: 'query.setText', text: query });
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -146,7 +153,7 @@ export class QueryEditorPanel {
   }
 
   private dispose() {
-    QueryEditorPanel.current = undefined;
+    QueryEditorPanel._current = undefined;
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }
