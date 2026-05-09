@@ -5,6 +5,7 @@ import type { DittoManager } from '../ditto/DittoManager.js';
 import type { StoredSubscription } from '../models/DittoConfig.js';
 import type { SubIn, SubOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
+import type { InspectorController } from '../inspector/InspectorController.js';
 
 export class SubscriptionEditorPanel {
   private static current: SubscriptionEditorPanel | undefined;
@@ -14,6 +15,7 @@ export class SubscriptionEditorPanel {
     subs: SubscriptionStore,
     manager: DittoManager,
     databaseId: string,
+    inspector: InspectorController,
     logger: Logger,
     existing?: StoredSubscription,
   ) {
@@ -30,7 +32,7 @@ export class SubscriptionEditorPanel {
       });
       SubscriptionEditorPanel.current.dispose();
     }
-    SubscriptionEditorPanel.current = new SubscriptionEditorPanel(context, subs, manager, databaseId, logger, existing);
+    SubscriptionEditorPanel.current = new SubscriptionEditorPanel(context, subs, manager, databaseId, inspector, logger, existing);
   }
 
   static dispose(): void {
@@ -46,6 +48,7 @@ export class SubscriptionEditorPanel {
     private readonly subs: SubscriptionStore,
     private readonly manager: DittoManager,
     databaseId: string,
+    inspector: InspectorController,
     private readonly logger: Logger,
     existing?: StoredSubscription,
   ) {
@@ -79,6 +82,14 @@ export class SubscriptionEditorPanel {
       this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
     });
     this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
+
+    this.disposables.push(
+      this.panel.onDidChangeViewState(e => {
+        if (e.webviewPanel.active) {
+          inspector.setActiveFeature({ kind: 'subscriptions', databaseId: this.databaseId });
+        }
+      })
+    );
 
     setTimeout(() => this.init(databaseId, existing), 50);
   }

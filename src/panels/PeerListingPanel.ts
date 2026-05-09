@@ -5,6 +5,7 @@ import type { ConfigStore } from '../storage/ConfigStore.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { PeerIn, PeerOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
+import type { InspectorController } from '../inspector/InspectorController.js';
 
 export class PeerListingPanel {
   private static current: PeerListingPanel | undefined;
@@ -15,6 +16,7 @@ export class PeerListingPanel {
     configs: ConfigStore,
     databaseId: string,
     tracker: OpenPanelsTracker,
+    inspector: InspectorController,
     logger: Logger,
   ) {
     if (PeerListingPanel.current) {
@@ -30,7 +32,7 @@ export class PeerListingPanel {
       });
       PeerListingPanel.current.dispose();
     }
-    PeerListingPanel.current = new PeerListingPanel(context, manager, configs, databaseId, tracker, logger);
+    PeerListingPanel.current = new PeerListingPanel(context, manager, configs, databaseId, tracker, inspector, logger);
   }
 
   static dispose(): void {
@@ -47,6 +49,7 @@ export class PeerListingPanel {
     private readonly configs: ConfigStore,
     databaseId: string,
     private readonly tracker: OpenPanelsTracker,
+    inspector: InspectorController,
     private readonly logger: Logger,
   ) {
     this.databaseId = databaseId;
@@ -91,6 +94,14 @@ export class PeerListingPanel {
 
     void tracker.add(databaseId, 'peers');
     this.disposables.push({ dispose: () => { void tracker.remove(databaseId, 'peers'); } });
+
+    this.disposables.push(
+      this.panel.onDidChangeViewState(e => {
+        if (e.webviewPanel.active) {
+          inspector.setActiveFeature({ kind: 'peers', databaseId: this.databaseId });
+        }
+      })
+    );
 
     setTimeout(() => this.pushState(), 50);
   }

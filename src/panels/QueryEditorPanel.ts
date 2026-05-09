@@ -5,6 +5,7 @@ import type { DittoManager } from '../ditto/DittoManager.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { QueryIn, QueryOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
+import type { InspectorController } from '../inspector/InspectorController.js';
 
 function computeColumns(rows: Record<string, unknown>[]): string[] {
   const keys = new Set<string>();
@@ -26,6 +27,7 @@ export class QueryEditorPanel {
     configs: ConfigStore,
     databaseId: string,
     tracker: OpenPanelsTracker,
+    inspector: InspectorController,
     logger: Logger,
   ) {
     if (QueryEditorPanel.current) {
@@ -40,7 +42,7 @@ export class QueryEditorPanel {
       });
       QueryEditorPanel.current.dispose();
     }
-    QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, logger);
+    QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, inspector, logger);
   }
 
   static dispose(): void {
@@ -57,6 +59,7 @@ export class QueryEditorPanel {
     private readonly configs: ConfigStore,
     databaseId: string,
     private readonly tracker: OpenPanelsTracker,
+    inspector: InspectorController,
     private readonly logger: Logger,
   ) {
     this.databaseId = databaseId;
@@ -94,6 +97,14 @@ export class QueryEditorPanel {
 
     void tracker.add(databaseId, 'query');
     this.disposables.push({ dispose: () => { void tracker.remove(databaseId, 'query'); } });
+
+    this.disposables.push(
+      this.panel.onDidChangeViewState(e => {
+        if (e.webviewPanel.active) {
+          inspector.setActiveFeature({ kind: 'query', databaseId: this.databaseId });
+        }
+      })
+    );
   }
 
   private post(msg: QueryOut) { this.panel.webview.postMessage(msg); }

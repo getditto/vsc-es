@@ -17,6 +17,7 @@ import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
 import { performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
 import type { Logger, LogLevel } from './logging/types.js';
+import { InspectorController } from './inspector/InspectorController.js';
 
 let logger: Logger;
 
@@ -27,6 +28,7 @@ function buildSwitchDeps(
   secretStore: SecretStore,
   subStore: SubscriptionStore,
   tracker: OpenPanelsTracker,
+  inspector: InspectorController,
   loggerArg: Logger,
 ): SwitchDeps {
   return {
@@ -61,9 +63,9 @@ function buildSwitchDeps(
       closePeers: () => PeerListingPanel.dispose(),
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
       showQuery: (databaseId) =>
-        QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, loggerArg),
+        QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, inspector, loggerArg),
       showPeers: (databaseId) =>
-        PeerListingPanel.show(context, manager, configStore, databaseId, tracker, loggerArg),
+        PeerListingPanel.show(context, manager, configStore, databaseId, tracker, inspector, loggerArg),
     },
   };
 }
@@ -113,6 +115,11 @@ export function activate(context: vscode.ExtensionContext) {
   const subscriptionStore = new SubscriptionStore(context.globalState);
   const tracker = new OpenPanelsTracker(context.globalState);
   const manager = new DittoManager(context, logger);
+  const inspectorController = new InspectorController(context.globalState);
+
+  context.subscriptions.push(manager.onLifecycleStateChange(state => {
+    if (state.kind !== 'active') inspectorController.clearOnDisconnect();
+  }));
 
   const treeProvider = new DatabaseTreeProvider(
     configStore,
@@ -168,7 +175,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Already connected to "${node.config.name}".`);
         return;
       }
-      const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, logger);
+      const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, inspectorController, logger);
       await performSwitch(deps, fromActive, node.config);
     }),
     vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
@@ -213,7 +220,7 @@ export function activate(context: vscode.ExtensionContext) {
         ? databaseIdOrNode
         : databaseIdOrNode?.databaseId;
       if (!databaseId) { return; }
-      PeerListingPanel.show(context, manager, configStore, databaseId, tracker, logger);
+      PeerListingPanel.show(context, manager, configStore, databaseId, tracker, inspectorController, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.newSubscription', (node) => {
       const databaseId = node?.kind === 'subscriptionsParent'
@@ -223,15 +230,15 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage('Open a connection first.');
         return;
       }
-      SubscriptionEditorPanel.show(context, subscriptionStore, manager, databaseId, logger);
+      SubscriptionEditorPanel.show(context, subscriptionStore, manager, databaseId, inspectorController, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.editSubscription', (node) => {
       if (node?.kind !== 'subscription') { return; }
-      SubscriptionEditorPanel.show(context, subscriptionStore, manager, node.databaseId, logger, node.sub);
+      SubscriptionEditorPanel.show(context, subscriptionStore, manager, node.databaseId, inspectorController, logger, node.sub);
     }),
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
-      QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, logger);
+      QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, inspectorController, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.setApplicationLogLevel', async () => {
       const picked = await pickLogLevel(logger.getChannelLevel(), 'Set Application Log Level');
