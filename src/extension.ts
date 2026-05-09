@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as path from 'node:path';
+import * as crypto from 'node:crypto';
+import { Logger as DittoLogger } from '@dittolive/ditto';
 import { ConfigStore } from './storage/ConfigStore.js';
 import { SecretStore } from './storage/SecretStore.js';
 import { SubscriptionStore } from './storage/SubscriptionStore.js';
@@ -8,17 +11,42 @@ import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
+import { createLogger } from './logging/Logger.js';
+import type { Logger } from './logging/types.js';
 
-let output: vscode.OutputChannel;
+let logger: Logger;
 
 export function activate(context: vscode.ExtensionContext) {
-  output = vscode.window.createOutputChannel('Ditto Edge Studio');
-  context.subscriptions.push(output);
+  const channel = vscode.window.createOutputChannel('Ditto Edge Studio', { log: true });
+  context.subscriptions.push(channel);
+  const sessionId = crypto.randomUUID();
+  const fileDir = path.join(context.globalStorageUri.fsPath, 'logs');
+  logger = createLogger({
+    channel,
+    fileDir,
+    sessionId,
+    mode: context.extensionMode === vscode.ExtensionMode.Development
+      || context.extensionMode === vscode.ExtensionMode.Test
+        ? 'development' : 'production',
+  });
+  context.subscriptions.push({ dispose: () => { void logger.dispose(); } });
+
+  // SDK bridge: pipe Ditto SDK logs into our Logger under the 'sdk' tag.
+  const sdkLog = logger.withTag('sdk');
+  const sdkMap: Record<string, 'error'|'warn'|'info'|'debug'|'trace'> = {
+    Error: 'error', Warning: 'warn', Info: 'info', Debug: 'debug', Verbose: 'trace',
+  };
+  (DittoLogger as any).customLogCallback = (sdkLevel: string, message: string) => {
+    const level = sdkMap[sdkLevel] ?? 'info';
+    sdkLog[level](message);
+  };
+
+  const log = logger.withTag('ext');
 
   const configStore = new ConfigStore(context.globalState);
   const secretStore = new SecretStore(context.secrets);
   const subscriptionStore = new SubscriptionStore(context.globalState);
-  const manager = new DittoManager(context, output);
+  const manager = new DittoManager(context, logger);
 
   const treeProvider = new DatabaseTreeProvider(configStore, id => manager.getStatus(id), subscriptionStore);
   context.subscriptions.push(manager.onStatusChange(() => treeProvider.refresh()));
@@ -100,16 +128,16 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push({ dispose: () => manager.disconnect() });
-  output.appendLine('Ditto Edge Studio extension activated.');
+  log.info('Ditto Edge Studio extension activated.');
 
   process.on('uncaughtException', (err) => {
-    output.appendLine(`UNCAUGHT EXCEPTION: ${err.stack ?? err.message}`);
+    log.error('UNCAUGHT EXCEPTION', { stack: err.stack ?? err.message });
   });
   process.on('unhandledRejection', (reason) => {
-    output.appendLine(`UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : String(reason)}`);
+    log.error('UNHANDLED REJECTION', { reason: reason instanceof Error ? reason.stack : String(reason) });
   });
 }
 
 export function deactivate() {
-  output?.appendLine('Ditto Edge Studio extension deactivated.');
+  // logger.dispose() runs via context.subscriptions
 }

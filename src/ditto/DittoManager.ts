@@ -5,6 +5,7 @@ import {
   Ditto,
   DittoConfig,
   Authenticator,
+  Logger as DittoLogger,
   type PresenceGraph,
 } from '@dittolive/ditto';
 import type {
@@ -16,6 +17,7 @@ import type {
 } from '../models/DittoConfig.js';
 import type { DatabaseStatus } from '../tree/DatabaseTreeProvider.js';
 import { mergePeerList, parseSyncStatusRow, type SyncStatusRow } from './peer-info.js';
+import type { Logger } from '../logging/types.js';
 
 type StatusListener = (status: DatabaseStatus, configId: string | null) => void;
 type PresenceListener = (snapshot: PeerListSnapshot) => void;
@@ -47,10 +49,14 @@ export class DittoManager {
   private previousOrder: string[] = [];
   private latestSnapshot: PeerListSnapshot = { local: null, remote: [] };
 
+  private readonly log: Logger;
+
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly output: vscode.OutputChannel
-  ) {}
+    parentLogger: Logger
+  ) {
+    this.log = parentLogger.withTag('ext:DittoManager');
+  }
 
   getStatus(configId: string): DatabaseStatus {
     if (!this.session) { return 'idle'; }
@@ -95,6 +101,15 @@ export class DittoManager {
           : { mode: 'smallPeersOnly' as const },
         persistenceDir
       );
+
+      // Apply per-DB SDK log level before opening the SDK.
+      const sdkLevelMap: Record<string, any> = {
+        error: 'Error', warning: 'Warning', warn: 'Warning',
+        info: 'Info', debug: 'Debug', verbose: 'Verbose', trace: 'Verbose',
+      };
+      (DittoLogger as any).minimumLogLevel = sdkLevelMap[config.logLevel] ?? 'Info';
+      this.log.info('Applied per-DB SDK log level', { configId: config.id, level: config.logLevel });
+
       const ditto = await Ditto.open(dittoCfg);
 
       ditto.updateTransportConfig((c) => {
@@ -133,16 +148,16 @@ export class DittoManager {
           const handle = ditto.sync.registerSubscription(sub.query);
           this.session.subscriptionHandles.set(sub.id, handle);
         } catch (err) {
-          this.output.appendLine(`Failed to register subscription "${sub.name}": ${err instanceof Error ? err.message : String(err)}`);
+          this.log.warn('Subscription register failed', { name: sub.name, err: err instanceof Error ? err.message : String(err) });
         }
       }
 
       this.setSyncState('active', config.id);
       this.setStatus('active', config.id);
       this.firePresence();
-      this.output.appendLine(`Connected to "${config.name}".`);
+      this.log.info('Connected', { name: config.name, configId: config.id, mode: config.mode });
     } catch (err) {
-      this.output.appendLine(`Connect failed: ${err instanceof Error ? err.stack : String(err)}`);
+      this.log.error('Connect failed', { configId: config.id, err: err instanceof Error ? err.stack : String(err) });
       this.setStatus('error', config.id);
       throw err;
     }
@@ -168,7 +183,7 @@ export class DittoManager {
       this.firePresence();
       this.setSyncState('idle', null);
       this.setStatus('idle', null);
-      this.output.appendLine('Disconnected.');
+      this.log.info('Disconnected');
     }
   }
 
@@ -238,7 +253,7 @@ export class DittoManager {
       const subHandle = ditto.sync.registerSubscription(query);
       this.session.subscriptionHandles.set(SYNC_STATUS_HANDLE_ID, subHandle);
     } catch (err) {
-      this.output.appendLine(`__sync_status subscription failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.log.warn('__sync_status subscription failed', { err: err instanceof Error ? err.message : String(err) });
       return;
     }
     try {
@@ -254,7 +269,7 @@ export class DittoManager {
       });
       this.session.syncStatusObserver = obs as any;
     } catch (err) {
-      this.output.appendLine(`__sync_status observer failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.log.warn('__sync_status observer failed', { err: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -272,7 +287,7 @@ export class DittoManager {
         sdkVersion: typeof first.ditto_sdk_version === 'string' ? first.ditto_sdk_version : '',
       };
     } catch (err) {
-      this.output.appendLine(`__small_peer_info query failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.log.warn('__small_peer_info query failed', { err: err instanceof Error ? err.message : String(err) });
       this.localPeerInfo = null;
     }
   }
