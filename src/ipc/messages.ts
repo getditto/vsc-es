@@ -4,6 +4,13 @@ import type {
   PeerListSnapshot,
 } from '../models/DittoConfig.js';
 import type { LogLevel } from '../logging/types.js';
+import type {
+  InspectorContent,
+  QueryInspectorTab,
+  QueryResultMetadata,
+} from '../inspector/inspector-state.js';
+import type { QueryHistoryEntry } from '../storage/QueryHistoryStore.js';
+import type { QueryFavoriteEntry } from '../storage/QueryFavoritesStore.js';
 
 // ─── Database editor panel ─────────────────────────────────────
 export type EditorIn =
@@ -31,11 +38,33 @@ export type PeerOut =
 
 // ─── Query editor panel ────────────────────────────────────────
 export type QueryIn =
-  | { type: 'query.run'; query: string };
+  | { type: 'query.run'; query: string }
+  | { type: 'query.rowSelected'; rowJson: string | null }
+  | { type: 'query.starCurrent'; query: string };
 
 export type QueryOut =
-  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number }
+  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: QueryResultMetadata }
   | { type: 'query.error'; message: string };
+
+// ─── Inspector view (auxiliary bar) ────────────────────────────
+export type InspectorIn =
+  | { type: 'inspector.tabSelected'; tab: QueryInspectorTab }
+  | { type: 'inspector.loadQueryInEditor'; query: string }
+  | { type: 'inspector.deleteHistoryEntry'; id: string }
+  | { type: 'inspector.addFavorite'; query: string }
+  | { type: 'inspector.removeFavorite'; id: string }
+  | { type: 'inspector.fetchAttachment'; token: unknown; tokenId: string }
+  | { type: 'inspector.saveAttachment'; token: unknown; tokenId: string };
+
+export type InspectorOut =
+  | { type: 'inspector.contentChanged'; content: InspectorContent }
+  | { type: 'inspector.historyChanged'; databaseId: string; entries: QueryHistoryEntry[] }
+  | { type: 'inspector.favoritesChanged'; databaseId: string; entries: QueryFavoriteEntry[] }
+  | { type: 'inspector.helpHtml'; kind: 'subscription' | 'query'; uri: string }
+  | { type: 'inspector.attachmentProgress'; tokenId: string; pct: number }
+  | { type: 'inspector.attachmentLoaded'; tokenId: string; mimeType: string; webviewUri: string }
+  | { type: 'inspector.attachmentSaved'; tokenId: string; path: string }
+  | { type: 'inspector.attachmentError'; tokenId: string; message: string };
 
 // ─── Logging (any panel webview → host, host → any webview) ──────
 /** Webview → host: emit a log line. */
