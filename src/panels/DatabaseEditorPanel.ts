@@ -98,7 +98,7 @@ export class DatabaseEditorPanel {
       }
       await this.configs.save(msg.config);
       await this.secrets.write(msg.config.id, msg.secrets);
-      vscode.window.showInformationMessage(`Saved database "${msg.config.name}".`);
+      vscode.window.showInformationMessage(`Saved connection "${msg.config.name}".`);
       this.panel.dispose();
     }
   }

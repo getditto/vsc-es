@@ -6,6 +6,8 @@ import { ConfigStore } from './storage/ConfigStore.js';
 import { SecretStore } from './storage/SecretStore.js';
 import { SubscriptionStore } from './storage/SubscriptionStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
+import { LoggingTreeProvider } from './tree/LoggingTreeProvider.js';
+import { HelpTreeProvider } from './tree/HelpTreeProvider.js';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
 import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
@@ -66,6 +68,12 @@ export function activate(context: vscode.ExtensionContext) {
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
 
+  const loggingProvider = new LoggingTreeProvider(logger);
+  context.subscriptions.push(vscode.window.createTreeView('dittoLogging', { treeDataProvider: loggingProvider }));
+
+  const helpProvider = new HelpTreeProvider();
+  context.subscriptions.push(vscode.window.createTreeView('dittoHelp', { treeDataProvider: helpProvider }));
+
   context.subscriptions.push(
     vscode.commands.registerCommand('dittoVsce.registerDatabase', () => {
       DatabaseEditorPanel.show(context, configStore, secretStore, logger);
@@ -78,7 +86,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (node?.kind !== 'database') { return; }
       if (manager.getActiveConfigId() === node.config.id) { await manager.disconnect(); }
       const ok = await vscode.window.showWarningMessage(
-        `Delete database "${node.config.name}"?`, { modal: true }, 'Delete'
+        `Delete connection "${node.config.name}"?`, { modal: true }, 'Delete'
       );
       if (ok === 'Delete') {
         await configStore.delete(node.config.id);
@@ -125,7 +133,7 @@ export function activate(context: vscode.ExtensionContext) {
         ? node.databaseId
         : manager.getActiveConfigId();
       if (!databaseId) {
-        vscode.window.showWarningMessage('Connect to a database first.');
+        vscode.window.showWarningMessage('Open a connection first.');
         return;
       }
       SubscriptionEditorPanel.show(context, subscriptionStore, manager, databaseId, logger);
