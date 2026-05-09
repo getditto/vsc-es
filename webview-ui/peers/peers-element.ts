@@ -131,12 +131,46 @@ export class PeerListing extends LitElement {
   private tickInterval: number | null = null;
 
   static styles = css`
-    @import url('./codicon.css');
+    /* @font-face for codicon registers at document level via panelHtml's <link>;
+       the rules below define .codicon glyphs INSIDE shadow DOM (Lit Constructed
+       Stylesheets don't support @import, and class selectors don't cross
+       shadow boundaries). */
+    .codicon {
+      font: normal normal normal 16px/1 codicon;
+      display: inline-block;
+      text-decoration: none;
+      text-rendering: auto;
+      text-align: center;
+      text-transform: none;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      user-select: none;
+    }
+    .codicon-info::before        { content: '\\ea74'; }
+    .codicon-clock::before       { content: '\\ea82'; }
+    .codicon-terminal::before    { content: '\\ea85'; }
+    .codicon-broadcast::before   { content: '\\eaad'; }
+    .codicon-check::before       { content: '\\eab2'; }
+    .codicon-circuit-board::before { content: '\\eabe'; }
+    .codicon-device-mobile::before { content: '\\eadb'; }
+    .codicon-globe::before       { content: '\\eb01'; }
+    .codicon-link::before        { content: '\\eb15'; }
+    .codicon-package::before     { content: '\\eb29'; }
+    .codicon-question::before    { content: '\\eb32'; }
+    .codicon-radio-tower::before { content: '\\eb34'; }
+    .codicon-cloud::before       { content: '\\ebaa'; }
 
     :host {
       display: block;
       padding: 16px;
       font-family: var(--vscode-font-family);
+      color: var(--vscode-foreground);
+    }
+
+    .page-title {
+      font-size: 22px;
+      font-weight: 700;
+      margin: 0 0 12px 0;
       color: var(--vscode-foreground);
     }
 
@@ -187,15 +221,15 @@ export class PeerListing extends LitElement {
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 520px));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 14px;
     }
 
     .card {
-      min-height: 280px;
-      padding: 16px;
-      border-radius: 12px;
-      box-shadow: 0 3px 6px rgba(0, 0, 0, 0.25);
+      min-height: 200px;
+      padding: 14px;
+      border-radius: 10px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
       color: white;
       display: flex;
       flex-direction: column;
@@ -220,30 +254,31 @@ export class PeerListing extends LitElement {
     }
 
     .card-name {
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 600;
-      margin: 0 0 4px 0;
+      margin: 0 0 2px 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
     .card-os, .card-row {
-      font-size: 12px;
+      font-size: 11px;
       color: rgba(255, 255, 255, 0.85);
       display: flex;
       align-items: center;
       gap: 6px;
-      margin: 4px 0;
+      margin: 2px 0;
     }
     .card-os .codicon, .card-row .codicon {
-      font-size: 12px;
+      font-size: 11px;
+      flex-shrink: 0;
     }
 
     .card-id {
-      font-size: 11px;
-      font-family: var(--vscode-editor-font-family);
-      color: rgba(255, 255, 255, 0.80);
+      font-size: 10px;
+      font-family: var(--vscode-editor-font-family, monospace);
+      color: rgba(255, 255, 255, 0.75);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -258,47 +293,50 @@ export class PeerListing extends LitElement {
       display: flex;
       align-items: center;
       gap: 6px;
-      font-size: 13px;
+      font-size: 11px;
       flex-shrink: 0;
+      padding: 3px 8px;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
     }
     .status .dot {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
     }
 
     .divider {
       height: 1px;
-      background: rgba(255, 255, 255, 0.25);
-      margin: 12px 0;
+      background: rgba(255, 255, 255, 0.22);
+      margin: 10px 0;
     }
 
     .card-body {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
       flex: 1;
     }
 
     .badges {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
     }
 
     .badge {
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 10px;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.20);
-      border-radius: 6px;
-      font-size: 12px;
+      padding: 4px 8px;
+      background: rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 5px;
+      font-size: 11px;
     }
 
     details summary {
       cursor: pointer;
-      font-size: 12px;
+      font-size: 11px;
       color: rgba(255, 255, 255, 0.85);
       display: flex;
       align-items: center;
@@ -306,25 +344,26 @@ export class PeerListing extends LitElement {
       list-style: none;
     }
     details summary::-webkit-details-marker { display: none; }
-    details summary::before {
-      content: '\25B6';
-      font-size: 9px;
+    details summary::after {
+      content: '\\25B6';
+      font-size: 8px;
+      margin-left: auto;
       transition: transform 150ms;
     }
-    details[open] summary::before {
+    details[open] summary::after {
       transform: rotate(90deg);
     }
     details pre {
       margin: 6px 0 0 0;
-      padding: 8px;
-      background: rgba(0, 0, 0, 0.25);
+      padding: 6px 8px;
+      background: rgba(0, 0, 0, 0.28);
       border-radius: 4px;
-      font-size: 11px;
-      font-family: var(--vscode-editor-font-family);
+      font-size: 10px;
+      font-family: var(--vscode-editor-font-family, monospace);
       color: rgba(255, 255, 255, 0.85);
       white-space: pre-wrap;
       word-break: break-all;
-      max-height: 200px;
+      max-height: 160px;
       overflow: auto;
     }
 
@@ -343,10 +382,20 @@ export class PeerListing extends LitElement {
       border-radius: 6px;
     }
 
-    /* Local Peer card layout — same shell, different gradient applied inline */
-    .local-card .card-name { font-size: 14px; }
-    .local-card .card-row .label { color: rgba(255,255,255,0.70); flex: 1; }
-    .local-card .card-row .value { color: white; font-family: var(--vscode-editor-font-family); font-size: 12px; }
+    /* Local Peer card — black gradient, key/value layout */
+    .local-card .card-name { font-size: 13px; }
+    .local-card .card-row { justify-content: space-between; }
+    .local-card .card-row .label { color: rgba(255,255,255,0.65); }
+    .local-card .card-row .value {
+      color: white;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px;
+      text-align: right;
+      max-width: 60%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   `;
 
   connectedCallback(): void {
@@ -374,6 +423,7 @@ export class PeerListing extends LitElement {
 
   render() {
     return html`
+      <h1 class="page-title">Connected Peers</h1>
       <div class="header">
         <div class="dot ${this.sync}"></div>
         <span>${this.sync === 'active' ? 'Sync Active' : 'Sync Idle'}</span>

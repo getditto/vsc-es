@@ -42,9 +42,13 @@ export class PeerListingPanel {
     const scriptUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview-ui', 'peers.js')
     );
+    const styleUri = this.panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview-ui', 'codicon.css')
+    );
     this.panel.webview.html = panelHtml({
       title: 'Peer Listing',
       scriptUri,
+      styleUri,
       cspSource: this.panel.webview.cspSource
     });
 
