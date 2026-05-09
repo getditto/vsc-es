@@ -149,8 +149,8 @@ export class DittoManager {
       const ditto = await Ditto.open(dittoCfg);
 
       ditto.updateTransportConfig((c) => {
-        c.peerToPeer.bluetoothLE.isEnabled = false;
-        c.peerToPeer.awdl.isEnabled = false;
+        c.peerToPeer.awdl.isEnabled = true;
+        c.peerToPeer.bluetoothLE.isEnabled = true;
         c.peerToPeer.lan.isEnabled = true;
         c.peerToPeer.lan.isMdnsEnabled = true;
         c.peerToPeer.lan.isMulticastEnabled = true;
@@ -344,49 +344,66 @@ export class DittoManager {
 
   private attachPresenceObserver(ditto: Ditto) {
     let pending: PresenceGraph | null = null;
-    const flush = () => {
+    const flush = async () => {
       if (!this.session) { return; }
       this.session.presenceCoalesceTimer = undefined;
-      if (pending) {
-        this.latestPresence = pending;
-        pending = null;
-        this.firePresence();
-      }
+      if (!pending) { return; }
+      const graph = pending;
+      pending = null;
+      // Refetch sync metrics on every presence emission. Mirrors SwiftUI:
+      // SystemRepository runs a one-shot SELECT * FROM system:data_sync_info
+      // inside the presence callback. Cheap — the 250ms coalesce caps the
+      // rate, and a failure here just degrades to presence-only data.
+      await this.refreshSyncMetrics(ditto);
+      // Bail if the session was torn down during the await.
+      if (!this.session) { return; }
+      this.latestPresence = graph;
+      this.firePresence();
     };
     const observer = ditto.presence.observe((graph: PresenceGraph) => {
       pending = graph;
       if (this.session && !this.session.presenceCoalesceTimer) {
-        this.session.presenceCoalesceTimer = setTimeout(flush, 250);
+        this.session.presenceCoalesceTimer = setTimeout(() => { void flush(); }, 250);
       }
     });
     if (this.session) { this.session.presenceObserver = observer as any; }
   }
 
-  private attachSyncStatusObserver(ditto: Ditto) {
-    if (!this.session) { return; }
-    const query = 'SELECT * FROM __sync_status';
+  /**
+   * Refresh `syncStatusByPeerKey` from the SDK's `system:data_sync_info`
+   * collection. This is the canonical source for per-peer sync metrics
+   * (commit ids, last-update timestamps, is_ditto_server flag) — SwiftUI
+   * Edge Studio reads from the same collection.
+   *
+   * Implemented as a one-shot DQL query rather than a live observer because
+   * `system:*` collections don't accept sync subscriptions and our prior
+   * `__sync_status` observer was silently failing — leaving every peer card
+   * with no commitId, no last-update, and no Ditto Cloud Server row at all.
+   */
+  private async refreshSyncMetrics(ditto: Ditto): Promise<void> {
     try {
-      const subHandle = ditto.sync.registerSubscription(query);
-      this.session.subscriptionHandles.set(SYNC_STATUS_HANDLE_ID, subHandle);
+      const result = await ditto.store.execute('SELECT * FROM system:data_sync_info');
+      const next = new Map<string, SyncStatusRow>();
+      for (const item of (result as any).items) {
+        const row = parseSyncStatusRow(item.value);
+        if (row) { next.set(row._id, row); }
+      }
+      this.syncStatusByPeerKey = next;
     } catch (err) {
-      this.log.warn('__sync_status subscription failed', { err: err instanceof Error ? err.message : String(err) });
-      return;
-    }
-    try {
-      const obs = ditto.store.registerObserver(query, (result: any) => {
-        if (!this.session) { return; }
-        const next = new Map<string, SyncStatusRow>();
-        for (const item of result.items) {
-          const row = parseSyncStatusRow(item.value);
-          if (row) { next.set(row._id, row); }
-        }
-        this.syncStatusByPeerKey = next;
-        this.firePresence();
+      this.log.warn('system:data_sync_info query failed', {
+        err: err instanceof Error ? err.message : String(err),
       });
-      this.session.syncStatusObserver = obs as any;
-    } catch (err) {
-      this.log.warn('__sync_status observer failed', { err: err instanceof Error ? err.message : String(err) });
+      // Keep the previous map; cards still render from presence alone.
     }
+  }
+
+  /** Deprecated: pre-fix code attached an observer on `__sync_status`. The
+   *  metrics now refresh inside the presence-flush path via refreshSyncMetrics.
+   *  Kept as a noop placeholder for the connect() call site so the diff stays
+   *  small; can be deleted in a follow-up. */
+  private attachSyncStatusObserver(_ditto: Ditto): void {
+    // Intentionally empty — see refreshSyncMetrics().
+    void SYNC_STATUS_HANDLE_ID;   // retain export for compatibility
   }
 
   private async loadLocalPeerInfo(ditto: Ditto) {
