@@ -202,6 +202,67 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 6. Type `SELECT * FROM tasks` (or any collection where you've inserted data via the SwiftUI app or another peer) → confirm real document rows back.
 7. Run a query with heterogeneous documents (e.g., nested objects). Confirm columns reflect the union of keys; missing-key cells render empty; nested values render as `JSON.stringify` strings truncated at 120 chars with full value in tooltip.
 
+### T11 · Inspector basic flow
+
+**Pre-conditions:** registered DB (T4), connected (T5).
+
+**Steps:**
+
+1. Open Query Editor (click `Query Editor` leaf in tree).
+2. **First time only**: the auxiliary bar slides open showing the Inspector. (Subsequent opens won't auto-reveal.)
+3. Inspector shows the Query Inspector with 5 tabs: History, Favorites, JSON, Metrics, Help. Default tab: History (or last selected per-DB).
+4. Switch tabs by clicking the icons; each tab renders its empty state until populated.
+5. Close the Query Editor tab. Inspector auxiliary bar stays open but content shows "No active database" (briefly) or the last sticky kind.
+6. Reopen Query Editor → Inspector swaps content back. Last-selected tab is preserved per-DB.
+
+### T12 · Query Editor + Inspector roundtrip
+
+**Pre-conditions:** T11 just completed.
+
+**Steps:**
+
+1. In Query Editor, type `SELECT * FROM tasks` (or any valid DQL) and click Run.
+2. Verify Inspector History tab now shows that query.
+3. Click the query row in History → query loads into Query Editor textarea.
+4. Click a result row in the Query Editor's results table → Inspector JSON tab updates with the row's JSON.
+5. Click the star button on the Query Editor toolbar → query appears in Favorites tab.
+6. Switch to Metrics tab → Time, Results, Index, EXPLAIN block populated.
+7. Click a History entry's hover Trash icon → entry removed.
+
+### T13 · Attachment fetch
+
+**Pre-conditions:** a collection containing at least one document with an attachment field (image and non-image both helpful).
+
+**Steps:**
+
+1. Run `SELECT * FROM <collection-with-attachments>`.
+2. Click a result row → JSON tab shows JSON; below it, Attachment Viewer lists each detected attachment with metadata + Fetch button.
+3. Click Fetch on an image attachment → progress flickers → image renders inline.
+4. Click Fetch on a non-image attachment → "Save…" button appears. Click → save dialog → write to disk → confirmation.
+
+### T14 · Inspector + DB switch
+
+**Pre-conditions:** two DBs registered.
+
+**Steps:**
+
+1. Connect db-A. Open Query Editor; populate History with a couple of queries.
+2. Switch to db-B (per Lifecycle T17 flow).
+3. During the switch, Inspector goes blank or shows the brief `kind: 'none'` empty state.
+4. After db-B activates, Query Editor is restored only if db-B's panel set has it; Inspector content tracks the focused panel.
+5. Switch back to db-A → Inspector History tab shows db-A's prior history (proving per-DB persistence).
+
+### T15 · Inspector + DB delete
+
+**Pre-conditions:** db-A connected with Query history populated.
+
+**Steps:**
+
+1. Right-click db-A → Delete → confirm.
+2. Tree shows no row; auxiliary bar Inspector hides (`when` clause).
+3. Re-register db-A with same config; connect.
+4. Inspector History is empty (deleteDatabase cleared the per-DB stores).
+
 ### T17 · Switch with open panels
 
 **Pre-conditions:** two registered databases (db-A, db-B) with valid credentials.
