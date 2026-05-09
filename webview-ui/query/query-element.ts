@@ -96,6 +96,10 @@ export class QueryEditor extends LitElement {
       color: var(--vscode-descriptionForeground);
       font-size: 12px;
     }
+    .running-indicator {
+      color: var(--vscode-charts-orange);
+      font-style: italic;
+    }
     .view-toggle {
       display: flex;
       gap: 2px;
@@ -238,9 +242,13 @@ export class QueryEditor extends LitElement {
         </div>
       ` : nothing}
 
-      ${this.state === 'success' ? html`
+      ${this.state === 'success' || this.state === 'running' ? html`
         <div class="results-header">
-          <div class="results-meta">${this.rows.length} ${this.rows.length === 1 ? 'row' : 'rows'} · ${this.durationMs} ms</div>
+          <div class="results-meta">
+            ${this.state === 'running'
+              ? html`<span class="running-indicator">Running…</span>`
+              : html`${this.rows.length} ${this.rows.length === 1 ? 'row' : 'rows'} · ${this.durationMs} ms`}
+          </div>
           <div class="view-toggle">
             <button class=${this.view === 'table' ? 'active' : ''} @click=${() => this.view = 'table'}>Table</button>
             <button class=${this.view === 'json' ? 'active' : ''} @click=${() => this.view = 'json'}>JSON</button>
@@ -250,8 +258,8 @@ export class QueryEditor extends LitElement {
 
       <div class="results-body">
         ${this.state === 'idle' ? html`<div class="empty">Run a query to see results.</div>` : nothing}
-        ${this.state === 'success' && this.view === 'table' ? this.renderTable() : nothing}
-        ${this.state === 'success' && this.view === 'json' ? this.renderJson() : nothing}
+        ${(this.state === 'success' || this.state === 'running') && this.view === 'table' ? this.renderTable() : nothing}
+        ${(this.state === 'success' || this.state === 'running') && this.view === 'json' ? this.renderJson() : nothing}
       </div>
     `;
   }
@@ -264,7 +272,7 @@ export class QueryEditor extends LitElement {
       <table>
         <thead>
           <tr>
-            ${this.columns.map(c => html`<th>${c}</th>`)}
+            ${this.columns.map(c => html`<th scope="col">${c}</th>`)}
           </tr>
         </thead>
         <tbody>
