@@ -1,0 +1,60 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { formatLogLine } from '../logging/format.js';
+
+test('formatLogLine: timestamp, level, tag, message', () => {
+  const line = formatLogLine({
+    timestamp: new Date('2026-05-09T19:42:11.382Z'),
+    level: 'info',
+    tag: 'ext:DittoManager',
+    message: 'Connected',
+    ctx: undefined,
+  });
+  assert.equal(line, '2026-05-09T19:42:11.382Z  INFO   [ext:DittoManager]  Connected');
+});
+
+test('formatLogLine: with context, JSON-stringified', () => {
+  const line = formatLogLine({
+    timestamp: new Date('2026-05-09T19:42:11.382Z'),
+    level: 'info',
+    tag: 'ext:DittoManager',
+    message: 'Connected',
+    ctx: { databaseId: 'abc-123', mode: 'server' },
+  });
+  assert.match(line, /^2026-05-09T19:42:11.382Z  INFO   \[ext:DittoManager\]  Connected  /);
+  assert.match(line, /\{"databaseId":"abc-123","mode":"server"\}$/);
+});
+
+test('formatLogLine: no tag falls back to bare label', () => {
+  const line = formatLogLine({
+    timestamp: new Date('2026-05-09T19:42:11.382Z'),
+    level: 'warn',
+    tag: undefined,
+    message: 'Something',
+    ctx: undefined,
+  });
+  assert.equal(line, '2026-05-09T19:42:11.382Z  WARN   Something');
+});
+
+test('formatLogLine: empty ctx object treated as no ctx', () => {
+  const line = formatLogLine({
+    timestamp: new Date('2026-05-09T19:42:11.382Z'),
+    level: 'debug',
+    tag: 'ext',
+    message: 'Hi',
+    ctx: {},
+  });
+  assert.equal(line, '2026-05-09T19:42:11.382Z  DEBUG  [ext]  Hi');
+});
+
+test('formatLogLine: multi-line message escapes newlines in display but preserves them in file', () => {
+  // For v1: newlines pass through. The channel and file both render multi-line strings naturally.
+  const line = formatLogLine({
+    timestamp: new Date('2026-05-09T19:42:11.382Z'),
+    level: 'error',
+    tag: 'ext',
+    message: 'line1\nline2',
+    ctx: undefined,
+  });
+  assert.equal(line, '2026-05-09T19:42:11.382Z  ERROR  [ext]  line1\nline2');
+});
