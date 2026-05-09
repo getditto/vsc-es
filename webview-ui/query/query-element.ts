@@ -366,6 +366,7 @@ export class QueryEditor extends LitElement {
       .value=${doc}
       .ranges=${ranges}
       .selectedIndex=${this.selectedRowIndex ?? -1}
+      wrap
       @documentSelected=${(e: CustomEvent<{ index: number }>) => this.setSelected(e.detail.index)}
       style="display:block; height: 100%;"
     ></json-viewer>`;
