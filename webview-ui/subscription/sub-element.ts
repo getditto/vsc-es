@@ -6,7 +6,7 @@ type In = { type: 'sub.init'; id?: string; name: string; query: string };
 
 @customElement('ditto-subscription-editor')
 export class SubscriptionEditor extends LitElement {
-  @state() private id: string | undefined;
+  @state() private subId: string | undefined;
   @state() private name = '';
   @state() private query = '';
 
@@ -32,12 +32,12 @@ export class SubscriptionEditor extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     onHostMessage<In>(msg => {
-      if (msg.type === 'sub.init') { this.id = msg.id; this.name = msg.name; this.query = msg.query; }
+      if (msg.type === 'sub.init') { this.subId = msg.id; this.name = msg.name; this.query = msg.query; }
     });
   }
 
   private isValid() { return this.name.trim().length > 0 && this.query.trim().length > 0; }
-  private save() { postToHost({ type: 'sub.save', id: this.id, name: this.name, query: this.query }); }
+  private save() { postToHost({ type: 'sub.save', id: this.subId, name: this.name, query: this.query }); }
   private cancel() { postToHost({ type: 'sub.cancel' }); }
 
   render() {
