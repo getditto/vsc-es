@@ -57,7 +57,7 @@ export class PeerListingPanel {
     const cfg = configs.get(databaseId);
     this.panel = vscode.window.createWebviewPanel(
       'dittoPeerListing',
-      `Peers — ${cfg?.name ?? 'Unknown'}`,
+      `Presence — ${cfg?.name ?? 'Unknown'}`,
       vscode.ViewColumn.Active,
       {
         enableScripts: true,

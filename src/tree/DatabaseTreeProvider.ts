@@ -171,11 +171,15 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         return item;
       }
       case 'sectionHeader': {
-        // Non-clickable, dimmed row used to visually group the data-related
-        // children (Subscriptions, future Collections) apart from the
-        // feature shortcuts (Peer Listing, Query Editor) below.
-        const item = new vscode.TreeItem(node.label.toUpperCase(), vscode.TreeItemCollapsibleState.None);
-        item.description = '─';
+        // Non-clickable, dimmed row used to visually group children. The
+        // 'features' section gets an empty label (just a thin rule) so the
+        // shortcut rows below read as their own group without a heading.
+        const showLabel = node.id !== 'features';
+        const item = new vscode.TreeItem(
+          showLabel ? node.label.toUpperCase() : '',
+          vscode.TreeItemCollapsibleState.None,
+        );
+        item.description = showLabel ? '─' : '─────';
         item.contextValue = 'sectionHeader';
         item.id = `section.${node.databaseId}.${node.id}`;
         return item;
@@ -237,11 +241,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         return item;
       }
       case 'peerListing': {
-        const item = new vscode.TreeItem('Peer Listing');
+        const item = new vscode.TreeItem('Presence');
         item.iconPath = new vscode.ThemeIcon('broadcast');
         item.contextValue = 'peerListing';
         item.id = `peers.${node.databaseId}`;
-        item.command = { command: 'dittoVsce.openPeerListing', title: 'Open Peer Listing', arguments: [node.databaseId] };
+        item.command = { command: 'dittoVsce.openPeerListing', title: 'Open Presence', arguments: [node.databaseId] };
         return item;
       }
       case 'queryEditor': {

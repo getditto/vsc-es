@@ -423,7 +423,7 @@ export class PeerListing extends LitElement {
 
   render() {
     return html`
-      <h1 class="page-title">Connected Peers</h1>
+      <h1 class="page-title">Presence</h1>
       <div class="header">
         <div class="dot ${this.sync}"></div>
         <span>${this.sync === 'active' ? 'Sync Active' : 'Sync Idle'}</span>
