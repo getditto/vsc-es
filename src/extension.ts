@@ -16,6 +16,7 @@ import { DittoManager } from './ditto/DittoManager.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
 import { performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
+import { attachSdkLogBridge } from './logging/sdk-bridge.js';
 import type { Logger, LogLevel } from './logging/types.js';
 import { InspectorController } from './inspector/InspectorController.js';
 import { InspectorViewProvider } from './inspector/InspectorViewProvider.js';
@@ -105,15 +106,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push({ dispose: () => { void logger.dispose(); } });
 
   // SDK bridge: pipe Ditto SDK logs into our Logger under the 'sdk' tag.
-  // `customLogCallback` is a getter-only static; install via `setCustomLogCallback`.
-  const sdkLog = logger.withTag('sdk');
-  const sdkMap: Record<string, 'error'|'warn'|'info'|'debug'|'trace'> = {
-    Error: 'error', Warning: 'warn', Info: 'info', Debug: 'debug', Verbose: 'trace',
-  };
-  void (DittoLogger as any).setCustomLogCallback((sdkLevel: string, message: string) => {
-    const level = sdkMap[sdkLevel] ?? 'info';
-    sdkLog[level](message);
-  });
+  attachSdkLogBridge(DittoLogger as unknown as Parameters<typeof attachSdkLogBridge>[0], logger.withTag('sdk'));
 
   const log = logger.withTag('ext');
 
