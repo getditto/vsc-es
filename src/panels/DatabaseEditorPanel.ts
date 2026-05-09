@@ -3,7 +3,8 @@ import { panelHtml } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
 import { newConfig, type StoredDittoConfig, type SecretSet } from '../models/DittoConfig.js';
-import type { EditorIn, EditorOut } from '../ipc/messages.js';
+import type { EditorIn, EditorOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { Logger } from '../logging/types.js';
 
 export class DatabaseEditorPanel {
   private static current: DatabaseEditorPanel | undefined;
@@ -12,14 +13,15 @@ export class DatabaseEditorPanel {
     context: vscode.ExtensionContext,
     configs: ConfigStore,
     secrets: SecretStore,
-    existing?: StoredDittoConfig
+    logger: Logger,
+    existing?: StoredDittoConfig,
   ) {
     if (DatabaseEditorPanel.current) {
       DatabaseEditorPanel.current.panel.reveal();
       DatabaseEditorPanel.current.init(existing);
       return;
     }
-    DatabaseEditorPanel.current = new DatabaseEditorPanel(context, configs, secrets, existing);
+    DatabaseEditorPanel.current = new DatabaseEditorPanel(context, configs, secrets, logger, existing);
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -29,7 +31,8 @@ export class DatabaseEditorPanel {
     private readonly context: vscode.ExtensionContext,
     private readonly configs: ConfigStore,
     private readonly secrets: SecretStore,
-    existing?: StoredDittoConfig
+    private readonly logger: Logger,
+    existing?: StoredDittoConfig,
   ) {
     this.panel = vscode.window.createWebviewPanel(
       'dittoDatabaseEditor',
@@ -51,8 +54,17 @@ export class DatabaseEditorPanel {
       cspSource: this.panel.webview.cspSource
     });
 
-    this.panel.webview.onDidReceiveMessage((msg: EditorIn) => this.handle(msg), undefined, this.disposables);
+    this.panel.webview.onDidReceiveMessage((msg: EditorIn | LogIn) => this.handle(msg), undefined, this.disposables);
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
+
+    // Push initial channel level to webview.
+    this.panel.webview.postMessage({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
+
+    // Subscribe to level changes; track disposable so we can clean up.
+    const levelSub = logger.onDidChangeChannelLevel((level) => {
+      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
+    });
+    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     // Send init payload after the webview script has had a chance to register its listener.
     setTimeout(() => this.init(existing), 50);
@@ -68,7 +80,12 @@ export class DatabaseEditorPanel {
 
   private post(msg: EditorOut) { this.panel.webview.postMessage(msg); }
 
-  private async handle(msg: EditorIn) {
+  private async handle(msg: EditorIn | LogIn) {
+    if (msg.type === 'log') {
+      const wlog = this.logger.withTag('webview:dittoDatabaseEditor');
+      wlog[msg.level](msg.message, msg.ctx);
+      return;
+    }
     if (msg.type === 'editor.cancel') {
       this.panel.dispose();
       return;

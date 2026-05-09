@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import { panelHtml } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
-import type { QueryIn, QueryOut } from '../ipc/messages.js';
+import type { QueryIn, QueryOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { Logger } from '../logging/types.js';
 
 function computeColumns(rows: Record<string, unknown>[]): string[] {
   const keys = new Set<string>();
@@ -22,14 +23,15 @@ export class QueryEditorPanel {
     context: vscode.ExtensionContext,
     manager: DittoManager,
     configs: ConfigStore,
-    databaseId: string
+    databaseId: string,
+    logger: Logger,
   ) {
     if (QueryEditorPanel.current) {
       QueryEditorPanel.current.panel.reveal();
       QueryEditorPanel.current.refreshTitle(databaseId, configs);
       return;
     }
-    QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId);
+    QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, logger);
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -40,7 +42,8 @@ export class QueryEditorPanel {
     private readonly context: vscode.ExtensionContext,
     private readonly manager: DittoManager,
     private readonly configs: ConfigStore,
-    databaseId: string
+    databaseId: string,
+    private readonly logger: Logger,
   ) {
     this.databaseId = databaseId;
     const cfg = configs.get(databaseId);
@@ -63,8 +66,17 @@ export class QueryEditorPanel {
       cspSource: this.panel.webview.cspSource,
     });
 
-    this.panel.webview.onDidReceiveMessage((msg: QueryIn) => this.handle(msg), undefined, this.disposables);
+    this.panel.webview.onDidReceiveMessage((msg: QueryIn | LogIn) => this.handle(msg), undefined, this.disposables);
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
+
+    // Push initial channel level to webview.
+    this.panel.webview.postMessage({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
+
+    // Subscribe to level changes; track disposable so we can clean up.
+    const levelSub = logger.onDidChangeChannelLevel((level) => {
+      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
+    });
+    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
   }
 
   private refreshTitle(databaseId: string, configs: ConfigStore) {
@@ -75,7 +87,12 @@ export class QueryEditorPanel {
 
   private post(msg: QueryOut) { this.panel.webview.postMessage(msg); }
 
-  private async handle(msg: QueryIn) {
+  private async handle(msg: QueryIn | LogIn) {
+    if (msg.type === 'log') {
+      const wlog = this.logger.withTag('webview:dittoQueryEditor');
+      wlog[msg.level](msg.message, msg.ctx);
+      return;
+    }
     if (msg.type !== 'query.run') { return; }
     if (this.manager.getActiveConfigId() !== this.databaseId) {
       this.post({ type: 'query.error', message: 'No active database. Connect first.' });

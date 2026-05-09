@@ -55,11 +55,11 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('dittoVsce.registerDatabase', () => {
-      DatabaseEditorPanel.show(context, configStore, secretStore);
+      DatabaseEditorPanel.show(context, configStore, secretStore, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.editDatabase', (node) => {
       if (node?.kind !== 'database') { return; }
-      DatabaseEditorPanel.show(context, configStore, secretStore, node.config);
+      DatabaseEditorPanel.show(context, configStore, secretStore, logger, node.config);
     }),
     vscode.commands.registerCommand('dittoVsce.deleteDatabase', async (node) => {
       if (node?.kind !== 'database') { return; }
@@ -105,7 +105,7 @@ export function activate(context: vscode.ExtensionContext) {
         ? databaseIdOrNode
         : databaseIdOrNode?.databaseId;
       if (!databaseId) { return; }
-      PeerListingPanel.show(context, manager, configStore, databaseId);
+      PeerListingPanel.show(context, manager, configStore, databaseId, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.newSubscription', (node) => {
       const databaseId = node?.kind === 'subscriptionsParent'
@@ -115,15 +115,15 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage('Connect to a database first.');
         return;
       }
-      SubscriptionEditorPanel.show(context, subscriptionStore, manager, databaseId);
+      SubscriptionEditorPanel.show(context, subscriptionStore, manager, databaseId, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.editSubscription', (node) => {
       if (node?.kind !== 'subscription') { return; }
-      SubscriptionEditorPanel.show(context, subscriptionStore, manager, node.databaseId, node.sub);
+      SubscriptionEditorPanel.show(context, subscriptionStore, manager, node.databaseId, logger, node.sub);
     }),
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
-      QueryEditorPanel.show(context, manager, configStore, databaseId);
+      QueryEditorPanel.show(context, manager, configStore, databaseId, logger);
     })
   );
 

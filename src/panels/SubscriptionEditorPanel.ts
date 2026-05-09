@@ -3,7 +3,8 @@ import { panelHtml } from './webview-utils.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { StoredSubscription } from '../models/DittoConfig.js';
-import type { SubIn, SubOut } from '../ipc/messages.js';
+import type { SubIn, SubOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { Logger } from '../logging/types.js';
 
 export class SubscriptionEditorPanel {
   private static current: SubscriptionEditorPanel | undefined;
@@ -13,14 +14,15 @@ export class SubscriptionEditorPanel {
     subs: SubscriptionStore,
     manager: DittoManager,
     databaseId: string,
-    existing?: StoredSubscription
+    logger: Logger,
+    existing?: StoredSubscription,
   ) {
     if (SubscriptionEditorPanel.current) {
       SubscriptionEditorPanel.current.panel.reveal();
       SubscriptionEditorPanel.current.init(databaseId, existing);
       return;
     }
-    SubscriptionEditorPanel.current = new SubscriptionEditorPanel(context, subs, manager, databaseId, existing);
+    SubscriptionEditorPanel.current = new SubscriptionEditorPanel(context, subs, manager, databaseId, logger, existing);
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -32,7 +34,8 @@ export class SubscriptionEditorPanel {
     private readonly subs: SubscriptionStore,
     private readonly manager: DittoManager,
     databaseId: string,
-    existing?: StoredSubscription
+    private readonly logger: Logger,
+    existing?: StoredSubscription,
   ) {
     this.databaseId = databaseId;
     this.panel = vscode.window.createWebviewPanel(
@@ -53,8 +56,17 @@ export class SubscriptionEditorPanel {
       scriptUri,
       cspSource: this.panel.webview.cspSource
     });
-    this.panel.webview.onDidReceiveMessage((msg: SubIn) => this.handle(msg), undefined, this.disposables);
+    this.panel.webview.onDidReceiveMessage((msg: SubIn | LogIn) => this.handle(msg), undefined, this.disposables);
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
+
+    // Push initial channel level to webview.
+    this.panel.webview.postMessage({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
+
+    // Subscribe to level changes; track disposable so we can clean up.
+    const levelSub = logger.onDidChangeChannelLevel((level) => {
+      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
+    });
+    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     setTimeout(() => this.init(databaseId, existing), 50);
   }
@@ -70,7 +82,12 @@ export class SubscriptionEditorPanel {
     this.panel.webview.postMessage(payload);
   }
 
-  private async handle(msg: SubIn) {
+  private async handle(msg: SubIn | LogIn) {
+    if (msg.type === 'log') {
+      const wlog = this.logger.withTag('webview:dittoSubscriptionEditor');
+      wlog[msg.level](msg.message, msg.ctx);
+      return;
+    }
     if (msg.type === 'sub.cancel') { this.panel.dispose(); return; }
     if (msg.type === 'sub.save') {
       if (!msg.name.trim() || !msg.query.trim()) {
