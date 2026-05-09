@@ -7,6 +7,9 @@ import {
   Authenticator,
   Logger as DittoLogger,
   type PresenceGraph,
+  type Attachment,
+  type AttachmentFetcher,
+  type AttachmentFetchEvent,
 } from '@dittolive/ditto';
 import type {
   StoredDittoConfig,
@@ -245,6 +248,24 @@ export class DittoManager {
     const h = this.session.subscriptionHandles.get(subId);
     if (h) { try { h.cancel(); } catch { /* ignore */ } }
     this.session.subscriptionHandles.delete(subId);
+  }
+
+  /**
+   * Begin fetching an attachment by token against the active database.
+   *
+   * Returns the SDK's {@link AttachmentFetcher} (which is `PromiseLike<Attachment | null>`)
+   * so callers can `await` it directly and obtain the attachment bytes via `attachment.data()`.
+   * Returns `null` if there is no active session.
+   *
+   * The optional `onEvent` callback receives `Progress`, `Completed`, and `Deleted` events
+   * during the fetch.
+   */
+  fetchAttachment(
+    token: { id: string; len: number | bigint; metadata: { [key: string]: string } },
+    onEvent?: (event: AttachmentFetchEvent) => void,
+  ): AttachmentFetcher | null {
+    if (!this.session) { return null; }
+    return this.session.ditto.store.fetchAttachment(token, onEvent);
   }
 
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel. */
