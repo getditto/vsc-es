@@ -340,9 +340,33 @@ export class QueryEditor extends LitElement {
     `;
   }
 
+  /** Stringifies rows as a JSON array AND records the [from,to] character
+   *  range of each top-level item, so the embedded <json-viewer> can map a
+   *  click position back to a row index. */
+  private buildJsonDoc(): { doc: string; ranges: { from: number; to: number }[] } {
+    if (this.rows.length === 0) { return { doc: '[]', ranges: [] }; }
+    const ranges: { from: number; to: number }[] = [];
+    let doc = '[\n';
+    for (let i = 0; i < this.rows.length; i++) {
+      const itemStr = JSON.stringify(this.rows[i], null, 2)
+        .split('\n').map(l => '  ' + l).join('\n');
+      const from = doc.length;
+      doc += itemStr;
+      const to = doc.length;
+      ranges.push({ from, to });
+      doc += i < this.rows.length - 1 ? ',\n' : '\n';
+    }
+    doc += ']';
+    return { doc, ranges };
+  }
+
   private renderJson() {
+    const { doc, ranges } = this.buildJsonDoc();
     return html`<json-viewer
-      .value=${JSON.stringify(this.rows, null, 2)}
+      .value=${doc}
+      .ranges=${ranges}
+      .selectedIndex=${this.selectedRowIndex ?? -1}
+      @documentSelected=${(e: CustomEvent<{ index: number }>) => this.setSelected(e.detail.index)}
       style="display:block; height: 100%;"
     ></json-viewer>`;
   }
