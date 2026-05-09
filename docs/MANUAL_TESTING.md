@@ -161,6 +161,47 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 - Output panel does not show any "Failed to register subscription" messages.
 - (Optional) If you have another Ditto peer (your SwiftUI app) inserting into the subscribed collection, verify the data syncs into the VS Code Ditto instance — there's no inline collection viewer in the POC, but you can confirm via the presence observer activity in Output if your SDK build emits that level of logging at `debug` log level.
 
+### T9 · Peer Listing — real data, SwiftUI parity
+
+**Pre-conditions:** A database connected (T5). For full verification, run the SwiftUI Ditto Edge Studio against the same database concurrently, or have another peer (mobile app, second machine) sync.
+
+**Steps:**
+
+1. Click `Peer Listing` tree leaf.
+2. **Local Peer card** (black gradient, top-left of grid):
+   - `Device Name = "VS Code"`.
+   - `SDK Language`, `SDK Platform`, `SDK Version` — populated with real values from `__small_peer_info`. No "unknown" anywhere.
+3. **Remote peer cards** (with at least one other peer reachable):
+   - Card gradient color matches dominant connection type:
+     - Cloud (purple) when connected via Ditto Server / WebSocket.
+     - Orange for WebSocket-only.
+     - Green for AccessPoint (LAN).
+     - Red for P2P WiFi.
+     - Blue for Bluetooth.
+     - Gray for unknown.
+   - `Ditto SDK: <version>` row shows real version, NOT "unknown".
+   - At least one connection badge with a real type (`Bluetooth` / `WebSocket` / `WiFi AP` / `P2P WiFi`), NOT "unknown".
+   - Status dot is green (or orange/red per actual session state).
+   - "Last update" timestamp updates as data flows. Stays "just now" / "3:49 PM" / "Mar 5, 3:49 PM" depending on staleness.
+4. Stop the SwiftUI peer (or other peer) → its card animates away within ~250ms.
+5. Restart it → card animates back in. Position is preserved across re-renders for already-known peers.
+6. Click Stop Sync → sync session status transitions through `Disconnected`. Cards stay visible (presence still observed). Click Start Sync → resumes.
+7. Double-click any peer ID → it briefly flashes green (copied to clipboard).
+
+### T10 · DQL Query Editor
+
+**Pre-conditions:** A database connected (T5).
+
+**Steps:**
+
+1. Click `Query Editor` tree leaf → panel opens with empty textarea and "Run a query to see results." empty state.
+2. Type `SELECT * FROM __small_peer_info` → press `Cmd+Enter` (or click Run).
+3. Confirm: results header shows `"1 row · <n> ms"`. Table renders with columns including `ditto_sdk_language`, `ditto_sdk_platform`, `ditto_sdk_version` and one row populated.
+4. Click the `JSON` toggle → same data as a JS array.
+5. Type a malformed query (`SELECT * FORM books`) → press Run. Confirm red error banner with the SDK's parse error. Textarea content preserved. Press `Escape` → banner clears.
+6. Type `SELECT * FROM tasks` (or any collection where you've inserted data via the SwiftUI app or another peer) → confirm real document rows back.
+7. Run a query with heterogeneous documents (e.g., nested objects). Confirm columns reflect the union of keys; missing-key cells render empty; nested values render as `JSON.stringify` strings truncated at 120 chars with full value in tooltip.
+
 ## Troubleshooting
 
 ### The Output panel shows `SPIKE: failed: …`
