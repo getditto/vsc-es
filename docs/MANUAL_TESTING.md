@@ -48,13 +48,13 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 1. Press `F5`.
 2. Click the Ditto icon in the activity bar of the Extension Development Host.
 
-**Expected:** The Databases view appears with no entries. Clicking the `＋` button shows a transient info message about "Register Database — not implemented yet".
+**Expected:** The Connections view appears with no entries. Clicking the `＋` button shows a transient info message about "Register Connection — not implemented yet".
 
 ### T3 · Open the Database Editor panel (UI placeholder)
 
 **Steps:**
 1. Press `F5`.
-2. Open the Ditto sidebar; click the `＋` button in the Databases title bar.
+2. Open the Ditto sidebar; click the `＋` button in the Connections title bar.
 
 **Expected:** A new editor tab opens with title "Register Database" containing the text "Database editor — UI under construction." (UI replaced in T4.)
 
@@ -64,13 +64,13 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 
 **Steps:**
 1. Press `F5`.
-2. Click `＋` in the Databases view title bar.
+2. Click `＋` in the Connections view title bar.
 3. With Server selected, fill in `Name` = "test-cloud", `Database ID` = your real Ditto app ID, `Token` = your playground token, `Auth URL` = your auth URL, `Websocket URL` = your websocket URL.
 4. Click Save.
 
 **Expected:**
-- Panel closes; toast "Saved database 'test-cloud'." appears.
-- Databases view shows a new row: `○ test-cloud (Server, idle)`.
+- Panel closes; toast "Saved connection 'test-cloud'." appears.
+- Connections view shows a new row: `○ test-cloud (Server, idle)`.
 
 **Edit flow:**
 5. Right-click the row → "Edit Configuration".
@@ -201,6 +201,23 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 5. Type a malformed query (`SELECT * FORM books`) → press Run. Confirm red error banner with the SDK's parse error. Textarea content preserved. Press `Escape` → banner clears.
 6. Type `SELECT * FROM tasks` (or any collection where you've inserted data via the SwiftUI app or another peer) → confirm real document rows back.
 7. Run a query with heterogeneous documents (e.g., nested objects). Confirm columns reflect the union of keys; missing-key cells render empty; nested values render as `JSON.stringify` strings truncated at 120 chars with full value in tooltip.
+
+### T16 · Logging — basic flow + export
+
+**Pre-conditions:** none.
+
+**Steps:**
+
+1. Press `F5`. Open the Ditto sidebar; verify three panels: **Connections**, **Logging**, **Help**.
+2. In the **Logging** panel: click **Application Log Level** → quick-pick opens with five levels and `info` marked. Choose `debug`. Description updates to `debug` immediately.
+3. Click **Open Output Channel** — the Ditto Edge Studio channel opens, showing previously-logged lines tagged `[ext:...]`, `[sdk]`, `[webview:...]`.
+4. Connect a database, run a query, click a few panels. New lines appear with timestamps + tags + levels.
+5. Click **Ditto SDK Log Level** → choose `verbose`. SDK lines start showing more detail.
+6. Click **Export Logs for Bug Report…** → confirm modal warning → "Open in Editor" → new untitled doc opens, language `log`.
+7. Save the document somewhere — verify file roundtrips cleanly.
+8. In **Help** panel: click each link, verify it opens the right URL in the system browser.
+9. Disconnect, then reconnect. Verify the SDK level reverts to the per-DB config default (not the live `verbose` we set).
+10. Lower channel level back to `info` via Logging panel; subsequent `debug`/`trace` lines stop appearing in the channel but **still appear in the file**.
 
 ## Troubleshooting
 
