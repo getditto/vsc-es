@@ -5,6 +5,7 @@ import { SubscriptionStore } from './storage/SubscriptionStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
 import { PeerListingPanel } from './panels/PeerListingPanel.js';
+import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 
@@ -94,7 +95,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
-      vscode.window.showInformationMessage('Query Editor — not implemented yet (Task 7).');
+      QueryEditorPanel.show(context, manager, configStore, databaseId);
     })
   );
 

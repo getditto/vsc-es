@@ -27,3 +27,11 @@ export type PeerIn =
 
 export type PeerOut =
   | { type: 'peer.state'; snapshot: PeerListSnapshot; sync: 'active' | 'idle' };
+
+// ─── Query editor panel ────────────────────────────────────────
+export type QueryIn =
+  | { type: 'query.run'; query: string };
+
+export type QueryOut =
+  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number }
+  | { type: 'query.error'; message: string };
