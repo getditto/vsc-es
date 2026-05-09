@@ -50,8 +50,7 @@
         {
           "type": "webview",
           "id": "dittoVsce.inspector",
-          "name": "Inspector",
-          "when": "dittoVsce.hasActiveDatabase"
+          "name": "Inspector"
         }
       ]
     },
