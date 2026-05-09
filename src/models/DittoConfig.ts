@@ -53,7 +53,7 @@ export type PeerOS = 'iOS' | 'Android' | 'macOS' | 'Linux' | 'Windows' | 'tvOS' 
 
 export type ConnectionType = 'P2PWiFi' | 'WebSocket' | 'AccessPoint' | 'Bluetooth';
 
-export type SyncSessionStatus = 'Connected' | 'Connecting' | 'Disconnected' | 'Unknown';
+export type SyncSessionStatus = 'Connected' | 'Connecting' | 'Disconnected';
 
 export interface ConnectionInfo {
   id: string;

@@ -61,7 +61,7 @@ function makePeerInfo(overrides: Partial<PeerInfo> = {}): PeerInfo {
     isDittoServer: false,
     deviceName: 'd',
     connections: [],
-    syncSessionStatus: 'Unknown',
+    syncSessionStatus: 'Connected',
     ...overrides,
   };
 }
@@ -93,10 +93,12 @@ test('each remote peer becomes a PeerInfo with id/deviceName/os/sdkVersion mappe
   assert.equal(snapshot.remote[0].deviceName, 'phone');
   assert.equal(snapshot.remote[0].os, 'Android');
   assert.equal(snapshot.remote[0].dittoSdkVersion, '4.10.0');
-  assert.equal(snapshot.remote[0].syncSessionStatus, 'Unknown');
+  // Presence-graph peer with no sync_status row defaults to 'Connected' —
+  // the presence-graph fact alone is evidence the peer is connected.
+  assert.equal(snapshot.remote[0].syncSessionStatus, 'Connected');
 });
 
-test('sync status row matched by peer key flows through; missing match defaults to Unknown', () => {
+test('sync status row matched by peer key flows through; missing match defaults to Connected', () => {
   const r1 = makeRemotePeer('k1');
   const r2 = makeRemotePeer('k2');
   const syncMap = new Map();
@@ -118,7 +120,7 @@ test('sync status row matched by peer key flows through; missing match defaults 
   assert.equal(k1.syncSessionStatus, 'Connected');
   assert.equal(k1.syncedUpToLocalCommitId, 42);
   assert.equal(k1.lastUpdateReceivedTime, 1700000000000);
-  assert.equal(k2.syncSessionStatus, 'Unknown');
+  assert.equal(k2.syncSessionStatus, 'Connected');
 });
 
 test('isDittoServer precedence: __sync_status.is_ditto_server overrides presence flag', () => {
@@ -244,6 +246,91 @@ test('mergePeerList filters out connections that don\'t involve local peer', () 
   assert.equal(snapshot.remote[0].connections.length, 1);
   assert.equal(snapshot.remote[0].connections[0].id, 'c-direct');
   assert.equal(snapshot.remote[0].connections[0].connectionType, 'AccessPoint');
+});
+
+test('parseSyncStatusRow coerces bigint commitId/timestamp (Node SDK quirk)', () => {
+  // The Ditto Node SDK returns large DQL integers as bigint, not number.
+  // A strict typeof===number check would silently drop them — that's why the
+  // commitId row + last-update row used to be missing on every peer card.
+  const row = parseSyncStatusRow({
+    _id: 'k1',
+    is_ditto_server: false,
+    documents: {
+      sync_session_status: 'Connected',
+      synced_up_to_local_commit_id: BigInt(99999999999),
+      last_update_received_time: BigInt(1700000000000),
+    },
+  });
+  assert.equal(row?.synced_up_to_local_commit_id, 99999999999);
+  assert.equal(row?.last_update_received_time, 1700000000000);
+});
+
+test('mergePeerList second pass adds Ditto Cloud Server peers from __sync_status', () => {
+  // Cloud peers don't appear in the presence graph; they live only in
+  // __sync_status. SwiftUI's pass 2 surfaces them; we mirror that.
+  const direct = makeRemotePeer('peer-a', 'AccessPoint');
+  const syncMap = new Map();
+  syncMap.set('peer-a', {
+    _id: 'peer-a',
+    is_ditto_server: false,
+    sync_session_status: 'Connected' as const,
+  });
+  syncMap.set('cloud-1', {
+    _id: 'cloud-1',
+    is_ditto_server: true,
+    sync_session_status: 'Connected' as const,
+    synced_up_to_local_commit_id: 12345,
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [direct] } as any,
+    syncMap,
+    null,
+    [],
+  );
+  assert.equal(snapshot.remote.length, 2);
+  const cloud = snapshot.remote.find(p => p.id === 'cloud-1')!;
+  assert.equal(cloud.isDittoServer, true);
+  assert.equal(cloud.deviceName, 'Ditto Cloud Server');
+  assert.deepEqual(cloud.connections, []);
+  assert.equal(cloud.syncSessionStatus, 'Connected');
+  assert.equal(cloud.syncedUpToLocalCommitId, 12345);
+});
+
+test('mergePeerList second pass skips Disconnected cloud servers (count!=cards bug guard)', () => {
+  // A past SwiftUI bug: counting Disconnected servers in pass 2 produced
+  // count=2 with 1 visible card. Guard against the same regression.
+  const syncMap = new Map();
+  syncMap.set('cloud-stale', {
+    _id: 'cloud-stale',
+    is_ditto_server: true,
+    sync_session_status: 'Disconnected' as const,
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [] } as any,
+    syncMap,
+    null,
+    [],
+  );
+  assert.equal(snapshot.remote.length, 0);
+});
+
+test('mergePeerList second pass does NOT duplicate cloud peer if it appears in presence', () => {
+  // If for some reason the cloud peer DID land in presence (defensive), pass 1
+  // owns it; pass 2 skips by id.
+  const cloudInPresence = makeRemotePeer('cloud-1', 'WebSocket');
+  const syncMap = new Map();
+  syncMap.set('cloud-1', {
+    _id: 'cloud-1',
+    is_ditto_server: true,
+    sync_session_status: 'Connected' as const,
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [cloudInPresence] } as any,
+    syncMap,
+    null,
+    [],
+  );
+  assert.equal(snapshot.remote.length, 1);
 });
 
 test('mergePeerList deduplicates connections by type', () => {

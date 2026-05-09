@@ -7,7 +7,7 @@ import { postToHost, onHostMessage } from '../shared/messaging.js';
 
 type PeerOS = 'iOS' | 'Android' | 'macOS' | 'Linux' | 'Windows' | 'tvOS' | 'Generic';
 type ConnectionType = 'P2PWiFi' | 'WebSocket' | 'AccessPoint' | 'Bluetooth';
-type SyncSessionStatus = 'Connected' | 'Connecting' | 'Disconnected' | 'Unknown';
+type SyncSessionStatus = 'Connected' | 'Connecting' | 'Disconnected';
 
 interface ConnectionInfo {
   id: string;
@@ -103,7 +103,6 @@ function statusDotColor(status: SyncSessionStatus): string {
     case 'Connected': return 'var(--vscode-charts-green)';
     case 'Connecting': return 'var(--vscode-charts-orange)';
     case 'Disconnected': return 'var(--vscode-charts-red)';
-    default: return 'var(--vscode-descriptionForeground)';
   }
 }
 

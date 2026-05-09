@@ -13,7 +13,9 @@ import type {
 export interface SyncStatusRow {
   _id: string;
   is_ditto_server: boolean;
-  sync_session_status: SyncSessionStatus;
+  /** May be undefined when the SDK row arrived without a recognized status —
+   *  the merge layer treats presence-graph peers as 'Connected' in that case. */
+  sync_session_status?: SyncSessionStatus;
   synced_up_to_local_commit_id?: number;
   last_update_received_time?: number;
 }
@@ -22,14 +24,25 @@ const SYNC_SESSION_STATUSES: readonly SyncSessionStatus[] = [
   'Connected',
   'Connecting',
   'Disconnected',
-  'Unknown',
 ];
 
-function coerceSessionStatus(raw: unknown): SyncSessionStatus {
+function coerceSessionStatus(raw: unknown): SyncSessionStatus | undefined {
   if (typeof raw === 'string' && (SYNC_SESSION_STATUSES as readonly string[]).includes(raw)) {
     return raw as SyncSessionStatus;
   }
-  return 'Unknown';
+  return undefined;
+}
+
+/**
+ * Coerce a numeric field that may arrive as `number` or `bigint` (the Ditto
+ * Node SDK returns large integers from DQL as bigint). A strict
+ * `typeof === 'number'` would silently drop them — that's why our peer cards
+ * had no commitId or last-update timestamps before this fix.
+ */
+function asNumber(v: unknown): number | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) { return v; }
+  if (typeof v === 'bigint') { return Number(v); }
+  return undefined;
 }
 
 export function parseSyncStatusRow(raw: unknown): SyncStatusRow | null {
@@ -40,13 +53,11 @@ export function parseSyncStatusRow(raw: unknown): SyncStatusRow | null {
   return {
     _id: r._id,
     is_ditto_server: r.is_ditto_server === true,
+    // Coerced to a known status or undefined; the merge layer decides the
+    // fallback (presence-graph peers default to 'Connected').
     sync_session_status: coerceSessionStatus(docs.sync_session_status),
-    synced_up_to_local_commit_id: typeof docs.synced_up_to_local_commit_id === 'number'
-      ? docs.synced_up_to_local_commit_id
-      : undefined,
-    last_update_received_time: typeof docs.last_update_received_time === 'number'
-      ? docs.last_update_received_time
-      : undefined,
+    synced_up_to_local_commit_id: asNumber(docs.synced_up_to_local_commit_id),
+    last_update_received_time: asNumber(docs.last_update_received_time),
   };
 }
 
@@ -120,9 +131,35 @@ function toPeerInfo(
     peerMetadata,
     identityMetadata,
     connections: filterAndDedupeConnections(peer.connections, localKey),
-    syncSessionStatus: syncRow?.sync_session_status ?? 'Unknown',
+    // Presence-graph peers are presumed Connected until sync_status says
+    // otherwise — matches SwiftUI's pass-1 behavior of synthesizing
+    // 'Connected' when sync metrics haven't arrived yet.
+    syncSessionStatus: syncRow?.sync_session_status ?? 'Connected',
     syncedUpToLocalCommitId: syncRow?.synced_up_to_local_commit_id,
     lastUpdateReceivedTime: syncRow?.last_update_received_time,
+  };
+}
+
+/**
+ * Build a synthetic peer for the Ditto Cloud Server. Cloud peers don't appear
+ * in the presence graph — they live only in `__sync_status`. SwiftUI does this
+ * in a "second pass" over sync metrics; we mirror that.
+ */
+function toCloudPeerInfo(syncRow: SyncStatusRow): PeerInfo {
+  return {
+    id: syncRow._id,
+    isDittoServer: true,
+    deviceName: 'Ditto Cloud Server',
+    os: undefined,
+    dittoSdkVersion: undefined,
+    peerMetadata: undefined,
+    identityMetadata: undefined,
+    // No graph-level connections; the cloud relationship is implicit.
+    // dominantConnectionType() routes purely on isDittoServer.
+    connections: [],
+    syncSessionStatus: syncRow.sync_session_status ?? 'Connected',
+    syncedUpToLocalCommitId: syncRow.synced_up_to_local_commit_id,
+    lastUpdateReceivedTime: syncRow.last_update_received_time,
   };
 }
 
@@ -141,8 +178,19 @@ export function mergePeerList(
   );
 
   const byId = new Map<string, PeerInfo>();
+  // Pass 1: presence-graph peers, enriched with sync-status metrics by id.
   for (const peer of directRemotePeers) {
     byId.set(peer.peerKey, toPeerInfo(peer, syncStatusByPeerKey.get(peer.peerKey), localKey));
+  }
+
+  // Pass 2: surface Ditto Cloud Server peers from __sync_status that aren't in
+  // the presence graph. Skip any whose status is explicitly Disconnected — a
+  // past SwiftUI bug counted those and produced count=2 with 1 visible card.
+  for (const [peerId, syncRow] of syncStatusByPeerKey) {
+    if (!syncRow.is_ditto_server) { continue; }
+    if (byId.has(peerId)) { continue; }
+    if (syncRow.sync_session_status === 'Disconnected') { continue; }
+    byId.set(peerId, toCloudPeerInfo(syncRow));
   }
 
   // Order preservation:
