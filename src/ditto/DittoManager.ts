@@ -27,6 +27,7 @@ import {
   type LifecycleState,
   type LifecycleAction,
 } from './lifecycle-state.js';
+import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 
 type StatusListener = (status: DatabaseStatus, configId: string | null) => void;
 type PresenceListener = (snapshot: PeerListSnapshot) => void;
@@ -268,14 +269,38 @@ export class DittoManager {
     return this.session.ditto.store.fetchAttachment(token, onEvent);
   }
 
-  /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel. */
-  async executeQuery(query: string): Promise<{ rows: Record<string, unknown>[]; durationMs: number }> {
+  /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
+   *  Tries `EXPLAIN <query>` first to harvest plan/index metadata; falls back to
+   *  the plain query if the SDK rejects the prefixed form.
+   */
+  async executeQuery(query: string): Promise<{ rows: Record<string, unknown>[]; durationMs: number; metadata: QueryResultMetadata }> {
     if (!this.session) { throw new Error('No active database.'); }
     const start = performance.now();
-    const result = await this.session.ditto.store.execute(query);
-    const rows = (result as any).items.map((i: any) => i.value as Record<string, unknown>);
-    const durationMs = Math.round(performance.now() - start);
-    return { rows, durationMs };
+    const explained = `EXPLAIN ${query}`;
+    let result: any;
+    let metadata: QueryResultMetadata = { durationMs: 0, timestamp: Date.now() };
+    try {
+      result = await this.session.ditto.store.execute(explained);
+      metadata = {
+        durationMs: Math.round(performance.now() - start),
+        resultCount: result.items.length,
+        usedIndex: !!result.metadata?.usedIndex,
+        explain: result.metadata?.explain ?? result.metadata?.queryPlan ?? '',
+        timestamp: Date.now(),
+      };
+    } catch (err) {
+      this.log.warn('EXPLAIN-prefixed execute failed; falling back to plain', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      result = await this.session.ditto.store.execute(query);
+      metadata = {
+        durationMs: Math.round(performance.now() - start),
+        resultCount: result.items.length,
+        timestamp: Date.now(),
+      };
+    }
+    const rows = (result.items as any[]).map((i: any) => i.value as Record<string, unknown>);
+    return { rows, durationMs: metadata.durationMs ?? 0, metadata };
   }
 
   // ─── private ─────────────────────────────────────────────────

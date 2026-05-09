@@ -18,6 +18,8 @@ import { performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
 import type { Logger, LogLevel } from './logging/types.js';
 import { InspectorController } from './inspector/InspectorController.js';
+import { QueryHistoryStore } from './storage/QueryHistoryStore.js';
+import { QueryFavoritesStore } from './storage/QueryFavoritesStore.js';
 
 let logger: Logger;
 
@@ -29,6 +31,8 @@ function buildSwitchDeps(
   subStore: SubscriptionStore,
   tracker: OpenPanelsTracker,
   inspector: InspectorController,
+  history: QueryHistoryStore,
+  favorites: QueryFavoritesStore,
   loggerArg: Logger,
 ): SwitchDeps {
   return {
@@ -63,7 +67,7 @@ function buildSwitchDeps(
       closePeers: () => PeerListingPanel.dispose(),
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
       showQuery: (databaseId) =>
-        QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, inspector, loggerArg),
+        QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, inspector, history, favorites, loggerArg),
       showPeers: (databaseId) =>
         PeerListingPanel.show(context, manager, configStore, databaseId, tracker, inspector, loggerArg),
     },
@@ -116,6 +120,8 @@ export function activate(context: vscode.ExtensionContext) {
   const tracker = new OpenPanelsTracker(context.globalState);
   const manager = new DittoManager(context, logger);
   const inspectorController = new InspectorController(context.globalState);
+  const historyStore = new QueryHistoryStore(context.globalState);
+  const favoritesStore = new QueryFavoritesStore(context.globalState);
 
   context.subscriptions.push(manager.onLifecycleStateChange(state => {
     if (state.kind !== 'active') inspectorController.clearOnDisconnect();
@@ -157,6 +163,8 @@ export function activate(context: vscode.ExtensionContext) {
         await secretStore.deleteAll(node.config.id);
         await subscriptionStore.deleteAll(node.config.id);
         await tracker.deleteAll(node.config.id);
+        await historyStore.deleteAll(node.config.id);
+        await favoritesStore.deleteAll(node.config.id);
         const dir = vscode.Uri.joinPath(context.globalStorageUri, 'dittoData', node.config.id);
         try { await vscode.workspace.fs.delete(dir, { recursive: true, useTrash: false }); } catch { /* fine if missing */ }
       }
@@ -175,7 +183,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Already connected to "${node.config.name}".`);
         return;
       }
-      const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, inspectorController, logger);
+      const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, inspectorController, historyStore, favoritesStore, logger);
       await performSwitch(deps, fromActive, node.config);
     }),
     vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
@@ -238,7 +246,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
-      QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, inspectorController, logger);
+      QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, inspectorController, historyStore, favoritesStore, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.setApplicationLogLevel', async () => {
       const picked = await pickLogLevel(logger.getChannelLevel(), 'Set Application Log Level');

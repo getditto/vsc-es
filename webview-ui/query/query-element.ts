@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
 
 type In =
-  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number }
+  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: unknown }
   | { type: 'query.error'; message: string };
 
 type View = 'table' | 'json';
@@ -39,6 +39,7 @@ export class QueryEditor extends LitElement {
   @state() private durationMs = 0;
   @state() private errorMessage: string | null = null;
   @state() private view: View = 'table';
+  @state() private selectedRowIndex: number | null = null;
 
   static styles = css`
     :host {
@@ -72,6 +73,7 @@ export class QueryEditor extends LitElement {
     .editor-toolbar {
       display: flex;
       justify-content: flex-end;
+      gap: 8px;
     }
     button.run {
       padding: 6px 16px;
@@ -83,6 +85,16 @@ export class QueryEditor extends LitElement {
       cursor: pointer;
     }
     button.run[disabled] { opacity: 0.5; cursor: not-allowed; }
+    button.star {
+      padding: 6px 12px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 2px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.star[disabled] { opacity: 0.5; cursor: not-allowed; }
 
     .results-header {
       display: flex;
@@ -158,6 +170,14 @@ export class QueryEditor extends LitElement {
       color: var(--vscode-descriptionForeground);
       font-style: italic;
     }
+    tbody tr { cursor: pointer; }
+    tbody tr.selected {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+    }
+    tbody tr.selected td.nullish {
+      color: var(--vscode-list-activeSelectionForeground);
+    }
 
     pre.json {
       margin: 0;
@@ -194,11 +214,13 @@ export class QueryEditor extends LitElement {
         this.durationMs = msg.durationMs;
         this.errorMessage = null;
         this.state = 'success';
+        this.selectedRowIndex = null;
       } else if (msg.type === 'query.error') {
         this.errorMessage = msg.message;
         this.rows = [];
         this.columns = [];
         this.state = 'error';
+        this.selectedRowIndex = null;
       }
     });
   }
@@ -207,7 +229,22 @@ export class QueryEditor extends LitElement {
     if (!this.query.trim() || this.state === 'running') { return; }
     this.state = 'running';
     this.errorMessage = null;
+    this.selectedRowIndex = null;
     postToHost({ type: 'query.run', query: this.query });
+  }
+
+  private setSelected(i: number) {
+    this.selectedRowIndex = i;
+    const row = this.rows[i];
+    postToHost({
+      type: 'query.rowSelected',
+      rowJson: row !== undefined ? JSON.stringify(row) : null,
+    });
+  }
+
+  private starCurrent() {
+    if (!this.query.trim()) { return; }
+    postToHost({ type: 'query.starCurrent', query: this.query });
   }
 
   private handleKeydown(e: KeyboardEvent) {
@@ -229,6 +266,9 @@ export class QueryEditor extends LitElement {
           @keydown=${this.handleKeydown}
         ></textarea>
         <div class="editor-toolbar">
+          <button class="star" ?disabled=${!this.query.trim()} title="Save current query to favorites" @click=${this.starCurrent}>
+            ★ Star
+          </button>
           <button class="run" ?disabled=${!this.query.trim() || this.state === 'running'} @click=${this.run}>
             ${this.state === 'running' ? 'Running…' : '▶ Run'}
           </button>
@@ -276,14 +316,21 @@ export class QueryEditor extends LitElement {
           </tr>
         </thead>
         <tbody>
-          ${this.rows.map(row => html`
-            <tr>
-              ${this.columns.map(c => {
-                const cell = renderCell(row[c]);
-                return html`<td class=${cell.nullish ? 'nullish' : ''} title=${cell.full}>${cell.display}</td>`;
-              })}
-            </tr>
-          `)}
+          ${this.rows.map((row, i) => {
+            const isSelected = this.selectedRowIndex === i;
+            return html`
+              <tr
+                class=${isSelected ? 'selected' : ''}
+                aria-selected=${isSelected ? 'true' : 'false'}
+                @click=${() => this.setSelected(i)}
+              >
+                ${this.columns.map(c => {
+                  const cell = renderCell(row[c]);
+                  return html`<td class=${cell.nullish ? 'nullish' : ''} title=${cell.full}>${cell.display}</td>`;
+                })}
+              </tr>
+            `;
+          })}
         </tbody>
       </table>
     `;

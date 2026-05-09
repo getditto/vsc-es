@@ -6,6 +6,8 @@ import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { QueryIn, QueryOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
+import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
+import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 
 function computeColumns(rows: Record<string, unknown>[]): string[] {
   const keys = new Set<string>();
@@ -28,6 +30,8 @@ export class QueryEditorPanel {
     databaseId: string,
     tracker: OpenPanelsTracker,
     inspector: InspectorController,
+    history: QueryHistoryStore,
+    favorites: QueryFavoritesStore,
     logger: Logger,
   ) {
     if (QueryEditorPanel.current) {
@@ -42,7 +46,7 @@ export class QueryEditorPanel {
       });
       QueryEditorPanel.current.dispose();
     }
-    QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, inspector, logger);
+    QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, inspector, history, favorites, logger);
   }
 
   static dispose(): void {
@@ -59,7 +63,9 @@ export class QueryEditorPanel {
     private readonly configs: ConfigStore,
     databaseId: string,
     private readonly tracker: OpenPanelsTracker,
-    inspector: InspectorController,
+    private readonly inspector: InspectorController,
+    private readonly history: QueryHistoryStore,
+    private readonly favorites: QueryFavoritesStore,
     private readonly logger: Logger,
   ) {
     this.databaseId = databaseId;
@@ -101,7 +107,7 @@ export class QueryEditorPanel {
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {
         if (e.webviewPanel.active) {
-          inspector.setActiveFeature({ kind: 'query', databaseId: this.databaseId });
+          this.inspector.setActiveFeature({ kind: 'query', databaseId: this.databaseId });
         }
       })
     );
@@ -115,15 +121,25 @@ export class QueryEditorPanel {
       wlog[msg.level](msg.message, msg.ctx);
       return;
     }
+    if (msg.type === 'query.rowSelected') {
+      this.inspector.setSelectedRowJson(msg.rowJson);
+      return;
+    }
+    if (msg.type === 'query.starCurrent') {
+      void this.favorites.add(this.databaseId, msg.query);
+      return;
+    }
     if (msg.type !== 'query.run') { return; }
     if (this.manager.getActiveConfigId() !== this.databaseId) {
       this.post({ type: 'query.error', message: 'No active database. Connect first.' });
       return;
     }
     try {
-      const { rows, durationMs } = await this.manager.executeQuery(msg.query);
+      const { rows, durationMs, metadata } = await this.manager.executeQuery(msg.query);
       const columns = computeColumns(rows);
-      this.post({ type: 'query.result', rows, columns, durationMs });
+      this.post({ type: 'query.result', rows, columns, durationMs, metadata });
+      this.inspector.setLastResultMetadata(metadata);
+      void this.history.add(this.databaseId, msg.query);
     } catch (err) {
       this.post({ type: 'query.error', message: err instanceof Error ? err.message : String(err) });
     }
