@@ -225,6 +225,9 @@ export class QueryEditor extends LitElement {
         this.selectedRowIndex = null;
       } else if (msg.type === 'query.setText') {
         this.query = msg.text;
+        // Sync the host immediately so the tab title matches the loaded query
+        // (no debounce needed — this is a deliberate user action).
+        postToHost({ type: 'query.textChanged', text: this.query });
       }
     });
   }
@@ -235,6 +238,21 @@ export class QueryEditor extends LitElement {
     this.errorMessage = null;
     this.selectedRowIndex = null;
     postToHost({ type: 'query.run', query: this.query });
+  }
+
+  private titleDebounceHandle: number | undefined;
+
+  /** Updates local query state and notifies the host (debounced) so the
+   *  editor tab title can mirror the current query text. */
+  private onQueryInput(value: string) {
+    this.query = value;
+    if (this.titleDebounceHandle !== undefined) {
+      window.clearTimeout(this.titleDebounceHandle);
+    }
+    this.titleDebounceHandle = window.setTimeout(() => {
+      this.titleDebounceHandle = undefined;
+      postToHost({ type: 'query.textChanged', text: this.query });
+    }, 200);
   }
 
   private setSelected(i: number) {
@@ -266,7 +284,7 @@ export class QueryEditor extends LitElement {
         <textarea
           .value=${this.query}
           placeholder="Type a DQL query, e.g. SELECT * FROM __small_peer_info"
-          @input=${(e: Event) => this.query = (e.target as HTMLTextAreaElement).value}
+          @input=${(e: Event) => this.onQueryInput((e.target as HTMLTextAreaElement).value)}
           @keydown=${this.handleKeydown}
         ></textarea>
         <div class="editor-toolbar">

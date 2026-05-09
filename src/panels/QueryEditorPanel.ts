@@ -58,6 +58,22 @@ export class QueryEditorPanel {
 
   loadQuery(query: string): void {
     this.panel.webview.postMessage({ type: 'query.setText', text: query });
+    this.updateTabTitle(query);
+  }
+
+  /** Set the editor-tab title to the current query text — collapsing
+   *  whitespace/newlines and truncating to keep the tab readable.
+   *  Empty input falls back to "Query". */
+  private updateTabTitle(text: string): void {
+    const collapsed = text.replace(/\s+/g, ' ').trim();
+    const MAX = 60;
+    if (collapsed.length === 0) {
+      this.panel.title = 'Query';
+    } else if (collapsed.length <= MAX) {
+      this.panel.title = collapsed;
+    } else {
+      this.panel.title = collapsed.slice(0, MAX - 1) + '…';
+    }
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -76,10 +92,9 @@ export class QueryEditorPanel {
     private readonly logger: Logger,
   ) {
     this.databaseId = databaseId;
-    const cfg = configs.get(databaseId);
     this.panel = vscode.window.createWebviewPanel(
       'dittoQueryEditor',
-      `Query — ${cfg?.name ?? 'Unknown'}`,
+      'Query',
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -87,6 +102,10 @@ export class QueryEditorPanel {
         localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview-ui')],
       }
     );
+    this.panel.iconPath = {
+      light: vscode.Uri.joinPath(context.extensionUri, 'resources', 'ditto-icon-light.svg'),
+      dark:  vscode.Uri.joinPath(context.extensionUri, 'resources', 'ditto-icon-dark.svg'),
+    };
     const scriptUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview-ui', 'query.js')
     );
@@ -134,6 +153,10 @@ export class QueryEditorPanel {
     }
     if (msg.type === 'query.starCurrent') {
       void this.favorites.add(this.databaseId, msg.query);
+      return;
+    }
+    if (msg.type === 'query.textChanged') {
+      this.updateTabTitle(msg.text);
       return;
     }
     if (msg.type !== 'query.run') { return; }

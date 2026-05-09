@@ -40,7 +40,8 @@ export type PeerOut =
 export type QueryIn =
   | { type: 'query.run'; query: string }
   | { type: 'query.rowSelected'; rowJson: string | null }
-  | { type: 'query.starCurrent'; query: string };
+  | { type: 'query.starCurrent'; query: string }
+  | { type: 'query.textChanged'; text: string };
 
 export type QueryOut =
   | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: QueryResultMetadata }

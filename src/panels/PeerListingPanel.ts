@@ -65,6 +65,10 @@ export class PeerListingPanel {
         localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview-ui')]
       }
     );
+    this.panel.iconPath = {
+      light: vscode.Uri.joinPath(context.extensionUri, 'resources', 'ditto-icon-light.svg'),
+      dark:  vscode.Uri.joinPath(context.extensionUri, 'resources', 'ditto-icon-dark.svg'),
+    };
     const scriptUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview-ui', 'peers.js')
     );
