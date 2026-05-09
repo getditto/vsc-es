@@ -3,6 +3,7 @@ import type {
   SecretSet,
   PeerListSnapshot,
 } from '../models/DittoConfig.js';
+import type { LogLevel } from '../logging/types.js';
 
 // ─── Database editor panel ─────────────────────────────────────
 export type EditorIn =
@@ -35,3 +36,10 @@ export type QueryIn =
 export type QueryOut =
   | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number }
   | { type: 'query.error'; message: string };
+
+// ─── Logging (any panel webview → host, host → any webview) ──────
+/** Webview → host: emit a log line. */
+export type LogIn = { type: 'log'; level: LogLevel; message: string; ctx?: Record<string, unknown> };
+
+/** Host → webview: notify of a channel-level change so the webview can short-circuit. */
+export type LogOut = { type: 'log.levelChanged'; level: LogLevel };
