@@ -40,7 +40,7 @@ export class QueryEditor extends LitElement {
   @state() private columns: string[] = [];
   @state() private durationMs = 0;
   @state() private errorMessage: string | null = null;
-  @state() private view: View = 'table';
+  @state() private view: View = 'json';
   @state() private selectedRowIndex: number | null = null;
 
   static styles = css`
@@ -294,8 +294,8 @@ export class QueryEditor extends LitElement {
               : html`${this.rows.length} ${this.rows.length === 1 ? 'row' : 'rows'} · ${this.durationMs} ms`}
           </div>
           <div class="view-toggle">
-            <button class=${this.view === 'table' ? 'active' : ''} @click=${() => this.view = 'table'}>Table</button>
             <button class=${this.view === 'json' ? 'active' : ''} @click=${() => this.view = 'json'}>JSON</button>
+            <button class=${this.view === 'table' ? 'active' : ''} @click=${() => this.view = 'table'}>Table</button>
           </div>
         </div>
       ` : nothing}

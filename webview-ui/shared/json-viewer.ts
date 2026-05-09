@@ -15,8 +15,31 @@ import { LitElement, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView, lineNumbers, drawSelection, keymap } from '@codemirror/view';
-import { foldGutter, syntaxHighlighting, defaultHighlightStyle, foldKeymap } from '@codemirror/language';
+import { foldGutter, syntaxHighlighting, HighlightStyle, foldKeymap } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
 import { json } from '@codemirror/lang-json';
+
+/**
+ * High-contrast JSON token colors tuned for VS Code's default dark theme.
+ * Falls back to hard-coded hexes when the theme doesn't define the
+ * matching `--vscode-*` token color variable, so readability is consistent
+ * across themes (the CodeMirror `defaultHighlightStyle` was washed-out red
+ * on a dark background and effectively unreadable).
+ */
+const dittoJsonHighlight = HighlightStyle.define([
+  // object keys — light blue ("property" in VS Code dark+)
+  { tag: t.propertyName, color: 'var(--vscode-symbolIcon-propertyForeground, #9cdcfe)' },
+  // string values — orange/peach
+  { tag: t.string,       color: 'var(--vscode-debugTokenExpression-string, #ce9178)' },
+  // numbers — light green
+  { tag: t.number,       color: 'var(--vscode-debugTokenExpression-number, #b5cea8)' },
+  // booleans + null — blue keyword color
+  { tag: t.bool,         color: 'var(--vscode-debugTokenExpression-boolean, #569cd6)', fontWeight: 'bold' },
+  { tag: t.null,         color: 'var(--vscode-debugTokenExpression-boolean, #569cd6)', fontWeight: 'bold' },
+  // structural punctuation — soft foreground
+  { tag: t.punctuation,  color: 'var(--vscode-foreground)', opacity: '0.7' as unknown as string },
+  { tag: t.bracket,      color: 'var(--vscode-foreground)', opacity: '0.85' as unknown as string },
+]);
 
 @customElement('json-viewer')
 export class JsonViewer extends LitElement {
@@ -52,7 +75,7 @@ export class JsonViewer extends LitElement {
           lineNumbers(),
           foldGutter(),
           drawSelection(),
-          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          syntaxHighlighting(dittoJsonHighlight),
           keymap.of(foldKeymap),
           json(),
           this.readOnlyCompartment.of(EditorState.readOnly.of(true)),
@@ -81,14 +104,6 @@ export class JsonViewer extends LitElement {
               borderRadius: '3px',
               padding: '0 4px',
             },
-            // JSON token colors mapped from VS Code semantic token vars,
-            // with reasonable fallbacks for themes that don't define them.
-            '.tok-propertyName': { color: 'var(--vscode-symbolIcon-propertyForeground, #9cdcfe)' },
-            '.tok-string':       { color: 'var(--vscode-debugTokenExpression-string, #ce9178)' },
-            '.tok-number':       { color: 'var(--vscode-debugTokenExpression-number, #b5cea8)' },
-            '.tok-bool':         { color: 'var(--vscode-debugTokenExpression-boolean, #569cd6)' },
-            '.tok-null':         { color: 'var(--vscode-debugTokenExpression-boolean, #569cd6)' },
-            '.tok-punctuation':  { color: 'var(--vscode-foreground)', opacity: '0.7' },
           }),
         ],
       }),
