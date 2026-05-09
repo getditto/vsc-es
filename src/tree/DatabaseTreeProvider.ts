@@ -45,11 +45,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       if (node.status !== 'active') { return []; }
       const dbId = node.config.id;
       return [
-        // Data section: things the user drills into.
-        { kind: 'sectionHeader', databaseId: dbId, id: 'data', label: 'Data' },
         { kind: 'subscriptionsParent', databaseId: dbId },
         { kind: 'collectionsParent', databaseId: dbId },
-        // Feature section: things the user opens as editor tabs.
+        // Blank divider visually separates the data drill-ins above from the
+        // feature shortcuts below (rendered as a thin rule, no label).
         { kind: 'sectionHeader', databaseId: dbId, id: 'features', label: 'Features' },
         { kind: 'peerListing', databaseId: dbId },
         { kind: 'queryEditor', databaseId: dbId },

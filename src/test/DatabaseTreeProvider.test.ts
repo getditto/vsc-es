@@ -51,10 +51,9 @@ test('active database has section headers, Subscriptions parent, Collections par
   const [root] = await provider.getRootChildren();
   const children = await provider.getNodeChildren(root);
   assert.deepEqual(children.map(c => c.kind), [
-    'sectionHeader',       // Data
     'subscriptionsParent',
     'collectionsParent',
-    'sectionHeader',       // Features
+    'sectionHeader',       // blank divider before the feature shortcuts
     'peerListing',
     'queryEditor',
   ]);
