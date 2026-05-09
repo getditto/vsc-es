@@ -105,14 +105,15 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push({ dispose: () => { void logger.dispose(); } });
 
   // SDK bridge: pipe Ditto SDK logs into our Logger under the 'sdk' tag.
+  // `customLogCallback` is a getter-only static; install via `setCustomLogCallback`.
   const sdkLog = logger.withTag('sdk');
   const sdkMap: Record<string, 'error'|'warn'|'info'|'debug'|'trace'> = {
     Error: 'error', Warning: 'warn', Info: 'info', Debug: 'debug', Verbose: 'trace',
   };
-  (DittoLogger as any).customLogCallback = (sdkLevel: string, message: string) => {
+  void (DittoLogger as any).setCustomLogCallback((sdkLevel: string, message: string) => {
     const level = sdkMap[sdkLevel] ?? 'info';
     sdkLog[level](message);
-  };
+  });
 
   const log = logger.withTag('ext');
 
