@@ -89,8 +89,9 @@ async function pickLogLevel(current: LogLevel, title: string): Promise<LogLevel 
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  // Channel ownership: Logger.dispose() calls channelSink.dispose() which calls
+  // channel.dispose(). Don't also push to context.subscriptions or it double-disposes.
   const channel = vscode.window.createOutputChannel('Ditto Edge Studio', { log: true });
-  context.subscriptions.push(channel);
   const sessionId = crypto.randomUUID();
   const fileDir = path.join(context.globalStorageUri.fsPath, 'logs');
   logger = createLogger({
