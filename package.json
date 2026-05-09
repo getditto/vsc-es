@@ -20,7 +20,7 @@
         {
           "id": "dittoVsce",
           "title": "Ditto",
-          "icon": "$(database)"
+          "icon": "resources/ditto-icon.svg"
         }
       ],
       "secondarySidebar": [
