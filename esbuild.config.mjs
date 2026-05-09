@@ -28,6 +28,7 @@ const webviewCtx = await esbuild.context({
     subscription: 'webview-ui/subscription/main.ts',
     peers: 'webview-ui/peers/main.ts',
     query: 'webview-ui/query/main.ts',
+    inspector: 'webview-ui/inspector/main.ts',
   },
   bundle: true,
   outdir: 'dist/webview-ui',
