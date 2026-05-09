@@ -44,16 +44,19 @@ test('idle database has no children', async () => {
   assert.deepEqual(children, []);
 });
 
-test('active database has Subscriptions parent, Peer Listing, and Query Editor as children', async () => {
+test('active database has section headers, Subscriptions parent, Peer Listing, and Query Editor as children', async () => {
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
   const provider = new DatabaseTreeProvider(cfg, () => 'active', emptySubs());
   const [root] = await provider.getRootChildren();
   const children = await provider.getNodeChildren(root);
-  assert.equal(children.length, 3);
-  assert.equal(children[0].kind, 'subscriptionsParent');
-  assert.equal(children[1].kind, 'peerListing');
-  assert.equal(children[2].kind, 'queryEditor');
+  assert.deepEqual(children.map(c => c.kind), [
+    'sectionHeader',       // Data
+    'subscriptionsParent',
+    'sectionHeader',       // Features
+    'peerListing',
+    'queryEditor',
+  ]);
 });
 
 test('Subscriptions parent expands to leaves from SubscriptionStore', async () => {

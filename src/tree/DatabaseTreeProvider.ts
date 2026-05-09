@@ -35,10 +35,15 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
   async getNodeChildren(node: DatabaseTreeNode): Promise<DatabaseTreeNode[]> {
     if (node.kind === 'database') {
       if (node.status !== 'active') { return []; }
+      const dbId = node.config.id;
       return [
-        { kind: 'subscriptionsParent', databaseId: node.config.id },
-        { kind: 'peerListing', databaseId: node.config.id },
-        { kind: 'queryEditor', databaseId: node.config.id },
+        // Data section: things the user drills into.
+        { kind: 'sectionHeader', databaseId: dbId, id: 'data', label: 'Data' },
+        { kind: 'subscriptionsParent', databaseId: dbId },
+        // Feature section: things the user opens as editor tabs.
+        { kind: 'sectionHeader', databaseId: dbId, id: 'features', label: 'Features' },
+        { kind: 'peerListing', databaseId: dbId },
+        { kind: 'queryEditor', databaseId: dbId },
       ];
     }
     if (node.kind === 'subscriptionsParent') {
@@ -66,7 +71,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       config,
       status: this.statusFor(config.id),
     };
-    if (element.kind === 'subscriptionsParent'
+    if (element.kind === 'sectionHeader'
+      || element.kind === 'subscriptionsParent'
       || element.kind === 'peerListing'
       || element.kind === 'queryEditor') {
       return dbNode;
@@ -112,6 +118,16 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
           item.contextValue = 'database.transitioning';
           item.command = undefined;
         }
+        return item;
+      }
+      case 'sectionHeader': {
+        // Non-clickable, dimmed row used to visually group the data-related
+        // children (Subscriptions, future Collections) apart from the
+        // feature shortcuts (Peer Listing, Query Editor) below.
+        const item = new vscode.TreeItem(node.label.toUpperCase(), vscode.TreeItemCollapsibleState.None);
+        item.description = '─';
+        item.contextValue = 'sectionHeader';
+        item.id = `section.${node.databaseId}.${node.id}`;
         return item;
       }
       case 'subscriptionsParent': {
