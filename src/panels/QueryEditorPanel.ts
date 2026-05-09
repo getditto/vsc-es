@@ -6,6 +6,7 @@ import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { QueryIn, QueryOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
+import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 
@@ -76,6 +77,12 @@ export class QueryEditorPanel {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private databaseId: string;
+  // Per-panel "last run" snapshot. The InspectorController is a singleton
+  // shared across all Query Editor instances, so when this panel takes
+  // focus it has to re-push these so the Inspector reflects ITS latest
+  // results — otherwise switching tabs away and back would erase metrics.
+  private lastMetadata: QueryResultMetadata | undefined;
+  private lastSelectedRowJson: string | null | undefined;
 
   private constructor(
     private readonly context: vscode.ExtensionContext,
@@ -134,6 +141,12 @@ export class QueryEditorPanel {
       this.panel.onDidChangeViewState(e => {
         if (e.webviewPanel.active) {
           this.inspector.setActiveFeature({ kind: 'query', databaseId: this.databaseId });
+          // setActiveFeature replaces the inspector's content with a fresh
+          // 'query' object, which clears lastResultMetadata + selectedRowJson.
+          // Re-push our cached values so the Metrics + JSON tabs keep showing
+          // THIS panel's last run when the user toggles back to its tab.
+          if (this.lastMetadata) { this.inspector.setLastResultMetadata(this.lastMetadata); }
+          if (this.lastSelectedRowJson !== undefined) { this.inspector.setSelectedRowJson(this.lastSelectedRowJson); }
         }
       })
     );
@@ -148,6 +161,7 @@ export class QueryEditorPanel {
       return;
     }
     if (msg.type === 'query.rowSelected') {
+      this.lastSelectedRowJson = msg.rowJson;
       this.inspector.setSelectedRowJson(msg.rowJson);
       return;
     }
@@ -168,7 +182,10 @@ export class QueryEditorPanel {
       const { rows, durationMs, metadata } = await this.manager.executeQuery(msg.query);
       const columns = computeColumns(rows);
       this.post({ type: 'query.result', rows, columns, durationMs, metadata });
+      this.lastMetadata = metadata;
+      this.lastSelectedRowJson = null;
       this.inspector.setLastResultMetadata(metadata);
+      this.inspector.setSelectedRowJson(null);
       void this.history.add(this.databaseId, msg.query);
     } catch (err) {
       this.post({ type: 'query.error', message: err instanceof Error ? err.message : String(err) });
