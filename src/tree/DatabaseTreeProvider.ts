@@ -56,6 +56,27 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     return element ? this.getNodeChildren(element) : this.getRootChildren();
   }
 
+  /** Required for TreeView.reveal to walk the tree. */
+  getParent(element: DatabaseTreeNode): DatabaseTreeNode | undefined {
+    if (element.kind === 'database') { return undefined; }
+    const config = this.configs.list().find(c => c.id === element.databaseId);
+    if (!config) { return undefined; }
+    const dbNode: DatabaseTreeNode = {
+      kind: 'database',
+      config,
+      status: this.statusFor(config.id),
+    };
+    if (element.kind === 'subscriptionsParent'
+      || element.kind === 'peerListing'
+      || element.kind === 'queryEditor') {
+      return dbNode;
+    }
+    if (element.kind === 'subscription') {
+      return { kind: 'subscriptionsParent', databaseId: element.databaseId };
+    }
+    return undefined;
+  }
+
   getTreeItem(node: DatabaseTreeNode): vscode.TreeItem {
     switch (node.kind) {
       case 'database': {

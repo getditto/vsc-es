@@ -149,6 +149,25 @@ export function activate(context: vscode.ExtensionContext) {
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
 
+  // When a connection becomes active, force-expand its row in the tree so
+  // the user sees Subscriptions / Peer Listing / Query Editor immediately
+  // (the Expanded collapsibleState alone is just a hint — VS Code persists
+  // the user's last expand/collapse state by id and would otherwise honor
+  // a previously-collapsed state across sessions).
+  context.subscriptions.push(manager.onLifecycleStateChange(async state => {
+    if (state.kind !== 'active') { return; }
+    const config = configStore.get(state.configId);
+    if (!config) { return; }
+    try {
+      await treeView.reveal(
+        { kind: 'database', config, status: 'active' },
+        { expand: true, focus: false, select: false },
+      );
+    } catch {
+      // reveal can race with the refresh emitter; safe to swallow.
+    }
+  }));
+
   const loggingProvider = new LoggingTreeProvider(logger);
   context.subscriptions.push(vscode.window.createTreeView('dittoLogging', { treeDataProvider: loggingProvider }));
 
