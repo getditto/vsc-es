@@ -34,7 +34,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       if (node.status !== 'active') { return []; }
       return [
         { kind: 'subscriptionsParent', databaseId: node.config.id },
-        { kind: 'peerListing', databaseId: node.config.id }
+        { kind: 'peerListing', databaseId: node.config.id },
+        { kind: 'queryEditor', databaseId: node.config.id },
       ];
     }
     if (node.kind === 'subscriptionsParent') {
@@ -94,6 +95,14 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.contextValue = 'peerListing';
         item.id = `peers.${node.databaseId}`;
         item.command = { command: 'dittoVsce.openPeerListing', title: 'Open Peer Listing', arguments: [node.databaseId] };
+        return item;
+      }
+      case 'queryEditor': {
+        const item = new vscode.TreeItem('Query Editor');
+        item.iconPath = new vscode.ThemeIcon('terminal');
+        item.contextValue = 'queryEditor';
+        item.id = `query.${node.databaseId}`;
+        item.command = { command: 'dittoVsce.openQueryEditor', title: 'Open Query Editor', arguments: [node.databaseId] };
         return item;
       }
     }

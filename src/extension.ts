@@ -91,6 +91,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dittoVsce.editSubscription', (node) => {
       if (node?.kind !== 'subscription') { return; }
       SubscriptionEditorPanel.show(context, subscriptionStore, manager, node.databaseId, node.sub);
+    }),
+    vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
+      if (!databaseId) { return; }
+      vscode.window.showInformationMessage('Query Editor — not implemented yet (Task 7).');
     })
   );
 

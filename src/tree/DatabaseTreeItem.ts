@@ -4,4 +4,5 @@ export type DatabaseTreeNode =
   | { kind: 'database'; config: StoredDittoConfig; status: 'idle' | 'activating' | 'active' | 'error' }
   | { kind: 'subscriptionsParent'; databaseId: string }
   | { kind: 'subscription'; databaseId: string; sub: StoredSubscription }
-  | { kind: 'peerListing'; databaseId: string };
+  | { kind: 'peerListing'; databaseId: string }
+  | { kind: 'queryEditor'; databaseId: string };

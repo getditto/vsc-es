@@ -74,7 +74,8 @@
         "command": "dittoVsce.editSubscription",
         "title": "Edit Subscription",
         "icon": "$(edit)"
-      }
+      },
+      { "command": "dittoVsce.openQueryEditor", "title": "Open Query Editor" }
     ],
     "menus": {
       "view/title": [
