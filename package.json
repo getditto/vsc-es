@@ -23,7 +23,7 @@
           "icon": "$(database)"
         }
       ],
-      "auxiliaryBar": [
+      "auxiliarybar": [
         {
           "id": "dittoInspector",
           "title": "Ditto Inspector",
