@@ -43,6 +43,10 @@ export class QueryEditorPanel {
     QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, logger);
   }
 
+  static dispose(): void {
+    QueryEditorPanel.current?.dispose();
+  }
+
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private databaseId: string;

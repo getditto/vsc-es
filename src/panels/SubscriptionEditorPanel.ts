@@ -33,6 +33,10 @@ export class SubscriptionEditorPanel {
     SubscriptionEditorPanel.current = new SubscriptionEditorPanel(context, subs, manager, databaseId, logger, existing);
   }
 
+  static dispose(): void {
+    SubscriptionEditorPanel.current?.dispose();
+  }
+
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private databaseId: string;

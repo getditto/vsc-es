@@ -33,6 +33,10 @@ export class PeerListingPanel {
     PeerListingPanel.current = new PeerListingPanel(context, manager, configs, databaseId, tracker, logger);
   }
 
+  static dispose(): void {
+    PeerListingPanel.current?.dispose();
+  }
+
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private databaseId: string;
