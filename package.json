@@ -125,6 +125,15 @@
         "command": "dittoVsce.toggleInspector",
         "title": "Ditto: Toggle Inspector",
         "icon": "$(layout-sidebar-right)"
+      },
+      {
+        "command": "dittoVsce.refreshCollections",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dittoVsce.queryAllInCollection",
+        "title": "SELECT * FROM …"
       }
     ],
     "keybindings": [
@@ -189,6 +198,16 @@
           "command": "dittoVsce.deleteSubscription",
           "when": "view == dittoDatabases && viewItem == subscription",
           "group": "1@1"
+        },
+        {
+          "command": "dittoVsce.refreshCollections",
+          "when": "view == dittoDatabases && viewItem == collectionsParent",
+          "group": "inline"
+        },
+        {
+          "command": "dittoVsce.queryAllInCollection",
+          "when": "view == dittoDatabases && viewItem == collection",
+          "group": "1_open@1"
         }
       ]
     }

@@ -3,10 +3,16 @@ import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DatabaseTreeNode } from './DatabaseTreeItem.js';
 import type { LifecycleState } from '../ditto/lifecycle-state.js';
+import type { DittoCollection } from '../models/DittoCollection.js';
 
 export type DatabaseStatus = 'idle' | 'activating' | 'active' | 'error';
 export type StatusResolver = (databaseId: string) => DatabaseStatus;
 export type LifecycleResolver = () => LifecycleState;
+
+export interface CollectionsSource {
+  current(): DittoCollection[];
+  onChange: vscode.Event<DittoCollection[]>;
+}
 
 export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTreeNode> {
   private readonly _changeEmitter = new vscode.EventEmitter<DatabaseTreeNode | undefined>();
@@ -17,9 +23,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     private readonly statusFor: StatusResolver,
     private readonly subs: SubscriptionStore,
     private readonly lifecycleFor?: LifecycleResolver,
+    private readonly collections?: CollectionsSource,
   ) {
     configs.onDidChange(() => this._changeEmitter.fire(undefined));
     subs.onDidChange(() => this._changeEmitter.fire(undefined));
+    collections?.onChange(() => this._changeEmitter.fire(undefined));
   }
 
   refresh(node?: DatabaseTreeNode) { this._changeEmitter.fire(node); }
@@ -40,6 +48,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         // Data section: things the user drills into.
         { kind: 'sectionHeader', databaseId: dbId, id: 'data', label: 'Data' },
         { kind: 'subscriptionsParent', databaseId: dbId },
+        { kind: 'collectionsParent', databaseId: dbId },
         // Feature section: things the user opens as editor tabs.
         { kind: 'sectionHeader', databaseId: dbId, id: 'features', label: 'Features' },
         { kind: 'peerListing', databaseId: dbId },
@@ -51,6 +60,31 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         kind: 'subscription' as const,
         databaseId: node.databaseId,
         sub
+      }));
+    }
+    if (node.kind === 'collectionsParent') {
+      if (!this.collections) { return []; }
+      return this.collections.current().map(c => ({
+        kind: 'collection' as const,
+        databaseId: node.databaseId,
+        collection: c,
+      }));
+    }
+    if (node.kind === 'collection') {
+      return node.collection.indexes.map(idx => ({
+        kind: 'index' as const,
+        databaseId: node.databaseId,
+        collectionName: node.collection.name,
+        index: idx,
+      }));
+    }
+    if (node.kind === 'index') {
+      return node.index.fields.map(f => ({
+        kind: 'indexField' as const,
+        databaseId: node.databaseId,
+        collectionName: node.collectionName,
+        indexId: node.index.id,
+        field: f,
       }));
     }
     return [];
@@ -73,12 +107,28 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     };
     if (element.kind === 'sectionHeader'
       || element.kind === 'subscriptionsParent'
+      || element.kind === 'collectionsParent'
       || element.kind === 'peerListing'
       || element.kind === 'queryEditor') {
       return dbNode;
     }
     if (element.kind === 'subscription') {
       return { kind: 'subscriptionsParent', databaseId: element.databaseId };
+    }
+    if (element.kind === 'collection') {
+      return { kind: 'collectionsParent', databaseId: element.databaseId };
+    }
+    if (element.kind === 'index') {
+      const collection = this.collections?.current().find(c => c.name === element.collectionName);
+      if (!collection) { return undefined; }
+      return { kind: 'collection', databaseId: element.databaseId, collection };
+    }
+    if (element.kind === 'indexField') {
+      const collection = this.collections?.current().find(c => c.name === element.collectionName);
+      if (!collection) { return undefined; }
+      const index = collection.indexes.find(i => i.id === element.indexId);
+      if (!index) { return undefined; }
+      return { kind: 'index', databaseId: element.databaseId, collectionName: element.collectionName, index };
     }
     return undefined;
   }
@@ -142,6 +192,48 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.tooltip = new vscode.MarkdownString().appendCodeblock(node.sub.query, 'sql');
         item.contextValue = 'subscription';
         item.id = `sub.${node.databaseId}.${node.sub.id}`;
+        return item;
+      }
+      case 'collectionsParent': {
+        const item = new vscode.TreeItem('Collections', vscode.TreeItemCollapsibleState.Expanded);
+        item.iconPath = new vscode.ThemeIcon('database');
+        item.contextValue = 'collectionsParent';
+        item.id = `cols.${node.databaseId}`;
+        return item;
+      }
+      case 'collection': {
+        const hasIndexes = node.collection.indexes.length > 0;
+        const item = new vscode.TreeItem(
+          node.collection.name,
+          hasIndexes ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+        );
+        item.iconPath = new vscode.ThemeIcon('book');
+        item.description = node.collection.documentCount?.toString() ?? '';
+        item.contextValue = 'collection';
+        item.id = `col.${node.databaseId}.${node.collection.name}`;
+        item.command = {
+          command: 'dittoVsce.queryAllInCollection',
+          title: 'SELECT * FROM …',
+          arguments: [node.databaseId, node.collection.name],
+        };
+        return item;
+      }
+      case 'index': {
+        const hasFields = node.index.fields.length > 0;
+        const item = new vscode.TreeItem(
+          node.index.displayName,
+          hasFields ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+        );
+        item.iconPath = new vscode.ThemeIcon('symbol-namespace');
+        item.contextValue = 'index';
+        item.id = `idx.${node.databaseId}.${node.collectionName}.${node.index.id}`;
+        return item;
+      }
+      case 'indexField': {
+        const item = new vscode.TreeItem(node.field, vscode.TreeItemCollapsibleState.None);
+        item.iconPath = new vscode.ThemeIcon('symbol-field');
+        item.contextValue = 'indexField';
+        item.id = `idxF.${node.databaseId}.${node.collectionName}.${node.indexId}.${node.field}`;
         return item;
       }
       case 'peerListing': {

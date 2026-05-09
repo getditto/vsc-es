@@ -285,6 +285,14 @@ export class DittoManager {
     return this.session.ditto.store.fetchAttachment(token, onEvent);
   }
 
+  /** Run a raw DQL query and return its rows. No EXPLAIN side-trip, no
+   *  history — meant for system queries (CollectionsRepository, etc.). */
+  async executeRaw(query: string): Promise<Record<string, unknown>[]> {
+    if (!this.session) { throw new Error('No active database.'); }
+    const result = await this.session.ditto.store.execute(query);
+    return (result.items as any[]).map(i => i.value as Record<string, unknown>);
+  }
+
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
    *
    *  Mirrors the SwiftUI `QueryService.executeSelectedAppQuery` pattern: run the

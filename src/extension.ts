@@ -13,6 +13,7 @@ import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
+import { CollectionsRepository } from './ditto/CollectionsRepository.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
 import { performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
@@ -115,6 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
   const subscriptionStore = new SubscriptionStore(context.globalState);
   const tracker = new OpenPanelsTracker(context.globalState);
   const manager = new DittoManager(context, logger);
+  const collectionsRepo = new CollectionsRepository(manager, logger);
   const inspectorController = new InspectorController(context.globalState);
   const historyStore = new QueryHistoryStore(context.globalState);
   const favoritesStore = new QueryFavoritesStore(context.globalState);
@@ -127,7 +129,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(manager.onLifecycleStateChange(state => {
-    if (state.kind !== 'active') inspectorController.clearOnDisconnect();
+    if (state.kind !== 'active') {
+      inspectorController.clearOnDisconnect();
+      collectionsRepo.clear();
+    } else {
+      void collectionsRepo.load();
+    }
     void vscode.commands.executeCommand('setContext', 'dittoVsce.hasActiveDatabase', state.kind === 'active');
   }));
 
@@ -143,6 +150,7 @@ export function activate(context: vscode.ExtensionContext) {
     id => manager.getStatus(id),
     subscriptionStore,
     () => manager.getCurrentLifecycleState(),
+    collectionsRepo,
   );
   context.subscriptions.push(manager.onStatusChange(() => treeProvider.refresh()));
   context.subscriptions.push(manager.onLifecycleStateChange(() => treeProvider.refresh()));
@@ -320,6 +328,21 @@ export function activate(context: vscode.ExtensionContext) {
         tracker, inspectorController, historyStore, favoritesStore, logger,
       );
       panel.loadQuery(query);
+    }),
+    vscode.commands.registerCommand('dittoVsce.refreshCollections', async () => {
+      try { await collectionsRepo.refresh(); }
+      catch (err) { vscode.window.showErrorMessage(`Refresh collections failed: ${err instanceof Error ? err.message : String(err)}`); }
+    }),
+    vscode.commands.registerCommand('dittoVsce.queryAllInCollection', (databaseIdOrNode: any, collectionName?: string) => {
+      // Tree single-click invocation passes (databaseId, collectionName) via `arguments`.
+      // Right-click context menu passes the node itself.
+      const dbId = typeof databaseIdOrNode === 'string'
+        ? databaseIdOrNode
+        : databaseIdOrNode?.databaseId;
+      const name = collectionName
+        ?? (typeof databaseIdOrNode === 'object' ? databaseIdOrNode?.collection?.name : undefined);
+      if (!dbId || !name) { return; }
+      void vscode.commands.executeCommand('dittoVsce.openQueryEditorWithText', `SELECT * FROM ${name}`);
     }),
   );
 
