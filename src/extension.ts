@@ -119,6 +119,13 @@ export function activate(context: vscode.ExtensionContext) {
   const historyStore = new QueryHistoryStore(context.globalState);
   const favoritesStore = new QueryFavoritesStore(context.globalState);
 
+  // Initialize the context key to a known value so view `when` clauses
+  // evaluate deterministically even before the first lifecycle transition.
+  void vscode.commands.executeCommand(
+    'setContext', 'dittoVsce.hasActiveDatabase',
+    manager.getCurrentLifecycleState().kind === 'active',
+  );
+
   context.subscriptions.push(manager.onLifecycleStateChange(state => {
     if (state.kind !== 'active') inspectorController.clearOnDisconnect();
     void vscode.commands.executeCommand('setContext', 'dittoVsce.hasActiveDatabase', state.kind === 'active');
