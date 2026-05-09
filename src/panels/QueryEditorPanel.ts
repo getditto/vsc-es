@@ -21,10 +21,10 @@ function computeColumns(rows: Record<string, unknown>[]): string[] {
 }
 
 export class QueryEditorPanel {
-  private static _current: QueryEditorPanel | undefined;
+  private static readonly _instances = new Set<QueryEditorPanel>();
 
-  static get current(): QueryEditorPanel | undefined { return QueryEditorPanel._current; }
-
+  /** Open a NEW Query Editor tab. Multiple instances may coexist. Returns the
+   *  newly-created panel so callers can drive it (e.g. loadQuery). */
   static show(
     context: vscode.ExtensionContext,
     manager: DittoManager,
@@ -35,25 +35,22 @@ export class QueryEditorPanel {
     history: QueryHistoryStore,
     favorites: QueryFavoritesStore,
     logger: Logger,
-  ) {
-    if (QueryEditorPanel._current) {
-      if (QueryEditorPanel._current.databaseId === databaseId) {
-        QueryEditorPanel._current.panel.reveal();
-        return;
-      }
-      // Different DB requested — should not normally happen because the
-      // lifecycle disposes us before connecting elsewhere. Fall through and replace.
-      logger.warn('QueryEditorPanel.show called for a different DB than current; disposing.', {
-        currentDb: QueryEditorPanel._current.databaseId, requestedDb: databaseId,
-      });
-      QueryEditorPanel._current.dispose();
-    }
-    QueryEditorPanel._current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, inspector, history, favorites, logger);
+  ): QueryEditorPanel {
+    const inst = new QueryEditorPanel(
+      context, manager, configs, databaseId, tracker, inspector, history, favorites, logger,
+    );
+    QueryEditorPanel._instances.add(inst);
     autoRevealInspectorOnce(context);
+    return inst;
   }
 
+  /** Dispose every open Query Editor tab. Used by the lifecycle orchestrator
+   *  when switching databases — all editors for the previous DB close before
+   *  the new DB activates. */
   static dispose(): void {
-    QueryEditorPanel._current?.dispose();
+    for (const inst of [...QueryEditorPanel._instances]) {
+      inst.dispose();
+    }
   }
 
   loadQuery(query: string): void {
@@ -128,7 +125,10 @@ export class QueryEditorPanel {
     this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     void tracker.add(databaseId, 'query');
-    this.disposables.push({ dispose: () => { void tracker.remove(databaseId, 'query'); } });
+    // tracker.remove is deferred to the static dispose() path below — only
+    // the LAST surviving Query Editor for this DB clears the kind from the
+    // open-panels set, so closing one of two editors doesn't drop the
+    // restoration hint.
 
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {
@@ -176,7 +176,14 @@ export class QueryEditorPanel {
   }
 
   private dispose() {
-    QueryEditorPanel._current = undefined;
+    QueryEditorPanel._instances.delete(this);
+    // Only mark 'query' as absent from the open-panels set once the LAST
+    // Query Editor for this DB closes — multiple coexist; the tracker is
+    // a per-kind set, not a counter.
+    const stillOpen = [...QueryEditorPanel._instances].some(i => i.databaseId === this.databaseId);
+    if (!stillOpen) {
+      void this.tracker.remove(this.databaseId, 'query');
+    }
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }

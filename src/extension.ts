@@ -315,11 +315,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dittoVsce.openQueryEditorWithText', (query: string) => {
       const cur = manager.getCurrentLifecycleState();
       if (cur.kind !== 'active') { return; }
-      QueryEditorPanel.show(
+      const panel = QueryEditorPanel.show(
         context, manager, configStore, cur.configId,
         tracker, inspectorController, historyStore, favoritesStore, logger,
       );
-      QueryEditorPanel.current?.loadQuery(query);
+      panel.loadQuery(query);
     }),
   );
 
