@@ -41,11 +41,28 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     };
     view.webview.html = this.html(view.webview);
 
+    // Pre-compute the help URIs (extension-relative; the same URIs are valid
+    // for the lifetime of the webview) so we can re-push them on every
+    // resolve AND every content switch. Posting once at resolve was racy —
+    // if VS Code dropped the message before the webview script registered
+    // its `message` listener, the help tabs were stuck on "Loading help…".
+    const helpDir = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview-ui', 'help');
+    const subscriptionHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'subscription.html')).toString();
+    const queryHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'query.html')).toString();
+    const pushHelpUris = () => {
+      this.post({ type: 'inspector.helpHtml', kind: 'subscription', uri: subscriptionHelpUri });
+      this.post({ type: 'inspector.helpHtml', kind: 'query',        uri: queryHelpUri });
+    };
+
     this.disposables.push(
       view.webview.onDidReceiveMessage((m: InspectorIn) => { void this.handle(m); }),
     );
     this.disposables.push(
       this.controller.onContentChange((c) => {
+        // Re-push help URIs first — cheap, idempotent, and guarantees the
+        // help-content-element has a non-empty `uri` by the time the new
+        // content lands. Defends against VS Code's message-queue race.
+        pushHelpUris();
         this.post({ type: 'inspector.contentChanged', content: c });
         // When content switches to a DB-bound kind, re-push the lists so the
         // History / Favorites tabs reflect that DB's stored entries even if
@@ -68,6 +85,11 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       })),
     );
 
+    // Push help URIs FIRST so they're sitting in the webview's message queue
+    // by the time the script registers its listener — same reason the
+    // onContentChange handler above re-posts them on every content switch.
+    pushHelpUris();
+
     // Push initial state.
     this.post({ type: 'inspector.contentChanged', content: this.controller.getContent() });
 
@@ -80,17 +102,6 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'inspector.historyChanged',  databaseId: dbId, entries: this.history.list(dbId) });
       this.post({ type: 'inspector.favoritesChanged', databaseId: dbId, entries: this.favorites.list(dbId) });
     }
-
-    // Push help URIs once.
-    const helpDir = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview-ui', 'help');
-    this.post({
-      type: 'inspector.helpHtml', kind: 'subscription',
-      uri: view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'subscription.html')).toString(),
-    });
-    this.post({
-      type: 'inspector.helpHtml', kind: 'query',
-      uri: view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'query.html')).toString(),
-    });
 
     view.onDidDispose(() => {
       for (const d of this.disposables) { try { d.dispose(); } catch { /* ignore */ } }
