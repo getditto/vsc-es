@@ -320,6 +320,26 @@ test('mergePeerList second pass skips cloud servers that are not actively syncin
   assert.equal(snapshot.remote.length, 0);
 });
 
+test('mergePeerList drops cloud peers when syncActive=false even if status says Connected', () => {
+  // The SDK doesn't promptly update system:data_sync_info when sync.stop()
+  // runs — the cloud row keeps reporting Connected for a while. Our
+  // syncActive flag is the authoritative override.
+  const syncMap = new Map();
+  syncMap.set('cloud-1', {
+    _id: 'cloud-1',
+    is_ditto_server: true,
+    sync_session_status: 'Connected' as const,
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [] } as any,
+    syncMap,
+    null,
+    [],
+    /* syncActive */ false,
+  );
+  assert.equal(snapshot.remote.length, 0);
+});
+
 test('parseSyncStatusRow maps SDK "Not Connected" string to Disconnected', () => {
   // The SDK reports stopped sync as the literal "Not Connected" — a value
   // outside our SyncSessionStatus enum. Parser normalizes to Disconnected

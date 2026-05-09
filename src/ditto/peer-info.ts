@@ -174,6 +174,11 @@ export function mergePeerList(
   syncStatusByPeerKey: Map<string, SyncStatusRow>,
   local: LocalPeerInfo | null,
   previousOrder: readonly string[],
+  /** When false, suppress all cloud peers regardless of what
+   *  `system:data_sync_info` reports — the SDK is slow to reflect
+   *  `sync.stop()` in that collection, and the user expects the cloud
+   *  card to disappear the moment they hit Stop Sync. */
+  syncActive: boolean = true,
 ): PeerListSnapshot {
   // SwiftUI parity: presenceGraph.remotePeers includes multihop peers (X→Y→Z).
   // Only keep peers where the local device is an endpoint of at least one
@@ -190,18 +195,21 @@ export function mergePeerList(
   }
 
   // Pass 2: surface Ditto Cloud Server peers from system:data_sync_info that
-  // aren't in the presence graph. Stricter than SwiftUI's "skip if Disconnected"
-  // — we only render cloud peers whose status is explicitly Connected or
-  // Connecting. Anything else (Disconnected, or undefined because the SDK
-  // returned "Not Connected" / a value we couldn't parse) means the cloud
-  // session isn't active and the card should disappear. This is what makes
-  // the cloud row vanish when the user toggles sync off.
-  for (const [peerId, syncRow] of syncStatusByPeerKey) {
-    if (!syncRow.is_ditto_server) { continue; }
-    if (byId.has(peerId)) { continue; }
-    const status = syncRow.sync_session_status;
-    if (status !== 'Connected' && status !== 'Connecting') { continue; }
-    byId.set(peerId, toCloudPeerInfo(syncRow));
+  // aren't in the presence graph. Two filters before adding the row:
+  //   1. Local sync must be active. The SDK doesn't promptly update
+  //      sync_session_status to "Not Connected" when the user stops sync,
+  //      so we override based on the manager's syncState authoritatively.
+  //   2. The row's status must be explicitly Connected or Connecting.
+  //      Anything else (Disconnected, undefined, future SDK strings) means
+  //      the cloud session isn't running and the card shouldn't render.
+  if (syncActive) {
+    for (const [peerId, syncRow] of syncStatusByPeerKey) {
+      if (!syncRow.is_ditto_server) { continue; }
+      if (byId.has(peerId)) { continue; }
+      const status = syncRow.sync_session_status;
+      if (status !== 'Connected' && status !== 'Connecting') { continue; }
+      byId.set(peerId, toCloudPeerInfo(syncRow));
+    }
   }
 
   // Order preservation:

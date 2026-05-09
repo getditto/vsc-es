@@ -166,6 +166,8 @@ export class DittoManager {
         if ((result as any).error) { throw new Error(`Login failed: ${(result as any).error}`); }
       }
 
+      await ditto.store.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 12');
+      this.log.info('Set mesh_chooser_max_wlan_clients to 12 to improve amount of peers connectivity.');
       ditto.sync.start();
 
       this.session = {
@@ -246,10 +248,17 @@ export class DittoManager {
     if (this.syncState === 'active') {
       ditto.sync.stop();
       this.setSyncState('idle', this.session.configId);
+      // Force an immediate snapshot rebuild — mergePeerList's syncActive=false
+      // gate will drop the cloud row this turn, instead of waiting for the
+      // next presence emission (which may not arrive for a while after
+      // sync.stop, and which would otherwise show a stale "Connected" cloud
+      // peer until system:data_sync_info caught up).
+      this.firePresence();
       return 'idle';
     }
     ditto.sync.start();
     this.setSyncState('active', this.session.configId);
+    this.firePresence();
     return 'active';
   }
 
@@ -432,6 +441,7 @@ export class DittoManager {
         this.syncStatusByPeerKey,
         this.localPeerInfo,
         this.previousOrder,
+        this.syncState === 'active',
       );
       this.previousOrder = snap.remote.map(p => p.id);
       this.latestSnapshot = snap;
