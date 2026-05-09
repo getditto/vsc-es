@@ -12,9 +12,22 @@ import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 import { createLogger } from './logging/Logger.js';
-import type { Logger } from './logging/types.js';
+import type { Logger, LogLevel } from './logging/types.js';
 
 let logger: Logger;
+
+const sdkLevelMap: Record<LogLevel, string> = {
+  error: 'Error', warn: 'Warning', info: 'Info', debug: 'Debug', trace: 'Verbose',
+};
+
+async function pickLogLevel(current: LogLevel, title: string): Promise<LogLevel | undefined> {
+  const items = (['error', 'warn', 'info', 'debug', 'trace'] as LogLevel[]).map(l => ({
+    label: l,
+    description: l === current ? '(current)' : undefined,
+  }));
+  const picked = await vscode.window.showQuickPick(items, { title });
+  return picked?.label as LogLevel | undefined;
+}
 
 export function activate(context: vscode.ExtensionContext) {
   const channel = vscode.window.createOutputChannel('Ditto Edge Studio', { log: true });
@@ -124,6 +137,29 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
       QueryEditorPanel.show(context, manager, configStore, databaseId, logger);
+    }),
+    vscode.commands.registerCommand('dittoVsce.setApplicationLogLevel', async () => {
+      const picked = await pickLogLevel(logger.getChannelLevel(), 'Set Application Log Level');
+      if (picked) { logger.setChannelLevel(picked); }
+    }),
+    vscode.commands.registerCommand('dittoVsce.setDittoSdkLogLevel', async () => {
+      const picked = await pickLogLevel(logger.getSdkLevel(), 'Set Ditto SDK Log Level');
+      if (picked) {
+        logger.setSdkLevel(picked);
+        (DittoLogger as any).minimumLogLevel = sdkLevelMap[picked];
+      }
+    }),
+    vscode.commands.registerCommand('dittoVsce.openOutputChannel', () => {
+      channel.show();
+    }),
+    vscode.commands.registerCommand('dittoVsce.exportLogs', () => {
+      vscode.window.showInformationMessage('Export Logs: implementation pending in Task 13.');
+    }),
+    vscode.commands.registerCommand('dittoVsce.showLogFile', () => {
+      vscode.commands.executeCommand(
+        'revealFileInOS',
+        vscode.Uri.joinPath(context.globalStorageUri, 'logs', 'ditto-edge-studio.log'),
+      );
     })
   );
 
