@@ -1,5 +1,11 @@
 export type AuthMode = 'server' | 'smallPeersOnly';
-export type LogLevel = 'error' | 'warning' | 'info' | 'debug' | 'verbose';
+
+/**
+ * Log level values accepted by the Ditto SDK's `Logger.minimumLogLevel`.
+ * Distinct from the host-side `LogLevel` in `src/logging/types.ts`
+ * (`'warn'`/`'trace'` instead of `'warning'`/`'verbose'`); convert at boundaries.
+ */
+export type SdkLogLevel = 'error' | 'warning' | 'info' | 'debug' | 'verbose';
 
 export interface StoredDittoConfig {
   id: string;
@@ -10,7 +16,7 @@ export interface StoredDittoConfig {
   websocketUrl: string;
   httpApiUrl: string;
   allowUntrustedCerts: boolean;
-  logLevel: LogLevel;
+  logLevel: SdkLogLevel;
   isStrictModeEnabled: boolean;
 }
 

@@ -17,6 +17,7 @@ import type {
   StoredSubscription,
   PeerListSnapshot,
   LocalPeerInfo,
+  SdkLogLevel,
 } from '../models/DittoConfig.js';
 import type { DatabaseStatus } from '../tree/DatabaseTreeProvider.js';
 import { mergePeerList, parseSyncStatusRow, type SyncStatusRow } from './peer-info.js';
@@ -135,10 +136,12 @@ export class DittoManager {
         persistenceDir
       );
 
-      // Apply per-DB SDK log level before opening the SDK.
-      const sdkLevelMap: Record<string, any> = {
-        error: 'Error', warning: 'Warning', warn: 'Warning',
-        info: 'Info', debug: 'Debug', verbose: 'Verbose', trace: 'Verbose',
+      // Apply per-DB SDK log level before opening the SDK. `config.logLevel`
+      // is `SdkLogLevel` (lowercase 'warning'/'verbose'); the SDK runtime
+      // expects capitalized names.
+      const sdkLevelMap: Record<SdkLogLevel, string> = {
+        error: 'Error', warning: 'Warning',
+        info: 'Info', debug: 'Debug', verbose: 'Verbose',
       };
       (DittoLogger as any).minimumLogLevel = sdkLevelMap[config.logLevel] ?? 'Info';
       this.log.info('Applied per-DB SDK log level', { configId: config.id, level: config.logLevel });
