@@ -29,9 +29,16 @@ export class QueryEditorPanel {
     logger: Logger,
   ) {
     if (QueryEditorPanel.current) {
-      QueryEditorPanel.current.panel.reveal();
-      QueryEditorPanel.current.refreshTitle(databaseId, configs);
-      return;
+      if (QueryEditorPanel.current.databaseId === databaseId) {
+        QueryEditorPanel.current.panel.reveal();
+        return;
+      }
+      // Different DB requested — should not normally happen because the
+      // lifecycle disposes us before connecting elsewhere. Fall through and replace.
+      logger.warn('QueryEditorPanel.show called for a different DB than current; disposing.', {
+        currentDb: QueryEditorPanel.current.databaseId, requestedDb: databaseId,
+      });
+      QueryEditorPanel.current.dispose();
     }
     QueryEditorPanel.current = new QueryEditorPanel(context, manager, configs, databaseId, tracker, logger);
   }
@@ -83,12 +90,6 @@ export class QueryEditorPanel {
 
     void tracker.add(databaseId, 'query');
     this.disposables.push({ dispose: () => { void tracker.remove(databaseId, 'query'); } });
-  }
-
-  private refreshTitle(databaseId: string, configs: ConfigStore) {
-    this.databaseId = databaseId;
-    const cfg = configs.get(databaseId);
-    this.panel.title = `Query — ${cfg?.name ?? 'Unknown'}`;
   }
 
   private post(msg: QueryOut) { this.panel.webview.postMessage(msg); }

@@ -18,9 +18,17 @@ export class SubscriptionEditorPanel {
     existing?: StoredSubscription,
   ) {
     if (SubscriptionEditorPanel.current) {
-      SubscriptionEditorPanel.current.panel.reveal();
-      SubscriptionEditorPanel.current.init(databaseId, existing);
-      return;
+      if (SubscriptionEditorPanel.current.databaseId === databaseId) {
+        SubscriptionEditorPanel.current.panel.reveal();
+        SubscriptionEditorPanel.current.init(databaseId, existing);
+        return;
+      }
+      // Different DB requested — should not normally happen because the
+      // lifecycle disposes us before connecting elsewhere. Fall through and replace.
+      logger.warn('SubscriptionEditorPanel.show called for a different DB than current; disposing.', {
+        currentDb: SubscriptionEditorPanel.current.databaseId, requestedDb: databaseId,
+      });
+      SubscriptionEditorPanel.current.dispose();
     }
     SubscriptionEditorPanel.current = new SubscriptionEditorPanel(context, subs, manager, databaseId, logger, existing);
   }

@@ -18,10 +18,17 @@ export class PeerListingPanel {
     logger: Logger,
   ) {
     if (PeerListingPanel.current) {
-      PeerListingPanel.current.panel.reveal();
-      PeerListingPanel.current.refreshTitle(databaseId, configs);
-      PeerListingPanel.current.pushState();
-      return;
+      if (PeerListingPanel.current.databaseId === databaseId) {
+        PeerListingPanel.current.panel.reveal();
+        PeerListingPanel.current.pushState();
+        return;
+      }
+      // Different DB requested — should not normally happen because the
+      // lifecycle disposes us before connecting elsewhere. Fall through and replace.
+      logger.warn('PeerListingPanel.show called for a different DB than current; disposing.', {
+        currentDb: PeerListingPanel.current.databaseId, requestedDb: databaseId,
+      });
+      PeerListingPanel.current.dispose();
     }
     PeerListingPanel.current = new PeerListingPanel(context, manager, configs, databaseId, tracker, logger);
   }
@@ -82,12 +89,6 @@ export class PeerListingPanel {
     this.disposables.push({ dispose: () => { void tracker.remove(databaseId, 'peers'); } });
 
     setTimeout(() => this.pushState(), 50);
-  }
-
-  private refreshTitle(databaseId: string, configs: ConfigStore) {
-    this.databaseId = databaseId;
-    const cfg = configs.get(databaseId);
-    this.panel.title = `Peers — ${cfg?.name ?? 'Unknown'}`;
   }
 
   private pushState() {
