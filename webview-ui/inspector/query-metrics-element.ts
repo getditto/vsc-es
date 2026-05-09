@@ -6,6 +6,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { codiconStyles } from './codicon-styles.js';
+import '../shared/json-viewer.js';
 
 interface QueryResultMetadata {
   durationMs?: number;
@@ -50,6 +51,13 @@ export class QueryMetricsElement extends LitElement {
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .explain-viewer {
+      display: block;
+      max-height: 60vh;
+      overflow: auto;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+    }
   `];
 
   render() {
@@ -81,7 +89,9 @@ export class QueryMetricsElement extends LitElement {
       </div>
       <div class="row">
         <div class="label">EXPLAIN</div>
-        <pre>${md.explain ?? '(plan unavailable)'}</pre>
+        ${md.explain
+          ? html`<json-viewer class="explain-viewer" .value=${md.explain} wrap></json-viewer>`
+          : html`<pre>(plan unavailable)</pre>`}
       </div>
     `;
   }

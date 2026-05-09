@@ -55,7 +55,7 @@ export class QueryJsonElement extends LitElement {
       pretty = this.json;
     }
     return html`
-      <json-viewer class="viewer" .value=${pretty}></json-viewer>
+      <json-viewer class="viewer" .value=${pretty} wrap></json-viewer>
       <attachment-viewer-element .json=${this.json}></attachment-viewer-element>
     `;
   }

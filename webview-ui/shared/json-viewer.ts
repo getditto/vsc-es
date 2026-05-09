@@ -88,8 +88,14 @@ export class JsonViewer extends LitElement {
   /** Optional: index of the currently-highlighted range. -1 for none. */
   @property({ type: Number }) selectedIndex = -1;
 
+  /** Word-wrap long lines so the user doesn't need a horizontal scroll bar.
+   *  Off by default to preserve table-style readability in the Query Editor;
+   *  Inspector tabs (JSON, Metrics) opt in. */
+  @property({ type: Boolean }) wrap = false;
+
   private view?: EditorView;
   private readonly readOnlyCompartment = new Compartment();
+  private readonly wrapCompartment = new Compartment();
 
   // Render in light DOM so CodeMirror's own stylesheets and theming reach
   // the editor surface — its CSS-in-JS is global, not shadow-scoped.
@@ -123,6 +129,7 @@ export class JsonViewer extends LitElement {
           keymap.of(foldKeymap),
           json(),
           this.readOnlyCompartment.of(EditorState.readOnly.of(true)),
+          this.wrapCompartment.of(this.wrap ? EditorView.lineWrapping : []),
           selectionField,
           EditorView.domEventHandlers({
             click: (event, view) => {
@@ -198,6 +205,9 @@ export class JsonViewer extends LitElement {
     }
     if (changed.has('selectedIndex')) {
       effects.push(setSelectedIndex.of(this.selectedIndex));
+    }
+    if (changed.has('wrap')) {
+      effects.push(this.wrapCompartment.reconfigure(this.wrap ? EditorView.lineWrapping : []));
     }
     if (effects.length > 0) {
       this.view.dispatch({ effects });
