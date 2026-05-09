@@ -27,8 +27,14 @@ const SYNC_SESSION_STATUSES: readonly SyncSessionStatus[] = [
 ];
 
 function coerceSessionStatus(raw: unknown): SyncSessionStatus | undefined {
-  if (typeof raw === 'string' && (SYNC_SESSION_STATUSES as readonly string[]).includes(raw)) {
-    return raw as SyncSessionStatus;
+  if (typeof raw === 'string') {
+    if ((SYNC_SESSION_STATUSES as readonly string[]).includes(raw)) {
+      return raw as SyncSessionStatus;
+    }
+    // The SDK reports a stopped/dropped session as "Not Connected" (with a
+    // space) — semantically the same as Disconnected for our purposes. Map
+    // it so pass-2 cloud-peer filtering catches stopped Cloud Servers.
+    if (raw === 'Not Connected') { return 'Disconnected'; }
   }
   return undefined;
 }
@@ -183,13 +189,18 @@ export function mergePeerList(
     byId.set(peer.peerKey, toPeerInfo(peer, syncStatusByPeerKey.get(peer.peerKey), localKey));
   }
 
-  // Pass 2: surface Ditto Cloud Server peers from __sync_status that aren't in
-  // the presence graph. Skip any whose status is explicitly Disconnected — a
-  // past SwiftUI bug counted those and produced count=2 with 1 visible card.
+  // Pass 2: surface Ditto Cloud Server peers from system:data_sync_info that
+  // aren't in the presence graph. Stricter than SwiftUI's "skip if Disconnected"
+  // — we only render cloud peers whose status is explicitly Connected or
+  // Connecting. Anything else (Disconnected, or undefined because the SDK
+  // returned "Not Connected" / a value we couldn't parse) means the cloud
+  // session isn't active and the card should disappear. This is what makes
+  // the cloud row vanish when the user toggles sync off.
   for (const [peerId, syncRow] of syncStatusByPeerKey) {
     if (!syncRow.is_ditto_server) { continue; }
     if (byId.has(peerId)) { continue; }
-    if (syncRow.sync_session_status === 'Disconnected') { continue; }
+    const status = syncRow.sync_session_status;
+    if (status !== 'Connected' && status !== 'Connecting') { continue; }
     byId.set(peerId, toCloudPeerInfo(syncRow));
   }
 

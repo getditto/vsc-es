@@ -296,14 +296,20 @@ test('mergePeerList second pass adds Ditto Cloud Server peers from __sync_status
   assert.equal(cloud.syncedUpToLocalCommitId, 12345);
 });
 
-test('mergePeerList second pass skips Disconnected cloud servers (count!=cards bug guard)', () => {
+test('mergePeerList second pass skips cloud servers that are not actively syncing', () => {
   // A past SwiftUI bug: counting Disconnected servers in pass 2 produced
-  // count=2 with 1 visible card. Guard against the same regression.
+  // count=2 with 1 visible card. We're stricter — only Connected/Connecting
+  // cloud rows render, so toggling sync off makes the card disappear.
   const syncMap = new Map();
+  syncMap.set('cloud-disconnected', {
+    _id: 'cloud-disconnected',
+    is_ditto_server: true,
+    sync_session_status: 'Disconnected' as const,
+  });
   syncMap.set('cloud-stale', {
     _id: 'cloud-stale',
     is_ditto_server: true,
-    sync_session_status: 'Disconnected' as const,
+    sync_session_status: undefined,    // SDK returned "Not Connected" or junk
   });
   const snapshot = mergePeerList(
     { localPeer: makeLocalPeer(), remotePeers: [] } as any,
@@ -312,6 +318,18 @@ test('mergePeerList second pass skips Disconnected cloud servers (count!=cards b
     [],
   );
   assert.equal(snapshot.remote.length, 0);
+});
+
+test('parseSyncStatusRow maps SDK "Not Connected" string to Disconnected', () => {
+  // The SDK reports stopped sync as the literal "Not Connected" — a value
+  // outside our SyncSessionStatus enum. Parser normalizes to Disconnected
+  // so pass-2 filtering treats it identically.
+  const row = parseSyncStatusRow({
+    _id: 'cloud-1',
+    is_ditto_server: true,
+    documents: { sync_session_status: 'Not Connected' },
+  });
+  assert.equal(row?.sync_session_status, 'Disconnected');
 });
 
 test('mergePeerList second pass does NOT duplicate cloud peer if it appears in presence', () => {
