@@ -2,9 +2,13 @@ import * as esbuild from 'esbuild';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const watch = process.argv.includes('--watch');
+
+// Render help markdown → HTML before bundling.
+execFileSync('node', [path.join(__dirname, 'scripts', 'render-help.mjs')], { stdio: 'inherit' });
 
 const extensionCtx = await esbuild.context({
   entryPoints: ['src/extension.ts'],

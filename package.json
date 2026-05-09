@@ -83,12 +83,30 @@
         "title": "Edit Subscription",
         "icon": "$(edit)"
       },
-      { "command": "dittoVsce.openQueryEditor", "title": "Open Query Editor" },
-      { "command": "dittoVsce.setApplicationLogLevel", "title": "Ditto: Set Application Log Level" },
-      { "command": "dittoVsce.setDittoSdkLogLevel", "title": "Ditto: Set Ditto SDK Log Level" },
-      { "command": "dittoVsce.openOutputChannel", "title": "Ditto: Open Output Channel" },
-      { "command": "dittoVsce.exportLogs", "title": "Ditto: Export Logs for Bug Report…" },
-      { "command": "dittoVsce.showLogFile", "title": "Ditto: Show Log File in Finder" }
+      {
+        "command": "dittoVsce.openQueryEditor",
+        "title": "Open Query Editor"
+      },
+      {
+        "command": "dittoVsce.setApplicationLogLevel",
+        "title": "Ditto: Set Application Log Level"
+      },
+      {
+        "command": "dittoVsce.setDittoSdkLogLevel",
+        "title": "Ditto: Set Ditto SDK Log Level"
+      },
+      {
+        "command": "dittoVsce.openOutputChannel",
+        "title": "Ditto: Open Output Channel"
+      },
+      {
+        "command": "dittoVsce.exportLogs",
+        "title": "Ditto: Export Logs for Bug Report…"
+      },
+      {
+        "command": "dittoVsce.showLogFile",
+        "title": "Ditto: Show Log File in Finder"
+      }
     ],
     "menus": {
       "view/title": [
@@ -155,6 +173,7 @@
     "@vscode/codicons": "^0.0.45",
     "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.23.0",
+    "markdown-it": "^14.1.1",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3"
   },
