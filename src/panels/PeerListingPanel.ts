@@ -6,6 +6,7 @@ import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { PeerIn, PeerOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
+import { detectPlatform, transportSupportFor } from '../util/platform.js';
 
 export class PeerListingPanel {
   private static current: PeerListingPanel | undefined;
@@ -108,7 +109,10 @@ export class PeerListingPanel {
       })
     );
 
-    setTimeout(() => this.pushState(), 50);
+    setTimeout(() => {
+      this.pushState();
+      this.postPlatformInit();
+    }, 50);
   }
 
   private pushState() {
@@ -117,6 +121,26 @@ export class PeerListingPanel {
       type: 'peer.state',
       snapshot: active ? this.manager.getLatestSnapshot() : { local: null, remote: [] },
       sync: active ? this.manager.getSyncState() : 'idle'
+    });
+  }
+
+  /** Post the platform support matrix + the active config's current
+   *  transport prefs to the webview. Sent on resolve and again after each
+   *  successful applyTransportConfig so the popover baseline stays in sync. */
+  private postPlatformInit() {
+    const platform = detectPlatform();
+    const support = transportSupportFor(platform);
+    const cfg = this.configs.get(this.databaseId);
+    const current = {
+      isLanEnabled: cfg?.isLanEnabled ?? true,
+      isBluetoothLeEnabled: cfg?.isBluetoothLeEnabled ?? support.bluetoothLE,
+      isAwdlEnabled: cfg?.isAwdlEnabled ?? support.awdl,
+    };
+    this.post({
+      type: 'peer.platformInit',
+      platform,
+      support: { lan: support.lan, bluetoothLE: support.bluetoothLE, awdl: support.awdl },
+      current,
     });
   }
 
@@ -131,6 +155,27 @@ export class PeerListingPanel {
     if (msg.type === 'peer.toggleSync') {
       await this.manager.toggleSync();
       // pushState fires automatically via onSyncChange listener.
+      return;
+    }
+    if (msg.type === 'peer.applyTransportConfig') {
+      this.post({ type: 'peer.transportApplyStatus', step: 'stoppingSync' });
+      try {
+        await this.manager.applyTransportConfig({
+          isLanEnabled: msg.isLanEnabled,
+          isBluetoothLeEnabled: msg.isBluetoothLeEnabled,
+          isAwdlEnabled: msg.isAwdlEnabled,
+        });
+        this.post({ type: 'peer.transportApplyStatus', step: 'complete' });
+        // Re-push the platform init so the webview's baseline matches the
+        // newly-persisted config.
+        this.postPlatformInit();
+      } catch (err) {
+        this.post({
+          type: 'peer.transportApplyError',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return;
     }
   }
 

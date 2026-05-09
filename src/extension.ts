@@ -116,7 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
   const secretStore = new SecretStore(context.secrets);
   const subscriptionStore = new SubscriptionStore(context.globalState);
   const tracker = new OpenPanelsTracker(context.globalState);
-  const manager = new DittoManager(context, logger);
+  const manager = new DittoManager(context, logger, configStore);
   const collectionsRepo = new CollectionsRepository(manager, logger);
   const inspectorController = new InspectorController(context.globalState);
   const historyStore = new QueryHistoryStore(context.globalState);

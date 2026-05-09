@@ -42,7 +42,21 @@ interface PeerListSnapshot {
   remote: PeerInfo[];
 }
 
-type In = { type: 'peer.state'; snapshot: PeerListSnapshot; sync: 'active' | 'idle' };
+type Platform = 'macos' | 'windows' | 'linux' | 'other';
+interface TransportSupport { lan: boolean; bluetoothLE: boolean; awdl: boolean; }
+interface TransportPrefs { isLanEnabled: boolean; isBluetoothLeEnabled: boolean; isAwdlEnabled: boolean; }
+type ApplyStep = 'idle' | 'stoppingSync' | 'applyingConfig' | 'restartingSync' | 'complete' | 'error';
+
+type In =
+  | { type: 'peer.state'; snapshot: PeerListSnapshot; sync: 'active' | 'idle' }
+  | {
+      type: 'peer.platformInit';
+      platform: Platform;
+      support: TransportSupport;
+      current: TransportPrefs;
+    }
+  | { type: 'peer.transportApplyStatus'; step: Exclude<ApplyStep, 'error'>; message?: string }
+  | { type: 'peer.transportApplyError'; message: string };
 
 // ─── Visual mappings ─────────────────────────────────────────────
 
@@ -127,7 +141,18 @@ export class PeerListing extends LitElement {
   @state() private copiedId: string | null = null;
   @state() private nowTick = 0;
 
+  // ─── Transport configuration popover ──────────────────────────
+  @state() private platform: Platform = 'other';
+  @state() private support: TransportSupport = { lan: true, bluetoothLE: false, awdl: false };
+  @state() private baseline: TransportPrefs = { isLanEnabled: true, isBluetoothLeEnabled: false, isAwdlEnabled: false };
+  @state() private form: TransportPrefs = { isLanEnabled: true, isBluetoothLeEnabled: false, isAwdlEnabled: false };
+  @state() private platformReceived = false;
+  @state() private showTransportPopover = false;
+  @state() private applyStep: ApplyStep = 'idle';
+  @state() private applyMessage: string | undefined;
+
   private tickInterval: number | null = null;
+  private completeClearTimer: number | null = null;
 
   static styles = css`
     /* @font-face for codicon registers at document level via panelHtml's <link>;
@@ -150,13 +175,17 @@ export class PeerListing extends LitElement {
     .codicon-terminal::before    { content: '\\ea85'; }
     .codicon-broadcast::before   { content: '\\eaad'; }
     .codicon-check::before       { content: '\\eab2'; }
+    .codicon-chrome-close::before { content: '\\eab8'; }
     .codicon-circuit-board::before { content: '\\eabe'; }
+    .codicon-close::before       { content: '\\ea76'; }
     .codicon-device-mobile::before { content: '\\eadb'; }
+    .codicon-gear::before        { content: '\\eaf8'; }
     .codicon-globe::before       { content: '\\eb01'; }
     .codicon-link::before        { content: '\\eb15'; }
     .codicon-package::before     { content: '\\eb29'; }
     .codicon-question::before    { content: '\\eb32'; }
     .codicon-radio-tower::before { content: '\\eb34'; }
+    .codicon-warning::before     { content: '\\ea6c'; }
     .codicon-cloud::before       { content: '\\ebaa'; }
 
     :host {
@@ -395,12 +424,218 @@ export class PeerListing extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
+    /* ─── Transport configuration popover ──────────────── */
+    .toolbar-icon-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      font: inherit;
+      cursor: pointer;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 2px;
+    }
+    .toolbar-icon-button:hover {
+      background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+    }
+    .toolbar-icon-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .popover-anchor { position: relative; display: inline-block; }
+    .popover {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      width: 360px;
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      color: var(--vscode-foreground);
+      border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      padding: 14px;
+      z-index: 1000;
+      font-size: 12px;
+    }
+    .popover-title {
+      font-size: 13px;
+      font-weight: 600;
+      margin: 0 0 10px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .popover-close {
+      background: transparent;
+      border: none;
+      color: var(--vscode-foreground);
+      cursor: pointer;
+      padding: 2px;
+      opacity: 0.7;
+    }
+    .popover-close:hover { opacity: 1; }
+
+    .banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      margin-bottom: 10px;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .banner.warning {
+      background: var(--vscode-inputValidation-warningBackground, rgba(255, 184, 0, 0.12));
+      border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 184, 0, 0.5));
+      color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+    }
+    .banner.info {
+      background: var(--vscode-inputValidation-infoBackground, rgba(60, 150, 255, 0.12));
+      border: 1px solid var(--vscode-inputValidation-infoBorder, rgba(60, 150, 255, 0.5));
+      color: var(--vscode-inputValidation-infoForeground, var(--vscode-foreground));
+    }
+    .banner.error {
+      background: var(--vscode-inputValidation-errorBackground, rgba(255, 80, 80, 0.12));
+      border: 1px solid var(--vscode-inputValidation-errorBorder, rgba(255, 80, 80, 0.5));
+      color: var(--vscode-inputValidation-errorForeground, var(--vscode-foreground));
+    }
+    .banner.success {
+      background: rgba(60, 180, 90, 0.12);
+      border: 1px solid rgba(60, 180, 90, 0.5);
+      color: var(--vscode-foreground);
+    }
+
+    .transport-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    .transport-row:last-of-type { border-bottom: none; }
+    .transport-row-text { flex: 1; min-width: 0; }
+    .transport-row-title {
+      font-size: 12px;
+      font-weight: 600;
+      margin: 0 0 2px 0;
+    }
+    .transport-row-subtitle {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin: 0;
+    }
+
+    /* Toggle switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 32px;
+      height: 18px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .switch .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: var(--vscode-checkbox-background, var(--vscode-input-background));
+      border: 1px solid var(--vscode-checkbox-border, var(--vscode-input-border, transparent));
+      border-radius: 18px;
+      transition: background-color 150ms;
+    }
+    .switch .slider::before {
+      position: absolute;
+      content: '';
+      height: 12px;
+      width: 12px;
+      left: 2px;
+      bottom: 2px;
+      background-color: var(--vscode-foreground);
+      border-radius: 50%;
+      transition: transform 150ms;
+    }
+    .switch input:checked + .slider {
+      background-color: var(--vscode-button-background);
+      border-color: var(--vscode-button-background);
+    }
+    .switch input:checked + .slider::before {
+      transform: translateX(14px);
+      background-color: var(--vscode-button-foreground);
+    }
+    .switch input:disabled + .slider { opacity: 0.5; cursor: not-allowed; }
+
+    .popover-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 12px;
+    }
+    .popover-actions button {
+      padding: 4px 12px;
+      font: inherit;
+      cursor: pointer;
+      border: none;
+      border-radius: 2px;
+    }
+    .popover-actions .primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    .popover-actions .primary:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
+    }
+    .popover-actions .secondary {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+    .popover-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
   `;
 
   connectedCallback(): void {
     super.connectedCallback();
     onHostMessage<In>(msg => {
-      if (msg.type === 'peer.state') { this.snapshot = msg.snapshot; this.sync = msg.sync; }
+      if (msg.type === 'peer.state') {
+        this.snapshot = msg.snapshot;
+        this.sync = msg.sync;
+        return;
+      }
+      if (msg.type === 'peer.platformInit') {
+        this.platform = msg.platform;
+        this.support = msg.support;
+        this.baseline = { ...msg.current };
+        this.form = { ...msg.current };
+        this.platformReceived = true;
+        return;
+      }
+      if (msg.type === 'peer.transportApplyStatus') {
+        this.applyStep = msg.step;
+        this.applyMessage = msg.message;
+        if (msg.step === 'complete') {
+          // Auto-clear back to idle after 1.5s.
+          if (this.completeClearTimer !== null) { window.clearTimeout(this.completeClearTimer); }
+          this.completeClearTimer = window.setTimeout(() => {
+            this.applyStep = 'idle';
+            this.applyMessage = undefined;
+            this.completeClearTimer = null;
+          }, 1500);
+        }
+        return;
+      }
+      if (msg.type === 'peer.transportApplyError') {
+        this.applyStep = 'error';
+        this.applyMessage = msg.message;
+        return;
+      }
     });
     this.tickInterval = window.setInterval(() => { this.nowTick++; }, 30_000);
   }
@@ -408,9 +643,61 @@ export class PeerListing extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this.tickInterval !== null) { window.clearInterval(this.tickInterval); }
+    if (this.completeClearTimer !== null) {
+      window.clearTimeout(this.completeClearTimer);
+      this.completeClearTimer = null;
+    }
   }
 
   private toggleSync() { postToHost({ type: 'peer.toggleSync' }); }
+
+  private toggleTransportPopover() {
+    if (this.showTransportPopover) {
+      this.cancelTransportPopover();
+    } else {
+      // Reset form to baseline whenever we open.
+      this.form = { ...this.baseline };
+      // Clear stale terminal state from a previous apply.
+      if (this.applyStep === 'complete' || this.applyStep === 'error') {
+        this.applyStep = 'idle';
+        this.applyMessage = undefined;
+      }
+      this.showTransportPopover = true;
+    }
+  }
+
+  private cancelTransportPopover() {
+    this.showTransportPopover = false;
+    this.form = { ...this.baseline };
+  }
+
+  private setTransportPref(key: keyof TransportPrefs, value: boolean) {
+    this.form = { ...this.form, [key]: value };
+  }
+
+  private get transportFormDirty(): boolean {
+    return this.form.isLanEnabled !== this.baseline.isLanEnabled
+      || this.form.isBluetoothLeEnabled !== this.baseline.isBluetoothLeEnabled
+      || this.form.isAwdlEnabled !== this.baseline.isAwdlEnabled;
+  }
+
+  private get applyInProgress(): boolean {
+    return this.applyStep === 'stoppingSync'
+      || this.applyStep === 'applyingConfig'
+      || this.applyStep === 'restartingSync';
+  }
+
+  private applyTransportConfig() {
+    if (!this.transportFormDirty || this.applyInProgress) { return; }
+    postToHost({
+      type: 'peer.applyTransportConfig',
+      isLanEnabled: this.form.isLanEnabled,
+      isBluetoothLeEnabled: this.form.isBluetoothLeEnabled,
+      isAwdlEnabled: this.form.isAwdlEnabled,
+    });
+    this.applyStep = 'stoppingSync';
+    this.applyMessage = undefined;
+  }
 
   private async copyId(id: string) {
     try {
@@ -430,6 +717,16 @@ export class PeerListing extends LitElement {
         <button class="toolbar-button" @click=${this.toggleSync}>
           ${this.sync === 'active' ? '⏸ Stop Sync' : '▶ Start Sync'}
         </button>
+        <div class="popover-anchor">
+          <button class="toolbar-icon-button"
+                  title="Transport Configuration"
+                  aria-label="Transport Configuration"
+                  ?disabled=${!this.platformReceived}
+                  @click=${this.toggleTransportPopover}>
+            <i class="codicon codicon-gear"></i>
+          </button>
+          ${this.showTransportPopover ? this.renderTransportPopover() : nothing}
+        </div>
       </div>
 
       <div class="tabs" role="tablist">
@@ -438,6 +735,94 @@ export class PeerListing extends LitElement {
       </div>
 
       ${this.tab === 'list' ? this.renderList() : this.renderGraphPlaceholder()}
+    `;
+  }
+
+  private renderTransportPopover() {
+    const inProgress = this.applyInProgress;
+    const showError = this.applyStep === 'error';
+    const showSuccess = this.applyStep === 'complete';
+    return html`
+      <div class="popover" role="dialog" aria-label="Transport Configuration">
+        <h3 class="popover-title">
+          <span>Transport Configuration</span>
+          <button class="popover-close"
+                  aria-label="Close"
+                  ?disabled=${inProgress}
+                  @click=${this.cancelTransportPopover}>
+            <i class="codicon codicon-close"></i>
+          </button>
+        </h3>
+
+        ${inProgress ? html`
+          <div class="banner info">
+            <i class="codicon codicon-info"></i>
+            <span>Applying transport changes…</span>
+          </div>
+        ` : showSuccess ? html`
+          <div class="banner success">
+            <i class="codicon codicon-check"></i>
+            <span>Configuration applied successfully</span>
+          </div>
+        ` : showError ? html`
+          <div class="banner error">
+            <i class="codicon codicon-warning"></i>
+            <span>${this.applyMessage ?? 'Failed to apply transport configuration.'}</span>
+          </div>
+        ` : html`
+          <div class="banner warning">
+            <i class="codicon codicon-warning"></i>
+            <span>Changing transport settings will temporarily stop sync and disconnect all peers.</span>
+          </div>
+        `}
+
+        ${this.support.bluetoothLE ? this.renderTransportRow(
+          'Bluetooth LE',
+          'Direct peer-to-peer sync via Bluetooth Low Energy',
+          'isBluetoothLeEnabled',
+        ) : nothing}
+
+        ${this.support.lan ? this.renderTransportRow(
+          'Local Area Network',
+          'Sync with peers on the same WiFi or wired network',
+          'isLanEnabled',
+        ) : nothing}
+
+        ${this.support.awdl ? this.renderTransportRow(
+          'Apple Wireless Direct Link',
+          'High-speed peer-to-peer WiFi (Apple devices only)',
+          'isAwdlEnabled',
+        ) : nothing}
+
+        <div class="popover-actions">
+          <button class="secondary"
+                  ?disabled=${inProgress}
+                  @click=${this.cancelTransportPopover}>Cancel</button>
+          <button class="primary"
+                  ?disabled=${!this.transportFormDirty || inProgress}
+                  @click=${this.applyTransportConfig}>Apply</button>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderTransportRow(title: string, subtitle: string, key: keyof TransportPrefs) {
+    const checked = this.form[key];
+    const disabled = this.applyInProgress;
+    return html`
+      <div class="transport-row">
+        <div class="transport-row-text">
+          <h4 class="transport-row-title">${title}</h4>
+          <p class="transport-row-subtitle">${subtitle}</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox"
+                 .checked=${checked}
+                 ?disabled=${disabled}
+                 @change=${(e: Event) => this.setTransportPref(key, (e.target as HTMLInputElement).checked)} />
+          <span class="slider"></span>
+        </label>
+      </div>
     `;
   }
 

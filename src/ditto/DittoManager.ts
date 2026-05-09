@@ -29,6 +29,14 @@ import {
   type LifecycleAction,
 } from './lifecycle-state.js';
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
+import { detectPlatform, transportSupportFor } from '../util/platform.js';
+import type { ConfigStore } from '../storage/ConfigStore.js';
+
+export interface TransportPrefs {
+  isLanEnabled: boolean;
+  isBluetoothLeEnabled: boolean;
+  isAwdlEnabled: boolean;
+}
 
 type StatusListener = (status: DatabaseStatus, configId: string | null) => void;
 type PresenceListener = (snapshot: PeerListSnapshot) => void;
@@ -65,10 +73,12 @@ export class DittoManager {
   readonly onLifecycleStateChange = this.lifecycleEmitter.event;
 
   private readonly log: Logger;
+  private applyingTransports = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    parentLogger: Logger
+    parentLogger: Logger,
+    private readonly configStore?: ConfigStore,
   ) {
     this.log = parentLogger.withTag('ext:DittoManager');
   }
@@ -148,13 +158,22 @@ export class DittoManager {
 
       const ditto = await Ditto.open(dittoCfg);
 
+      // Per-DB transport prefs gated by the runtime's OS support matrix.
+      // The OS gate is defense-in-depth: even if a synced/replicated config
+      // sets `isAwdlEnabled = true`, a Linux runtime keeps AWDL off because
+      // `support.awdl` is false there.
+      const support = transportSupportFor(detectPlatform());
       ditto.updateTransportConfig((c) => {
-        c.peerToPeer.awdl.isEnabled = true;
-        c.peerToPeer.bluetoothLE.isEnabled = true;
-        c.peerToPeer.lan.isEnabled = true;
-        c.peerToPeer.lan.isMdnsEnabled = true;
-        c.peerToPeer.lan.isMulticastEnabled = true;
+        const lanOn = config.isLanEnabled ?? true;
+        c.peerToPeer.lan.isEnabled = lanOn;
+        c.peerToPeer.lan.isMdnsEnabled = lanOn;
+        c.peerToPeer.lan.isMulticastEnabled = lanOn;
+        c.peerToPeer.bluetoothLE.isEnabled =
+          support.bluetoothLE && (config.isBluetoothLeEnabled ?? support.bluetoothLE);
+        c.peerToPeer.awdl.isEnabled =
+          support.awdl && (config.isAwdlEnabled ?? support.awdl);
       });
+      this.logTransportReadback(ditto, 'connect');
 
       if (config.mode === 'server' && ditto.auth.loginSupported) {
         await ditto.auth.setExpirationHandler(async (instance) => {
@@ -346,6 +365,149 @@ export class DittoManager {
         err: err instanceof Error ? err.message : String(err),
       });
       return '';
+    }
+  }
+
+  /** True while a transport-config apply is in flight. Callers (extension.ts
+   *  command handlers) should bail with "Transport change in progress" rather
+   *  than racing connect/disconnect against an in-flight cycle. */
+  isApplyingTransports(): boolean { return this.applyingTransports; }
+
+  /**
+   * Soft-cycle transport configuration without closing the Ditto instance.
+   *
+   * Mirrors the SwiftUI `applyTransportConfig` flow: stop sync → tear down
+   * presence + sync_status observers (Ditto stays open) → updateTransportConfig
+   * with the OS-gated user prefs → readback log → persist back to ConfigStore
+   * → restart sync → re-attach observers + refresh local peer info.
+   *
+   * On error in any phase we still attempt to restart sync + reattach observers
+   * inside the finally block so the user isn't left with a stranded session.
+   */
+  async applyTransportConfig(opts: TransportPrefs): Promise<void> {
+    if (!this.session) { throw new Error('No active database.'); }
+    if (this.applyingTransports) { throw new Error('Transport change already in progress.'); }
+    const session = this.session;
+    const ditto = session.ditto;
+    const configId = session.configId;
+
+    // OS gate the user's request — a Linux runtime can never end up with
+    // AWDL on, even if the webview sends `isAwdlEnabled: true` (e.g. via a
+    // stale UI state).
+    const support = transportSupportFor(detectPlatform());
+    const gated: TransportPrefs = {
+      isLanEnabled: opts.isLanEnabled,
+      isBluetoothLeEnabled: support.bluetoothLE && opts.isBluetoothLeEnabled,
+      isAwdlEnabled: support.awdl && opts.isAwdlEnabled,
+    };
+
+    this.applyingTransports = true;
+    let phase: 'stoppingSync' | 'tearingDownObservers' | 'applyingConfig' | 'persisting' | 'restartingSync' | 'reattachingObservers' = 'stoppingSync';
+    try {
+      this.log.info('Transport apply: stopping sync', { configId });
+      try { ditto.sync.stop(); } catch { /* ignore — best-effort */ }
+
+      phase = 'tearingDownObservers';
+      // Tear down observers + clear derived state, but KEEP the Ditto instance.
+      try { session.presenceObserver?.stop?.(); } catch { /* ignore */ }
+      session.presenceObserver = undefined;
+      try { session.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
+      session.syncStatusObserver = undefined;
+      if (session.presenceCoalesceTimer) {
+        clearTimeout(session.presenceCoalesceTimer);
+        session.presenceCoalesceTimer = undefined;
+      }
+      this.latestPresence = null;
+      this.syncStatusByPeerKey.clear();
+      this.previousOrder = [];
+      this.latestSnapshot = { local: this.localPeerInfo, remote: [] };
+      // Push the empty state so the UI reflects the pre-apply clear immediately.
+      this.firePresence();
+
+      phase = 'applyingConfig';
+      ditto.updateTransportConfig((c) => {
+        c.peerToPeer.lan.isEnabled = gated.isLanEnabled;
+        c.peerToPeer.lan.isMdnsEnabled = gated.isLanEnabled;
+        c.peerToPeer.lan.isMulticastEnabled = gated.isLanEnabled;
+        c.peerToPeer.bluetoothLE.isEnabled = gated.isBluetoothLeEnabled;
+        c.peerToPeer.awdl.isEnabled = gated.isAwdlEnabled;
+      });
+      this.logTransportReadback(ditto, 'applyTransportConfig');
+      this.log.info('Transport apply: applied', { configId, prefs: gated });
+
+      phase = 'persisting';
+      // Persist to ConfigStore between updateTransportConfig and restart so a
+      // crash mid-restart still keeps the new prefs on disk.
+      if (this.configStore) {
+        const cfg = this.configStore.get(configId);
+        if (cfg) {
+          await this.configStore.save({
+            ...cfg,
+            isLanEnabled: gated.isLanEnabled,
+            isBluetoothLeEnabled: gated.isBluetoothLeEnabled,
+            isAwdlEnabled: gated.isAwdlEnabled,
+          });
+        } else {
+          this.log.warn('Transport apply: configStore had no entry for configId', { configId });
+        }
+      } else {
+        this.log.warn('Transport apply: no configStore reference — skipping persistence', { configId });
+      }
+    } catch (err) {
+      this.log.error('Transport apply: failed', {
+        phase, configId, err: err instanceof Error ? err.stack : String(err),
+      });
+      // Still attempt to restart sync + re-attach observers inside finally
+      // so the user isn't left with a stranded session.
+      throw err;
+    } finally {
+      // Restart + reattach are best-effort recovery; if they throw we log and
+      // surface the original error (or the new restart error if no original).
+      try {
+        this.log.info('Transport apply: restarting sync', { configId });
+        ditto.sync.start();
+      } catch (err) {
+        this.log.error('Transport apply: sync.start() failed', {
+          configId, err: err instanceof Error ? err.stack : String(err),
+        });
+        this.applyingTransports = false;
+        throw err;
+      }
+      try {
+        this.attachPresenceObserver(ditto);
+        this.attachSyncStatusObserver(ditto);
+        await this.loadLocalPeerInfo(ditto);
+        this.setSyncState('active', configId);
+        this.firePresence();
+        this.log.info('Transport apply: complete', { configId });
+      } catch (err) {
+        this.log.error('Transport apply: re-attach observers failed', {
+          configId, err: err instanceof Error ? err.stack : String(err),
+        });
+      }
+      this.applyingTransports = false;
+    }
+  }
+
+  /** Read each transport's `isEnabled` back from `ditto.transportConfig` and
+   *  log it. Mirrors SwiftUI's `logTransportReadback` — defensive surface for
+   *  SDK no-ops where update silently drops a flag. */
+  private logTransportReadback(ditto: Ditto, context: string): void {
+    try {
+      const tc: any = (ditto as any).transportConfig;
+      const p2p = tc?.peerToPeer ?? {};
+      this.log.info('Transport readback', {
+        context,
+        lan: !!p2p.lan?.isEnabled,
+        lanMdns: !!p2p.lan?.isMdnsEnabled,
+        lanMulticast: !!p2p.lan?.isMulticastEnabled,
+        bluetoothLE: !!p2p.bluetoothLE?.isEnabled,
+        awdl: !!p2p.awdl?.isEnabled,
+      });
+    } catch (err) {
+      this.log.warn('Transport readback failed', {
+        context, err: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

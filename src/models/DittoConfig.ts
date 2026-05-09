@@ -1,3 +1,5 @@
+import { detectPlatform, transportSupportFor } from '../util/platform.js';
+
 export type AuthMode = 'server' | 'smallPeersOnly';
 
 /**
@@ -18,6 +20,15 @@ export interface StoredDittoConfig {
   allowUntrustedCerts: boolean;
   logLevel: SdkLogLevel;
   isStrictModeEnabled: boolean;
+  /**
+   * Per-DB transport prefs. Optional so previously-stored configs read
+   * back transparently with `?? defaults` at the call site. Defaults are
+   * computed from the current platform's `transportSupportFor()` matrix in
+   * {@link newConfig}.
+   */
+  isLanEnabled?: boolean;
+  isBluetoothLeEnabled?: boolean;
+  isAwdlEnabled?: boolean;
 }
 
 export interface SecretSet {
@@ -27,6 +38,11 @@ export interface SecretSet {
 }
 
 export function newConfig(): StoredDittoConfig {
+  // Compute platform-safe transport defaults so a freshly-registered
+  // connection never silently turns on a transport the OS can't run
+  // (e.g. AWDL on Linux). For Linux we get LAN-only; Windows adds BLE;
+  // macOS adds AWDL.
+  const support = transportSupportFor(detectPlatform());
   return {
     id: '',
     name: '',
@@ -37,7 +53,10 @@ export function newConfig(): StoredDittoConfig {
     httpApiUrl: '',
     allowUntrustedCerts: false,
     logLevel: 'info',
-    isStrictModeEnabled: false
+    isStrictModeEnabled: false,
+    isLanEnabled: true,
+    isBluetoothLeEnabled: support.bluetoothLE,
+    isAwdlEnabled: support.awdl,
   };
 }
 

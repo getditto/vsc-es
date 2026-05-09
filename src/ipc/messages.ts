@@ -41,10 +41,28 @@ export type AddIndexOut =
 
 // ─── Peer listing panel ────────────────────────────────────────
 export type PeerIn =
-  | { type: 'peer.toggleSync' };
+  | { type: 'peer.toggleSync' }
+  | {
+      type: 'peer.applyTransportConfig';
+      isLanEnabled: boolean;
+      isBluetoothLeEnabled: boolean;
+      isAwdlEnabled: boolean;
+    };
 
 export type PeerOut =
-  | { type: 'peer.state'; snapshot: PeerListSnapshot; sync: 'active' | 'idle' };
+  | { type: 'peer.state'; snapshot: PeerListSnapshot; sync: 'active' | 'idle' }
+  | {
+      type: 'peer.platformInit';
+      platform: 'macos' | 'windows' | 'linux' | 'other';
+      support: { lan: boolean; bluetoothLE: boolean; awdl: boolean };
+      current: { isLanEnabled: boolean; isBluetoothLeEnabled: boolean; isAwdlEnabled: boolean };
+    }
+  | {
+      type: 'peer.transportApplyStatus';
+      step: 'idle' | 'stoppingSync' | 'applyingConfig' | 'restartingSync' | 'complete';
+      message?: string;
+    }
+  | { type: 'peer.transportApplyError'; message: string };
 
 // ─── Query editor panel ────────────────────────────────────────
 export type QueryIn =
