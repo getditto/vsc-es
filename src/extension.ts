@@ -14,135 +14,58 @@ import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
+import { performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
 import type { Logger, LogLevel } from './logging/types.js';
-import type { StoredDittoConfig } from './models/DittoConfig.js';
 
 let logger: Logger;
 
-interface PerformSwitchOpts {
-  context: vscode.ExtensionContext;
-  manager: DittoManager;
-  configStore: ConfigStore;
-  secretStore: SecretStore;
-  subStore: SubscriptionStore;
-  tracker: OpenPanelsTracker;
-  logger: Logger;
-  fromActive: { id: string; name: string } | null;
-  to: StoredDittoConfig;
-}
-
-async function performSwitch(opts: PerformSwitchOpts): Promise<void> {
-  const { configStore, secretStore, subStore, tracker, manager, logger, fromActive, to } = opts;
-  const log = logger.withTag('ext:switch');
-
-  // 1. Pre-switch warning if fromActive has open panels.
-  if (fromActive) {
-    const open = tracker.list(fromActive.id);
-    if (open.length > 0) {
-      const labels = open.map(k => k === 'query' ? `Query — ${fromActive.name}` : `Peers — ${fromActive.name}`);
-      const ok = await vscode.window.showWarningMessage(
-        `Switching to "${to.name}" will close ${open.length} open panels for "${fromActive.name}":\n` +
-          `   • ${labels.join('\n   • ')}\n\n` +
-          `These will reopen automatically the next time you connect to "${fromActive.name}".`,
-        { modal: true },
-        'Switch'
-      );
-      if (ok !== 'Switch') {
-        log.debug('Switch cancelled by user', { fromId: fromActive.id, toId: to.id });
-        return;
-      }
-    }
-  }
-
-  // 2. Combined progress UI.
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: fromActive ? `Switching to "${to.name}"` : `Connecting to "${to.name}"`,
-      cancellable: false,
+function buildSwitchDeps(
+  context: vscode.ExtensionContext,
+  manager: DittoManager,
+  configStore: ConfigStore,
+  secretStore: SecretStore,
+  subStore: SubscriptionStore,
+  tracker: OpenPanelsTracker,
+  loggerArg: Logger,
+): SwitchDeps {
+  return {
+    manager,
+    configStore: { get: (id) => configStore.get(id) },
+    secretStore: { read: (id) => secretStore.read(id) },
+    subStore: { list: (id) => subStore.list(id) },
+    tracker,
+    logger: loggerArg,
+    ui: {
+      showModalWarn: async ({ message, buttons }) =>
+        vscode.window.showWarningMessage(message, { modal: true }, ...buttons),
+      showError: (msg) => { vscode.window.showErrorMessage(msg); },
+      showInfo: (msg) => { vscode.window.showInformationMessage(msg); },
+      withProgress: async (title, work) => {
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title, cancellable: false },
+          async (notif) => work({ report: (o) => notif.report(o) }),
+        );
+      },
+      statusBarItem: () => {
+        const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1000);
+        return {
+          setText: (text) => { item.text = text; },
+          show: () => item.show(),
+          dispose: () => item.dispose(),
+        };
+      },
     },
-    async (notif) => {
-      const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1000);
-      statusItem.text = `$(sync~spin) Ditto: ${fromActive ? 'switching to' : 'connecting'} ${to.name}`;
-      statusItem.show();
-      try {
-        // 3. Tear down (dispose panels + disconnect).
-        if (fromActive) {
-          notif.report({ message: `Disconnecting from ${fromActive.name}…` });
-          statusItem.text = `$(sync~spin) Ditto: disconnecting ${fromActive.name}`;
-          notif.report({ message: 'Closing panels…' });
-          QueryEditorPanel.dispose();
-          PeerListingPanel.dispose();
-          SubscriptionEditorPanel.dispose();
-          await manager.disconnect();
-        }
-
-        // 4. Activate target.
-        notif.report({ message: `Connecting to ${to.name}…` });
-        statusItem.text = `$(sync~spin) Ditto: connecting ${to.name}`;
-        const secrets = await secretStore.read(to.id);
-        const initialSubs = subStore.list(to.id);
-        try {
-          await manager.connect(to, secrets, initialSubs);
-        } catch (err) {
-          // 5. Rollback prompt.
-          log.error('Connect to target failed', { toId: to.id, err: String(err) });
-          if (!fromActive) {
-            // Initial connect failure: just toast.
-            vscode.window.showErrorMessage(`Connect failed: ${err instanceof Error ? err.message : String(err)}`);
-            return;
-          }
-          const reconnectLabel = `Reconnect to ${fromActive.name}`;
-          const choice = await vscode.window.showWarningMessage(
-            `Connect to "${to.name}" failed: ${err instanceof Error ? err.message : String(err)}.\nReconnect to "${fromActive.name}"?`,
-            { modal: true },
-            reconnectLabel,
-            'Stay disconnected'
-          );
-          if (choice === reconnectLabel) {
-            notif.report({ message: `Reconnecting to ${fromActive.name}…` });
-            statusItem.text = `$(sync~spin) Ditto: reconnecting ${fromActive.name}`;
-            const fromCfg = configStore.get(fromActive.id);
-            if (!fromCfg) {
-              vscode.window.showErrorMessage('Original DB config no longer available.');
-              return;
-            }
-            const fromSecrets = await secretStore.read(fromCfg.id);
-            const fromSubs = subStore.list(fromCfg.id);
-            try {
-              await manager.connect(fromCfg, fromSecrets, fromSubs);
-            } catch (err2) {
-              log.error('Rollback connect failed', { fromId: fromActive.id, err: String(err2) });
-              vscode.window.showErrorMessage(
-                `Reconnect to "${fromActive.name}" also failed: ${err2 instanceof Error ? err2.message : String(err2)}.\nBoth connections offline.`
-              );
-              return;
-            }
-            // Restore fromActive's panels.
-            await restorePanels(fromActive.id, opts);
-            return;
-          }
-          return; // stay disconnected
-        }
-
-        // 6. Restore target's panels.
-        notif.report({ message: 'Restoring panels…' });
-        statusItem.text = `$(sync~spin) Ditto: restoring panels`;
-        await restorePanels(to.id, opts);
-      } finally {
-        statusItem.dispose();
-      }
-    }
-  );
-}
-
-async function restorePanels(databaseId: string, opts: PerformSwitchOpts): Promise<void> {
-  const { context, manager, configStore, tracker, logger } = opts;
-  for (const kind of tracker.list(databaseId)) {
-    if (kind === 'query') QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, logger);
-    if (kind === 'peers') PeerListingPanel.show(context, manager, configStore, databaseId, tracker, logger);
-  }
+    panels: {
+      closeQuery: () => QueryEditorPanel.dispose(),
+      closePeers: () => PeerListingPanel.dispose(),
+      closeSubscription: () => SubscriptionEditorPanel.dispose(),
+      showQuery: (databaseId) =>
+        QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, loggerArg),
+      showPeers: (databaseId) =>
+        PeerListingPanel.show(context, manager, configStore, databaseId, tracker, loggerArg),
+    },
+  };
 }
 
 const sdkLevelMap: Record<LogLevel, string> = {
@@ -239,10 +162,8 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Already connected to "${node.config.name}".`);
         return;
       }
-      await performSwitch({
-        context, manager, configStore, secretStore, subStore: subscriptionStore, tracker, logger,
-        fromActive, to: node.config,
-      });
+      const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, logger);
+      await performSwitch(deps, fromActive, node.config);
     }),
     vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
       if (manager.isSwitchInProgress()) {
