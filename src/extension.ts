@@ -114,8 +114,14 @@ export function activate(context: vscode.ExtensionContext) {
   const tracker = new OpenPanelsTracker(context.globalState);
   const manager = new DittoManager(context, logger);
 
-  const treeProvider = new DatabaseTreeProvider(configStore, id => manager.getStatus(id), subscriptionStore);
+  const treeProvider = new DatabaseTreeProvider(
+    configStore,
+    id => manager.getStatus(id),
+    subscriptionStore,
+    () => manager.getCurrentLifecycleState(),
+  );
   context.subscriptions.push(manager.onStatusChange(() => treeProvider.refresh()));
+  context.subscriptions.push(manager.onLifecycleStateChange(() => treeProvider.refresh()));
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
 

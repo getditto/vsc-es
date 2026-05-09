@@ -2,9 +2,11 @@ import * as vscode from 'vscode';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DatabaseTreeNode } from './DatabaseTreeItem.js';
+import type { LifecycleState } from '../ditto/lifecycle-state.js';
 
 export type DatabaseStatus = 'idle' | 'activating' | 'active' | 'error';
 export type StatusResolver = (databaseId: string) => DatabaseStatus;
+export type LifecycleResolver = () => LifecycleState;
 
 export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTreeNode> {
   private readonly _changeEmitter = new vscode.EventEmitter<DatabaseTreeNode | undefined>();
@@ -13,7 +15,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
   constructor(
     private readonly configs: ConfigStore,
     private readonly statusFor: StatusResolver,
-    private readonly subs: SubscriptionStore
+    private readonly subs: SubscriptionStore,
+    private readonly lifecycleFor?: LifecycleResolver,
   ) {
     configs.onDidChange(() => this._changeEmitter.fire(undefined));
     subs.onDidChange(() => this._changeEmitter.fire(undefined));
@@ -73,6 +76,21 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.command = node.status === 'idle' || node.status === 'error'
           ? { command: 'dittoVsce.connect', title: 'Connect', arguments: [node] }
           : undefined;
+
+        const ls = this.lifecycleFor?.();
+        let transitionLabel: string | undefined;
+        if (ls) {
+          if (ls.kind === 'connecting' && ls.targetConfigId === node.config.id) transitionLabel = 'connecting…';
+          else if (ls.kind === 'switching' && ls.toConfigId === node.config.id) transitionLabel = 'switching to…';
+          else if (ls.kind === 'switching' && ls.fromConfigId === node.config.id) transitionLabel = 'switching from…';
+          else if (ls.kind === 'disconnecting' && ls.configId === node.config.id) transitionLabel = 'disconnecting…';
+        }
+        if (transitionLabel) {
+          item.iconPath = new vscode.ThemeIcon('sync~spin');
+          item.description = `${transitionLabel} · ${node.config.databaseId.slice(0, 6)}…`;
+          item.contextValue = 'database.transitioning';
+          item.command = undefined;
+        }
         return item;
       }
       case 'subscriptionsParent': {
