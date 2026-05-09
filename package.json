@@ -134,6 +134,11 @@
       {
         "command": "dittoVsce.queryAllInCollection",
         "title": "SELECT * FROM …"
+      },
+      {
+        "command": "dittoVsce.addIndex",
+        "title": "Add Index…",
+        "icon": "$(add)"
       }
     ],
     "keybindings": [
@@ -208,6 +213,11 @@
           "command": "dittoVsce.queryAllInCollection",
           "when": "view == dittoDatabases && viewItem == collection",
           "group": "1_open@1"
+        },
+        {
+          "command": "dittoVsce.addIndex",
+          "when": "view == dittoDatabases && viewItem == collection",
+          "group": "2_index@1"
         }
       ]
     }

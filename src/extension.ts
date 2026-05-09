@@ -12,6 +12,7 @@ import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
 import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
+import { AddIndexPanel } from './panels/AddIndexPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 import { CollectionsRepository } from './ditto/CollectionsRepository.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
@@ -332,6 +333,13 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dittoVsce.refreshCollections', async () => {
       try { await collectionsRepo.refresh(); }
       catch (err) { vscode.window.showErrorMessage(`Refresh collections failed: ${err instanceof Error ? err.message : String(err)}`); }
+    }),
+    vscode.commands.registerCommand('dittoVsce.addIndex', (node?: any) => {
+      // From context menu the node is the tree node — extract collection name.
+      const preselected = typeof node === 'object' && node?.collection?.name
+        ? String(node.collection.name)
+        : undefined;
+      AddIndexPanel.show(context, collectionsRepo, logger, preselected);
     }),
     vscode.commands.registerCommand('dittoVsce.queryAllInCollection', (databaseIdOrNode: any, collectionName?: string) => {
       // Tree single-click invocation passes (databaseId, collectionName) via `arguments`.

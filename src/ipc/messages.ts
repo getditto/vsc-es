@@ -29,6 +29,16 @@ export type SubIn =
 export type SubOut =
   | { type: 'sub.init'; id?: string; name: string; query: string };
 
+// ─── Add Index panel ───────────────────────────────────────────
+export type AddIndexIn =
+  | { type: 'addIndex.create'; collection: string; field: string }
+  | { type: 'addIndex.cancel' };
+
+export type AddIndexOut =
+  | { type: 'addIndex.init'; collections: string[]; preselected?: string }
+  | { type: 'addIndex.error'; message: string }
+  | { type: 'addIndex.created' };
+
 // ─── Peer listing panel ────────────────────────────────────────
 export type PeerIn =
   | { type: 'peer.toggleSync' };
