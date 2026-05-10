@@ -13,6 +13,59 @@ import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import { executeRemoteQuery } from '../ditto/HttpQueryService.js';
 import { extractCollectionName } from '../ditto/import-subscription-parser.js';
 
+/** Attachment soft / hard size limits (mirrors SwiftUI's 10 MB / 20 MB).
+ *  Soft = warn-and-continue; hard = refuse. The SDK's local
+ *  `ditto.store.newAttachment` doesn't enforce a server-side limit so
+ *  these are policy choices for the extension. */
+const ATTACHMENT_SOFT_LIMIT = 10 * 1024 * 1024;
+const ATTACHMENT_HARD_LIMIT = 20 * 1024 * 1024;
+
+/**
+ * File-type allowlist for attachments. Maps a friendly category label
+ * (shown in the VS Code `showOpenDialog` filter dropdown) to the
+ * extensions accepted in that category. Excludes executable formats
+ * (.exe, .bat, .cmd, .msi, .app, .dmg, .pkg, …) by design — see the
+ * docs in `docs/Developer.md` for the security rationale.
+ */
+const ATTACHMENT_FILE_FILTERS: Record<string, string[]> = {
+  Images: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'bmp', 'tiff', 'svg'],
+  Audio: ['mp3', 'wav', 'aiff', 'm4a', 'ogg', 'flac'],
+  Video: ['mp4', 'mov', 'webm', 'mkv', 'avi'],
+  PDF: ['pdf'],
+  Text: ['txt', 'md', 'markdown', 'json', 'yaml', 'yml', 'csv', 'tsv', 'xml', 'log', 'rtf'],
+  Archives: ['zip'],
+};
+
+/** Best-effort MIME guess from a file extension. Used to populate the
+ *  attachment's `contentType` metadata so the inline viewer in the
+ *  Inspector knows how to render it. Falls back to
+ *  `application/octet-stream` for anything unrecognised. */
+function guessContentType(ext: string): string {
+  const map: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', heic: 'image/heic',
+    bmp: 'image/bmp', tiff: 'image/tiff', svg: 'image/svg+xml',
+    mp3: 'audio/mpeg', wav: 'audio/wav', aiff: 'audio/aiff',
+    m4a: 'audio/mp4', ogg: 'audio/ogg', flac: 'audio/flac',
+    mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
+    mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+    pdf: 'application/pdf',
+    txt: 'text/plain', md: 'text/markdown', markdown: 'text/markdown',
+    json: 'application/json', yaml: 'application/yaml', yml: 'application/yaml',
+    csv: 'text/csv', tsv: 'text/tab-separated-values',
+    xml: 'application/xml', log: 'text/plain', rtf: 'application/rtf',
+    zip: 'application/zip',
+  };
+  return map[ext] ?? 'application/octet-stream';
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) { return `${n} B`; }
+  if (n < 1024 * 1024) { return `${(n / 1024).toFixed(1)} KB`; }
+  if (n < 1024 * 1024 * 1024) { return `${(n / (1024 * 1024)).toFixed(1)} MB`; }
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
 function computeColumns(rows: Record<string, unknown>[]): string[] {
   const keys = new Set<string>();
   for (const r of rows) {
@@ -330,16 +383,10 @@ export class QueryEditorPanel {
   }
 
   /**
-   * Shared entry point for the right-click attachment actions. Validates
-   * preconditions (active connection, parseable row, single-collection
-   * query) and dispatches to the action-specific handler. Errors are
-   * surfaced as toasts because the right-click flow has no inline error
-   * surface.
-   *
-   * NOTE: this commit only wires the scaffolding. The actual add/delete
-   * implementations land in follow-up commits — for now we surface a
-   * placeholder toast so end-to-end IPC + collection extraction can be
-   * verified independently of the file-picker / DQL UPDATE machinery.
+   * Shared entry point for the right-click attachment actions.
+   * Validates preconditions (active connection, parseable row,
+   * single-collection query) and dispatches. Errors are surfaced as
+   * toasts because the right-click flow has no inline error surface.
    */
   private async handleAttachmentAction(rowJson: string, action: 'add' | 'delete'): Promise<void> {
     if (this.manager.getActiveConfigId() !== this.databaseId) {
@@ -371,13 +418,131 @@ export class QueryEditorPanel {
       return;
     }
 
-    // Placeholder so end-to-end wiring (right-click → menu → IPC →
-    // host → collection/_id resolution) can be verified before the
-    // real file-picker / DQL UPDATE logic lands. Replaced in the
-    // next two commits.
-    vscode.window.showInformationMessage(
-      `[stub] ${action === 'add' ? 'Add' : 'Delete'} Attachment on ${collection}/${documentId}`,
-    );
+    if (action === 'add') {
+      await this.runAddAttachment(collection, documentId);
+    } else {
+      // Delete flow lands in the next commit.
+      vscode.window.showInformationMessage(
+        `[stub] Delete Attachment on ${collection}/${documentId}`,
+      );
+    }
+  }
+
+  /**
+   * Native VS Code dialog walkthrough for adding an attachment to a
+   * document via DQL UPDATE. Local-mode only for now (HTTP mode is a
+   * follow-up). File-type allowlist on `showOpenDialog`'s filter
+   * restricts the picker to image/audio/video/pdf/text/zip — no
+   * executable formats. Soft-warns at 10 MB; hard-refuses at 20 MB.
+   */
+  private async runAddAttachment(collection: string, documentId: string): Promise<void> {
+    const log = this.logger.withTag('ext:QueryEditor');
+
+    // 1. File picker — VS Code's `filters` give the user a friendly
+    //    "Images / Audio / Video / …" dropdown AND restrict the pickable
+    //    extensions. The host environment ultimately enforces the
+    //    allowlist; we re-validate the chosen extension below as
+    //    defense-in-depth in case a user types a path manually.
+    const allowed = ATTACHMENT_FILE_FILTERS;
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      canSelectFolders: false,
+      canSelectFiles: true,
+      title: `Add attachment to ${collection}/${documentId}`,
+      filters: allowed,
+    });
+    if (!picked || picked.length === 0) { return; }
+    const fileUri = picked[0];
+    const filePath = fileUri.fsPath;
+    const filename = filePath.split(/[\\/]/).pop() ?? 'file';
+    const ext = (filename.split('.').pop() ?? '').toLowerCase();
+    if (!Object.values(allowed).some(exts => exts.includes(ext))) {
+      vscode.window.showWarningMessage(
+        `File type ".${ext}" is not on the attachment allowlist. Pick an image, audio, video, PDF, text, or zip file.`,
+      );
+      return;
+    }
+
+    // 2. Size check — soft warn at 10 MB, hard refuse at 20 MB.
+    let size = 0;
+    let contentType = 'application/octet-stream';
+    try {
+      const stat = await vscode.workspace.fs.stat(fileUri);
+      size = stat.size;
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Could not read ${filename}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    if (size > ATTACHMENT_HARD_LIMIT) {
+      vscode.window.showErrorMessage(
+        `${filename} is ${formatBytes(size)} — over the ${formatBytes(ATTACHMENT_HARD_LIMIT)} limit. Cannot upload.`,
+      );
+      return;
+    }
+    if (size > ATTACHMENT_SOFT_LIMIT) {
+      const proceed = await vscode.window.showWarningMessage(
+        `${filename} is ${formatBytes(size)}. Files over ${formatBytes(ATTACHMENT_SOFT_LIMIT)} can be slow to sync over peer-to-peer. Continue?`,
+        { modal: true }, 'Upload',
+      );
+      if (proceed !== 'Upload') { return; }
+    }
+    contentType = guessContentType(ext);
+
+    // 3. Field name — must be a valid DQL identifier so it can be
+    //    interpolated unquoted into the UPDATE statement.
+    const fieldName = await vscode.window.showInputBox({
+      title: 'Attachment field name',
+      prompt: `Field on ${collection} that will hold the attachment token`,
+      validateInput: (v) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(v.trim())
+        ? null : 'Letters, numbers, underscores only; must start with a letter or underscore.',
+    });
+    if (!fieldName) { return; }
+    const field = fieldName.trim();
+
+    // 4. Upload + link.
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Uploading ${filename}…`,
+          cancellable: false,
+        },
+        async () => {
+          const att = await this.manager.newAttachment(filePath, {
+            filename,
+            contentType,
+            length: String(size),
+          });
+          await this.manager.executeRaw(
+            `UPDATE ${collection} SET ${field} = :att WHERE _id = :docId`,
+            { att, docId: documentId },
+          );
+        },
+      );
+      vscode.window.showInformationMessage(
+        `Attached ${filename} to ${collection}/${documentId}.${field}.`,
+      );
+      log.info('Attachment added', { collection, documentId, field, filename, size });
+
+      // Re-run the last query so the new attachment field shows up in
+      // the results immediately. Best-effort — failures here just leave
+      // the user looking at stale rows; they can hit Run themselves.
+      const lastDql = this.lastMetadata?.dql;
+      if (lastDql) {
+        try {
+          await this.handle({ type: 'query.run', query: lastDql, mode: 'local' });
+        } catch { /* surfaced via the post path inside handle */ }
+      }
+    } catch (err) {
+      log.error('Attachment add failed', {
+        err: err instanceof Error ? err.stack ?? err.message : String(err),
+      });
+      vscode.window.showErrorMessage(
+        `Add attachment failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   private dispose() {

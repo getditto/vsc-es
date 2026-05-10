@@ -316,6 +316,34 @@ in `DittoManager`. To add a fourth:
   replaces with `[redacted]` in `Production`. Don't rely on the guard —
   fix the call site.
 
+### Attachments
+
+- Right-click on a row in the Query Editor's results (Table view OR
+  JSON view) opens an in-webview context menu with **Add Attachment…**
+  and **Delete Attachment…**. The menu is rendered by the Lit element
+  itself — VS Code's native context-menu APIs (`menus.editor/context`
+  etc.) work at the TreeView/editor level and do NOT reach inside
+  webviews, so we paint our own popover styled with the
+  `--vscode-menu-*` theme tokens.
+- The host derives the target collection from the last-run DQL via
+  `extractCollectionName` and the `_id` from the row JSON. Joins or
+  multi-collection queries are refused (single user collection only).
+- **File-type allowlist** for `Add Attachment`: images, audio, video,
+  PDF, text-like files, and zip archives (see
+  `ATTACHMENT_FILE_FILTERS` in `QueryEditorPanel.ts`). Executables
+  and shell scripts are explicitly excluded — the picker filters
+  them out and the host re-validates the chosen extension as
+  defense-in-depth in case a user types a path manually.
+- Soft warn at 10 MB, hard refuse at 20 MB (mirrors SwiftUI). Local
+  mode uses `ditto.store.newAttachment(path, metadata)` + DQL
+  `UPDATE col SET field = :att WHERE _id = :docId`. HTTP-mode upload
+  is a follow-up; for now Add/Delete require the connection to be
+  active in local mode.
+- Viewing attachments — already wired in
+  `webview-ui/inspector/attachment-viewer-element.ts`: detects
+  `_meta`-shaped tokens in the selected row's JSON, renders inline
+  for known image MIME types, otherwise offers a Save action.
+
 ### Logging
 
 - Use the project Logger (DI'd from `extension.ts` activate); do NOT call

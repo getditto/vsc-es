@@ -314,11 +314,28 @@ export class DittoManager {
   }
 
   /** Run a raw DQL query and return its rows. No EXPLAIN side-trip, no
-   *  history — meant for system queries (CollectionsRepository, etc.). */
-  async executeRaw(query: string): Promise<Record<string, unknown>[]> {
+   *  history — meant for system queries (CollectionsRepository, etc.).
+   *  Optional `args` map binds `:name` placeholders for parameterised
+   *  UPDATE/INSERT statements (used by the attachment add/delete
+   *  flows). */
+  async executeRaw(query: string, args?: Record<string, unknown>): Promise<Record<string, unknown>[]> {
     if (!this.session) { throw new Error('No active database.'); }
-    const result = await this.session.ditto.store.execute(query);
+    const result = args === undefined
+      ? await this.session.ditto.store.execute(query)
+      : await this.session.ditto.store.execute(query, args as any);
     return (result.items as any[]).map(i => i.value as Record<string, unknown>);
+  }
+
+  /** Create a new Ditto attachment from a local file path. The returned
+   *  object can be passed straight into a DQL UPDATE via executeRaw's
+   *  `args` map: `UPDATE col SET field = :att WHERE _id = :docId`.
+   *  Mirrors `ditto.store.newAttachment` from the SwiftUI implementation. */
+  async newAttachment(
+    filePath: string,
+    metadata: Record<string, string>,
+  ): Promise<unknown> {
+    if (!this.session) { throw new Error('No active database.'); }
+    return this.session.ditto.store.newAttachment(filePath, metadata as any);
   }
 
   /**
