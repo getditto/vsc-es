@@ -33,6 +33,13 @@ interface DetectedAttachment {
   metadata: AttachmentMetadata;
 }
 
+function formatBytes(n: number): string {
+  if (n < 1024) { return `${n} B`; }
+  if (n < 1024 * 1024) { return `${(n / 1024).toFixed(1)} KB`; }
+  if (n < 1024 * 1024 * 1024) { return `${(n / (1024 * 1024)).toFixed(1)} MB`; }
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
 function isAttachmentToken(obj: Record<string, unknown>): obj is AttachmentToken & Record<string, unknown> {
   if (typeof obj.id !== 'string') { return false; }
   if (typeof obj.len !== 'number' && typeof obj.len !== 'bigint') { return false; }
@@ -96,9 +103,29 @@ export class AttachmentViewerElement extends LitElement {
       background: var(--vscode-textCodeBlock-background);
       border-radius: 4px;
       margin-bottom: 6px;
+      overflow: hidden;
     }
-    .att-header { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
-    .att-img { max-width: 100%; max-height: 240px; }
+    /* Header: wrap onto multiple lines when filename + size + MIME
+       overflow the panel width (the Inspector pane is narrow). */
+    .att-header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 8px;
+      align-items: center;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+    .att-name {
+      font-weight: 600;
+      word-break: break-all;
+      min-width: 0;
+    }
+    .att-meta {
+      color: var(--vscode-descriptionForeground);
+      word-break: break-all;
+      font-family: var(--vscode-editor-font-family);
+    }
+    .att-img { max-width: 100%; max-height: 240px; display: block; }
     button {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
@@ -108,7 +135,7 @@ export class AttachmentViewerElement extends LitElement {
       cursor: pointer;
     }
     button:hover { background: var(--vscode-button-hoverBackground); }
-    .err { color: var(--vscode-charts-red); margin-top: 4px; }
+    .err { color: var(--vscode-charts-red); margin-top: 4px; word-break: break-word; }
     .progress { color: var(--vscode-descriptionForeground); margin-top: 4px; }
   `];
 
@@ -154,11 +181,9 @@ export class AttachmentViewerElement extends LitElement {
         <div class="att">
           <div class="att-header">
             <span class="codicon codicon-file"></span>
-            <span>${a.metadata.filename ?? 'attachment'}</span>
-            <span>—</span>
-            <span>${a.metadata.length} bytes</span>
-            <span>—</span>
-            <span>${a.metadata.contentType ?? '?'}</span>
+            <span class="att-name">${a.metadata.filename ?? 'attachment'}</span>
+            <span class="att-meta">${formatBytes(a.metadata.length)}</span>
+            <span class="att-meta">${a.metadata.contentType ?? 'unknown type'}</span>
           </div>
           ${err ? html`<div class="err">${err}</div>` : ''}
           ${pct !== undefined && !loaded ? html`<div class="progress">Loading… ${pct}%</div>` : ''}

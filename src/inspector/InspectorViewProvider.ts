@@ -192,18 +192,30 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         await fs.writeFile(uri.fsPath, buf);
         this.post({ type: 'inspector.attachmentSaved', tokenId, path: uri.fsPath });
       } else {
-        const tmpDir = vscode.Uri.joinPath(this.context.globalStorageUri, 'inspector-attachments');
-        await fs.mkdir(tmpDir.fsPath, { recursive: true });
-        const tmpFile = path.join(tmpDir.fsPath, `${tokenId}.${ext}`);
-        await fs.writeFile(tmpFile, buf);
-        const view = this.view;
-        if (!view) { return; }
-        const webviewUri = view.webview.asWebviewUri(vscode.Uri.file(tmpFile)).toString();
+        // Inline preview path. We send a base64 `data:` URI rather
+        // than writing to globalStorageUri + handing back a webview
+        // resource URI. The data-URI route is policy-free (img-src
+        // already includes `data:` in the inspector's CSP) and
+        // sidesteps two failure modes the file-write path was
+        // hitting in practice:
+        //   1. VS Code's per-webview resource roots for the
+        //      auxiliary-bar `WebviewView` quietly rejected requests
+        //      against the globalStorageUri subtree on some hosts,
+        //      yielding a broken-image icon with no console error.
+        //   2. Tokens with `_`/`-` in their id produced filenames
+        //      that some platforms URL-encoded inconsistently
+        //      between fs.writeFile and asWebviewUri.
+        // Trade-off: a 1.6 MB image becomes a ~2.2 MB string sent
+        // through postMessage. That's still well within
+        // structured-clone's budget; if we ever care about >10 MB
+        // image previews we can add a cap and fall back to the
+        // file-based path for those.
+        const dataUri = `data:${contentType};base64,${buf.toString('base64')}`;
         this.post({
           type: 'inspector.attachmentLoaded',
           tokenId,
           mimeType: contentType,
-          webviewUri,
+          webviewUri: dataUri,
         });
       }
     } catch (err) {
