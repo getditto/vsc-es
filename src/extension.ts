@@ -12,6 +12,7 @@ import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
 import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
+import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 import { CollectionsRepository } from './ditto/CollectionsRepository.js';
@@ -272,7 +273,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!databaseId) { return; }
       PeerListingPanel.show(context, manager, configStore, databaseId, tracker, inspectorController, logger);
     }),
-    vscode.commands.registerCommand('dittoVsce.newSubscription', (node) => {
+    vscode.commands.registerCommand('dittoVsce.newSubscription', async (node) => {
       const databaseId = node?.kind === 'subscriptionsParent'
         ? node.databaseId
         : manager.getActiveConfigId();
@@ -280,7 +281,50 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage('Open a connection first.');
         return;
       }
+      // If the connection has both an HTTP API URL and key, offer the
+      // user a choice between hand-writing a subscription and importing
+      // from the Ditto Server. Otherwise fall straight through to the
+      // editor — no QuickPick noise when there's only one option.
+      const cfg = configStore.get(databaseId);
+      const secrets = await secretStore.read(databaseId);
+      const canImport = !!(cfg?.httpApiUrl && secrets.httpApiKey);
+      if (canImport) {
+        const picked = await vscode.window.showQuickPick(
+          [
+            { label: 'New Subscription…', description: 'Create a new DQL subscription by hand' },
+            { label: 'Import from Server…', description: 'Pick from subscriptions known to the Ditto Server' },
+          ],
+          { placeHolder: 'How would you like to create the subscription?' },
+        );
+        if (!picked) { return; }
+        if (picked.label === 'Import from Server…') {
+          ImportSubscriptionsPanel.show(
+            context, configStore, secretStore, subscriptionStore, manager, databaseId, logger,
+          );
+          return;
+        }
+      }
       SubscriptionEditorPanel.show(context, subscriptionStore, manager, databaseId, inspectorController, logger);
+    }),
+    vscode.commands.registerCommand('dittoVsce.importSubscriptionsFromServer', async (node) => {
+      const databaseId = node?.kind === 'subscriptionsParent'
+        ? node.databaseId
+        : manager.getActiveConfigId();
+      if (!databaseId) {
+        vscode.window.showWarningMessage('Open a connection first.');
+        return;
+      }
+      const cfg = configStore.get(databaseId);
+      const secrets = await secretStore.read(databaseId);
+      if (!cfg?.httpApiUrl || !secrets.httpApiKey) {
+        vscode.window.showWarningMessage(
+          'Set the HTTP API URL and key on this connection to import subscriptions from the server.',
+        );
+        return;
+      }
+      ImportSubscriptionsPanel.show(
+        context, configStore, secretStore, subscriptionStore, manager, databaseId, logger,
+      );
     }),
     vscode.commands.registerCommand('dittoVsce.editSubscription', (node) => {
       if (node?.kind !== 'subscription') { return; }

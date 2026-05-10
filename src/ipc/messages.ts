@@ -11,6 +11,7 @@ import type {
 } from '../inspector/inspector-state.js';
 import type { QueryHistoryEntry } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoriteEntry } from '../storage/QueryFavoritesStore.js';
+import type { ImportableSubscription } from '../ditto/import-subscription-parser.js';
 
 // ─── Database editor panel ─────────────────────────────────────
 export type EditorIn =
@@ -28,6 +29,18 @@ export type SubIn =
 
 export type SubOut =
   | { type: 'sub.init'; id?: string; name: string; query: string };
+
+// ─── Import Subscriptions from Server panel ────────────────────
+export type ImportSubsIn =
+  | { type: 'importSubs.importSelected'; queries: string[] }
+  | { type: 'importSubs.cancel' };
+
+export type ImportSubsOut =
+  | { type: 'importSubs.loading' }
+  | { type: 'importSubs.loaded'; subscriptions: ImportableSubscription[] }
+  | { type: 'importSubs.error'; message: string }
+  | { type: 'importSubs.importing'; status: string }
+  | { type: 'importSubs.imported'; count: number };
 
 // ─── Add Index panel ───────────────────────────────────────────
 export type AddIndexIn =

@@ -98,6 +98,11 @@
         "icon": "$(edit)"
       },
       {
+        "command": "dittoVsce.importSubscriptionsFromServer",
+        "title": "Ditto: Import Subscriptions from Server…",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "dittoVsce.openQueryEditor",
         "title": "Open Query Editor"
       },
