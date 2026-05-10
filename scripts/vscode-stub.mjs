@@ -34,3 +34,19 @@ export class Disposable {
   constructor(callOnDispose) { this._cb = callOnDispose; }
   dispose() { this._cb?.(); }
 }
+
+// Minimal Uri stub — just enough surface for production code paths
+// that build/inspect URIs (CountBadgeDecorationProvider uses Uri.from
+// and the .scheme/.path/.query accessors). Real vscode.Uri is much
+// richer; we only stub what's exercised in tests.
+export const Uri = {
+  from(parts) {
+    return { scheme: parts.scheme, path: parts.path ?? '', query: parts.query ?? '', fsPath: parts.path ?? '' };
+  },
+  parse(value) {
+    const m = String(value).match(/^([^:]+):(?:\/\/[^/]*)?(\/[^?#]*)?(?:\?([^#]*))?/);
+    if (!m) { return { scheme: 'unknown', path: '', query: '', fsPath: '' }; }
+    return { scheme: m[1], path: m[2] ?? '', query: m[3] ?? '', fsPath: m[2] ?? '' };
+  },
+  file(p) { return { scheme: 'file', path: p, query: '', fsPath: p }; },
+};

@@ -4,6 +4,7 @@ import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DatabaseTreeNode } from './DatabaseTreeItem.js';
 import type { LifecycleState } from '../ditto/lifecycle-state.js';
 import type { DittoCollection } from '../models/DittoCollection.js';
+import { makeCountUri } from './CountBadgeDecorationProvider.js';
 
 export type DatabaseStatus = 'idle' | 'activating' | 'active' | 'error';
 export type StatusResolver = (databaseId: string) => DatabaseStatus;
@@ -231,10 +232,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       case 'subscriptionsParent': {
         const item = new vscode.TreeItem('Subscriptions', vscode.TreeItemCollapsibleState.Expanded);
         item.iconPath = new vscode.ThemeIcon('sync');
-        // Count chip mirrors how MongoDB shows "Collections (4)" / "Indexes (2)"
-        // on tree parents — pure description, no special styling needed.
+        // Right-aligned chip via FileDecorationProvider — see
+        // CountBadgeDecorationProvider for why this isn't a plain
+        // description.
         const count = this.subs.list(node.databaseId).length;
-        if (count > 0) { item.description = String(count); }
+        if (count > 0) { item.resourceUri = makeCountUri(`subs/${node.databaseId}`, count); }
         item.contextValue = 'subscriptionsParent';
         item.id = `subs.${node.databaseId}`;
         return item;
@@ -281,8 +283,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       case 'documentsLeaf': {
         const item = new vscode.TreeItem('Documents', vscode.TreeItemCollapsibleState.None);
         item.iconPath = new vscode.ThemeIcon('note');
-        if (node.collection.documentCount !== undefined) {
-          item.description = String(node.collection.documentCount);
+        if (node.collection.documentCount !== undefined && node.collection.documentCount > 0) {
+          item.resourceUri = makeCountUri(
+            `docs/${node.databaseId}/${node.collection.name}`,
+            node.collection.documentCount,
+          );
         }
         item.contextValue = 'documentsLeaf';
         item.id = `docs.${node.databaseId}.${node.collection.name}`;
@@ -302,7 +307,9 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
           count > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
         );
         item.iconPath = new vscode.ThemeIcon('key');
-        if (count > 0) { item.description = String(count); }
+        if (count > 0) {
+          item.resourceUri = makeCountUri(`idxs/${node.databaseId}/${node.collection.name}`, count);
+        }
         item.contextValue = 'indexesParent';
         item.id = `idxs.${node.databaseId}.${node.collection.name}`;
         return item;
