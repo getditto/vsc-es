@@ -14,6 +14,7 @@ interface InspectorContentNone { kind: 'none'; }
 interface InspectorContentSub  { kind: 'subscriptions'; databaseId: string; }
 interface InspectorContentPeers { kind: 'peers'; databaseId: string; }
 interface InspectorContentMetrics { kind: 'metrics'; databaseId: string; }
+interface InspectorContentDbMetrics { kind: 'databaseMetrics'; databaseId: string; }
 interface InspectorContentQuery {
   kind: 'query';
   databaseId: string;
@@ -26,6 +27,7 @@ type InspectorContent =
   | InspectorContentSub
   | InspectorContentPeers
   | InspectorContentMetrics
+  | InspectorContentDbMetrics
   | InspectorContentQuery;
 
 interface QueryHistoryEntry { id: string; query: string; timestamp?: number; }
@@ -36,7 +38,7 @@ export class DittoInspectorElement extends LitElement {
   @state() private content: InspectorContent = { kind: 'none' };
   @state() private history: QueryHistoryEntry[] = [];
   @state() private favorites: QueryFavoriteEntry[] = [];
-  @state() private helpUris: { subscription?: string; query?: string; presence?: string; metrics?: string } = {};
+  @state() private helpUris: { subscription?: string; query?: string; presence?: string; metrics?: string; databaseMetrics?: string } = {};
   // Inspector preferences (per-installation, pushed by the host on
   // resolve and on every dismiss/reset). Defaults to "show all tips"
   // until the host's first push lands.
@@ -127,6 +129,9 @@ export class DittoInspectorElement extends LitElement {
     }
     if (c.kind === 'metrics') {
       return html`<help-content-element .uri=${this.helpUris.metrics ?? ''}></help-content-element>`;
+    }
+    if (c.kind === 'databaseMetrics') {
+      return html`<help-content-element .uri=${this.helpUris.databaseMetrics ?? ''}></help-content-element>`;
     }
     if (c.kind === 'query') {
       const tabs: QueryInspectorTab[] = ['history', 'favorites', 'json', 'metrics', 'help'];
