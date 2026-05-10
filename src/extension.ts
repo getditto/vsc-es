@@ -72,7 +72,7 @@ function buildSwitchDeps(
       closePeers: () => PeerListingPanel.dispose(),
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
       showQuery: (databaseId) =>
-        QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, inspector, history, favorites, loggerArg),
+        QueryEditorPanel.show(context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, loggerArg),
       showPeers: (databaseId) =>
         PeerListingPanel.show(context, manager, configStore, databaseId, tracker, inspector, loggerArg),
     },
@@ -333,7 +333,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
-      QueryEditorPanel.show(context, manager, configStore, databaseId, tracker, inspectorController, historyStore, favoritesStore, logger);
+      QueryEditorPanel.show(context, manager, configStore, secretStore, databaseId, tracker, inspectorController, historyStore, favoritesStore, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.setApplicationLogLevel', async () => {
       const picked = await pickLogLevel(logger.getChannelLevel(), 'Set Application Log Level');
@@ -373,7 +373,7 @@ export function activate(context: vscode.ExtensionContext) {
       const cur = manager.getCurrentLifecycleState();
       if (cur.kind !== 'active') { return; }
       const panel = QueryEditorPanel.show(
-        context, manager, configStore, cur.configId,
+        context, manager, configStore, secretStore, cur.configId,
         tracker, inspectorController, historyStore, favoritesStore, logger,
       );
       panel.loadQuery(query);

@@ -1,14 +1,16 @@
 import * as vscode from 'vscode';
 import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
+import type { SecretStore } from '../storage/SecretStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
-import type { QueryIn, QueryOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { QueryIn, QueryOut, LogIn, LogOut, QueryMode } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
+import { executeRemoteQuery } from '../ditto/HttpQueryService.js';
 
 function computeColumns(rows: Record<string, unknown>[]): string[] {
   const keys = new Set<string>();
@@ -30,6 +32,7 @@ export class QueryEditorPanel {
     context: vscode.ExtensionContext,
     manager: DittoManager,
     configs: ConfigStore,
+    secrets: SecretStore,
     databaseId: string,
     tracker: OpenPanelsTracker,
     inspector: InspectorController,
@@ -38,7 +41,7 @@ export class QueryEditorPanel {
     logger: Logger,
   ): QueryEditorPanel {
     const inst = new QueryEditorPanel(
-      context, manager, configs, databaseId, tracker, inspector, history, favorites, logger,
+      context, manager, configs, secrets, databaseId, tracker, inspector, history, favorites, logger,
     );
     QueryEditorPanel._instances.add(inst);
     autoRevealInspectorOnce(context);
@@ -88,6 +91,7 @@ export class QueryEditorPanel {
     private readonly context: vscode.ExtensionContext,
     private readonly manager: DittoManager,
     private readonly configs: ConfigStore,
+    private readonly secrets: SecretStore,
     databaseId: string,
     private readonly tracker: OpenPanelsTracker,
     private readonly inspector: InspectorController,
@@ -150,6 +154,29 @@ export class QueryEditorPanel {
         }
       })
     );
+
+    // Push the available run-locations to the webview so it knows
+    // whether to render the Local/HTTP dropdown. Defer one tick to
+    // defeat VS Code's message-queue race (same defensive pattern the
+    // other panels use).
+    setTimeout(() => { void this.postModeInit(); }, 50);
+  }
+
+  /** Resolve which run-locations are usable for this connection. HTTP
+   *  requires both a non-empty httpApiUrl in config AND an httpApiKey
+   *  secret — matches the SwiftUI `executeModes` gating in QueryViewModel. */
+  private async postModeInit(): Promise<void> {
+    const cfg = this.configs.get(this.databaseId);
+    let httpKey: string | undefined;
+    try { httpKey = (await this.secrets.read(this.databaseId)).httpApiKey; }
+    catch (err) {
+      this.logger.withTag('ext:QueryEditor').warn('Could not read secrets for mode init', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const httpAvailable = !!(cfg?.httpApiUrl && httpKey);
+    const availableModes: QueryMode[] = httpAvailable ? ['local', 'http'] : ['local'];
+    this.post({ type: 'query.modeInit', availableModes });
   }
 
   private post(msg: QueryOut) { this.panel.webview.postMessage(msg); }
@@ -174,12 +201,11 @@ export class QueryEditorPanel {
       return;
     }
     if (msg.type !== 'query.run') { return; }
-    if (this.manager.getActiveConfigId() !== this.databaseId) {
-      this.post({ type: 'query.error', message: 'No active database. Connect first.' });
-      return;
-    }
+    const mode: QueryMode = msg.mode ?? 'local';
     try {
-      const { rows, durationMs, metadata } = await this.manager.executeQuery(msg.query);
+      const { rows, durationMs, metadata } = mode === 'http'
+        ? await this.runViaHttp(msg.query)
+        : await this.runViaLocal(msg.query);
       const columns = computeColumns(rows);
       this.post({ type: 'query.result', rows, columns, durationMs, metadata });
       this.lastMetadata = metadata;
@@ -190,6 +216,56 @@ export class QueryEditorPanel {
     } catch (err) {
       this.post({ type: 'query.error', message: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  /** Runs the query against the active SDK store. Requires the connection
+   *  this panel was opened against to currently be the manager's active
+   *  config — otherwise the SDK has no store to execute against. */
+  private async runViaLocal(query: string): Promise<{
+    rows: Record<string, unknown>[];
+    durationMs: number;
+    metadata: QueryResultMetadata;
+  }> {
+    if (this.manager.getActiveConfigId() !== this.databaseId) {
+      throw new Error('No active database. Connect first.');
+    }
+    return this.manager.executeQuery(query);
+  }
+
+  /** Runs the query against the Ditto Server's REST API. Doesn't need
+   *  an active SDK connection — only the connection's stored httpApiUrl
+   *  + httpApiKey. EXPLAIN isn't fetched (would be a separate HTTP call;
+   *  matches the SwiftUI HTTP path which also skips it). */
+  private async runViaHttp(query: string): Promise<{
+    rows: Record<string, unknown>[];
+    durationMs: number;
+    metadata: QueryResultMetadata;
+  }> {
+    const cfg = this.configs.get(this.databaseId);
+    const secrets = await this.secrets.read(this.databaseId);
+    if (!cfg?.httpApiUrl || !secrets.httpApiKey) {
+      throw new Error('HTTP mode requires httpApiUrl and httpApiKey on this connection.');
+    }
+    const start = performance.now();
+    const response = await executeRemoteQuery({
+      httpApiUrl: cfg.httpApiUrl,
+      httpApiKey: secrets.httpApiKey,
+      allowUntrustedCerts: cfg.allowUntrustedCerts,
+      query,
+    }, this.logger);
+    const durationMs = Math.round(performance.now() - start);
+    const rows = response.items.filter(
+      (it): it is Record<string, unknown> =>
+        typeof it === 'object' && it !== null && !Array.isArray(it),
+    );
+    const metadata: QueryResultMetadata = {
+      dql: query,
+      durationMs,
+      resultCount: rows.length,
+      explain: '',
+      timestamp: Date.now(),
+    };
+    return { rows, durationMs, metadata };
   }
 
   private dispose() {

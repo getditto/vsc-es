@@ -3,10 +3,13 @@ import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
 import '../shared/json-viewer.js';
 
+type QueryMode = 'local' | 'http';
+
 type In =
   | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: unknown }
   | { type: 'query.error'; message: string }
-  | { type: 'query.setText'; text: string };
+  | { type: 'query.setText'; text: string }
+  | { type: 'query.modeInit'; availableModes: QueryMode[] };
 
 type View = 'table' | 'json';
 type RunState = 'idle' | 'running' | 'success' | 'error';
@@ -42,6 +45,11 @@ export class QueryEditor extends LitElement {
   @state() private errorMessage: string | null = null;
   @state() private view: View = 'json';
   @state() private selectedRowIndex: number | null = null;
+  // Modes the host has told us the connection supports. Default to
+  // ['local'] until the host's modeInit message arrives so the dropdown
+  // doesn't flicker through an empty state.
+  @state() private availableModes: QueryMode[] = ['local'];
+  @state() private mode: QueryMode = 'local';
 
   static styles = css`
     :host {
@@ -72,10 +80,26 @@ export class QueryEditor extends LitElement {
       font-size: 13px;
       resize: vertical;
     }
-    .editor-toolbar {
+    .top-toolbar {
       display: flex;
-      justify-content: flex-end;
+      align-items: center;
       gap: 8px;
+      padding-bottom: 4px;
+    }
+    .top-toolbar .spacer { flex: 1; }
+    .top-toolbar select {
+      padding: 5px 8px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 2px;
+      font: inherit;
+    }
+    .top-toolbar .mode-label {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
     button.run {
       padding: 6px 16px;
@@ -228,6 +252,13 @@ export class QueryEditor extends LitElement {
         // Sync the host immediately so the tab title matches the loaded query
         // (no debounce needed — this is a deliberate user action).
         postToHost({ type: 'query.textChanged', text: this.query });
+      } else if (msg.type === 'query.modeInit') {
+        this.availableModes = msg.availableModes.length > 0 ? msg.availableModes : ['local'];
+        // Pin the current selection to a still-valid mode (e.g. host
+        // re-pushes after a config change that removed HTTP creds).
+        if (!this.availableModes.includes(this.mode)) {
+          this.mode = this.availableModes[0];
+        }
       }
     });
   }
@@ -237,7 +268,7 @@ export class QueryEditor extends LitElement {
     this.state = 'running';
     this.errorMessage = null;
     this.selectedRowIndex = null;
-    postToHost({ type: 'query.run', query: this.query });
+    postToHost({ type: 'query.run', query: this.query, mode: this.mode });
   }
 
   private titleDebounceHandle: number | undefined;
@@ -279,22 +310,36 @@ export class QueryEditor extends LitElement {
   }
 
   render() {
+    const showModePicker = this.availableModes.length > 1;
     return html`
       <div class="editor-pane">
+        <div class="top-toolbar">
+          ${showModePicker ? html`
+            <span class="mode-label">Run on</span>
+            <select
+              .value=${this.mode}
+              @change=${(e: Event) => this.mode = (e.target as HTMLSelectElement).value as QueryMode}
+              title="Where the query runs"
+            >
+              ${this.availableModes.map(m => html`
+                <option value=${m} ?selected=${m === this.mode}>${m === 'local' ? 'Local' : 'HTTP'}</option>
+              `)}
+            </select>
+          ` : nothing}
+          <button class="run" ?disabled=${!this.query.trim() || this.state === 'running'} @click=${this.run}>
+            ${this.state === 'running' ? 'Running…' : '▶ Run'}
+          </button>
+          <span class="spacer"></span>
+          <button class="star" ?disabled=${!this.query.trim()} title="Save current query to favorites" @click=${this.starCurrent}>
+            ★ Favorite
+          </button>
+        </div>
         <textarea
           .value=${this.query}
           placeholder="Type a DQL query, e.g. SELECT * FROM __small_peer_info"
           @input=${(e: Event) => this.onQueryInput((e.target as HTMLTextAreaElement).value)}
           @keydown=${this.handleKeydown}
         ></textarea>
-        <div class="editor-toolbar">
-          <button class="star" ?disabled=${!this.query.trim()} title="Save current query to favorites" @click=${this.starCurrent}>
-            ★ Favorite
-          </button>
-          <button class="run" ?disabled=${!this.query.trim() || this.state === 'running'} @click=${this.run}>
-            ${this.state === 'running' ? 'Running…' : '▶ Run'}
-          </button>
-        </div>
       </div>
 
       ${this.errorMessage ? html`

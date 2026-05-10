@@ -78,15 +78,25 @@ export type PeerOut =
   | { type: 'peer.transportApplyError'; message: string };
 
 // ─── Query editor panel ────────────────────────────────────────
+/** Where the query runs. `local` = active SDK store; `http` = REST API
+ *  via `/api/v5/store/execute` against the connection's httpApiUrl. */
+export type QueryMode = 'local' | 'http';
+
 export type QueryIn =
-  | { type: 'query.run'; query: string }
+  | { type: 'query.run'; query: string; mode: QueryMode }
   | { type: 'query.rowSelected'; rowJson: string | null }
   | { type: 'query.starCurrent'; query: string }
   | { type: 'query.textChanged'; text: string };
 
 export type QueryOut =
   | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: QueryResultMetadata }
-  | { type: 'query.error'; message: string };
+  | { type: 'query.error'; message: string }
+  // Available run-locations for this connection. `['local']` when the
+  // connection has no HTTP creds; `['local','http']` when both
+  // httpApiUrl and httpApiKey are configured. The webview hides the
+  // dropdown entirely when only one mode is available.
+  | { type: 'query.modeInit'; availableModes: QueryMode[] }
+  | { type: 'query.setText'; text: string };
 
 // ─── Inspector view (auxiliary bar) ────────────────────────────
 export type InspectorIn =
