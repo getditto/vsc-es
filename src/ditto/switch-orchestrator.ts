@@ -61,6 +61,11 @@ export interface SwitchPanels {
   /** Dispose the Database Metrics panel if it's open. Same per-DB
    *  reasoning as the Query Metrics close. */
   closeDatabaseMetrics(): void;
+  /** Dispose the Import Data panel if it's open. Carries a buffered
+   *  document array tied to the current connection — switching DBs
+   *  while that buffer is alive would let the user import into the
+   *  wrong store. Same per-DB reasoning as the metrics closes. */
+  closeImportData(): void;
   /** Open a Query Editor on `databaseId`. The optional `queryText`
    *  preloads the editor — used during restore to bring back the
    *  user's saved query body. */
@@ -127,6 +132,7 @@ export async function performSwitch(
         panels.closeSubscription();
         panels.closeQueryMetrics();
         panels.closeDatabaseMetrics();
+        panels.closeImportData();
         await manager.disconnect();
       }
 

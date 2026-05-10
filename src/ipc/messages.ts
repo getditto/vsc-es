@@ -42,6 +42,62 @@ export type ImportSubsOut =
   | { type: 'importSubs.importing'; status: string }
   | { type: 'importSubs.imported'; count: number };
 
+// ─── Import Data panel ─────────────────────────────────────────
+/** Insert mode mirrors SwiftUI's InsertType — `'regular'` does an
+ *  upsert (ON ID CONFLICT DO UPDATE), `'initial'` uses Ditto's
+ *  INITIAL DOCUMENTS bulk-import optimisation (first-load only). */
+export type ImportDataInsertType = 'regular' | 'initial';
+
+export type ImportDataIn =
+  // User clicked "Choose File…" — host opens an OS file picker, reads
+  // and validates the file, then echoes back `importData.fileSelected`
+  // (or `importData.error` when validation fails).
+  | { type: 'importData.chooseFile' }
+  // Refresh the existing-collections list (called when the user toggles
+  // back to the "existing collection" mode and the panel was opened
+  // before the collections sync completed).
+  | { type: 'importData.refreshCollections' }
+  | {
+      type: 'importData.start';
+      collection: string;
+      insertType: ImportDataInsertType;
+    }
+  | { type: 'importData.cancel' };
+
+export type ImportDataOut =
+  // Initial payload — pushes the connection name + existing-collections
+  // list + the preselected collection (when the user right-clicked a
+  // collection in the tree).
+  | {
+      type: 'importData.init';
+      databaseName: string;
+      existingCollections: string[];
+      preselectedCollection?: string;
+    }
+  | { type: 'importData.collectionsRefreshed'; existingCollections: string[] }
+  | {
+      type: 'importData.fileSelected';
+      fileName: string;
+      /** Document count after validation — surfaced in the UI so the
+       *  user can sanity-check before they click Import. */
+      documentCount: number;
+    }
+  | {
+      type: 'importData.progress';
+      current: number;
+      total: number;
+      currentDocumentId?: string;
+    }
+  | {
+      type: 'importData.done';
+      successCount: number;
+      failureCount: number;
+      /** Limited to the first ~5 errors to keep the payload bounded. */
+      errors: string[];
+      collection: string;
+    }
+  | { type: 'importData.error'; message: string };
+
 // ─── Add Index panel ───────────────────────────────────────────
 export type AddIndexIn =
   | { type: 'addIndex.create'; collection: string; field: string }

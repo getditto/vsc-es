@@ -117,6 +117,11 @@
         "icon": "$(pie-chart)"
       },
       {
+        "command": "dittoVsce.openImportData",
+        "title": "Import Data…",
+        "icon": "$(cloud-upload)"
+      },
+      {
         "command": "dittoVsce.setApplicationLogLevel",
         "title": "Ditto: Set Application Log Level"
       },
@@ -258,6 +263,11 @@
           "command": "dittoVsce.addIndex",
           "when": "view == dittoDatabases && viewItem == indexesParent",
           "group": "inline"
+        },
+        {
+          "command": "dittoVsce.openImportData",
+          "when": "view == dittoDatabases && viewItem == collection",
+          "group": "3_import@1"
         }
       ]
     }

@@ -14,6 +14,7 @@ import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { QueryMetricsPanel } from './panels/QueryMetricsPanel.js';
 import { DatabaseMetricsPanel } from './panels/DatabaseMetricsPanel.js';
+import { ImportDataPanel } from './panels/ImportDataPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
@@ -81,6 +82,7 @@ function buildSwitchDeps(
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
       closeQueryMetrics: () => QueryMetricsPanel.dispose(),
       closeDatabaseMetrics: () => DatabaseMetricsPanel.dispose(),
+      closeImportData: () => ImportDataPanel.dispose(),
       showQuery: (databaseId, queryText) => {
         const panel = QueryEditorPanel.show(
           context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, metrics, loggerArg,
@@ -475,6 +477,27 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dittoVsce.openDatabaseMetrics', (databaseId: string) => {
       if (!databaseId) { return; }
       DatabaseMetricsPanel.show(context, configStore, manager, databaseId, inspectorController, logger);
+    }),
+    vscode.commands.registerCommand('dittoVsce.openImportData', (databaseIdOrNode: any) => {
+      // Two call sites converge here:
+      //   1. The "Import Data" tree leaf — passes a plain string databaseId.
+      //   2. Right-click → "Import Data into Collection…" on a collection
+      //      row — passes the tree node, from which we pull both the
+      //      databaseId and the preselected collection name.
+      let dbId: string | undefined;
+      let preselected: string | undefined;
+      if (typeof databaseIdOrNode === 'string') {
+        dbId = databaseIdOrNode;
+      } else if (databaseIdOrNode && typeof databaseIdOrNode === 'object') {
+        dbId = databaseIdOrNode.databaseId;
+        preselected = databaseIdOrNode.collection?.name;
+      }
+      if (!dbId) { return; }
+      if (manager.getActiveConfigId() !== dbId) {
+        vscode.window.showWarningMessage('Connect to this database before importing data.');
+        return;
+      }
+      ImportDataPanel.show(context, configStore, manager, collectionsRepo, dbId, logger, preselected);
     }),
     vscode.commands.registerCommand('dittoVsce.setApplicationLogLevel', async () => {
       const picked = await pickLogLevel(logger.getChannelLevel(), 'Set Application Log Level');

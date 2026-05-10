@@ -160,6 +160,7 @@ function buildDeps(opts: DepsOptions = {}): { deps: SwitchDeps; rec: Recorded } 
       closeSubscription: () => { calls.push('panels.closeSubscription'); },
       closeQueryMetrics: () => { calls.push('panels.closeQueryMetrics'); },
       closeDatabaseMetrics: () => { calls.push('panels.closeDatabaseMetrics'); },
+      closeImportData: () => { calls.push('panels.closeImportData'); },
       showQuery: (id: string, queryText?: string) => {
         calls.push(queryText !== undefined && queryText.length > 0
           ? `panels.showQuery(${id}, "${queryText}")`
