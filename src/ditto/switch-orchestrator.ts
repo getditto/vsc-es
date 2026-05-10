@@ -2,7 +2,7 @@
 // `ui` and `panels` shims so this module is unit-testable. Only types may
 // be imported from `vscode`; there must be no runtime dependency on it.
 
-import type { OpenPanelsTracker, OpenPanelKind } from './OpenPanelsTracker.js';
+import type { OpenPanelsTracker } from './OpenPanelsTracker.js';
 import type { Logger } from '../logging/types.js';
 import type { StoredDittoConfig, SecretSet, StoredSubscription } from '../models/DittoConfig.js';
 import type { LifecycleState } from './lifecycle-state.js';
@@ -53,7 +53,10 @@ export interface SwitchPanels {
   closeQuery(): void;
   closePeers(): void;
   closeSubscription(): void;
-  showQuery(databaseId: string): void;
+  /** Open a Query Editor on `databaseId`. The optional `queryText`
+   *  preloads the editor — used during restore to bring back the
+   *  user's saved query body. */
+  showQuery(databaseId: string, queryText?: string): void;
   showPeers(databaseId: string): void;
 }
 
@@ -78,12 +81,16 @@ export async function performSwitch(
 
   // 1. Pre-switch warning if fromActive has open panels.
   if (fromActive) {
-    const open: OpenPanelKind[] = tracker.list(fromActive.id);
-    if (open.length > 0) {
-      const labels = open.map(k => k === 'query' ? `Query — ${fromActive.name}` : `Peers — ${fromActive.name}`);
+    const state = tracker.get(fromActive.id);
+    const labels: string[] = [];
+    if (state.query.length === 1) labels.push(`Query Editor — ${fromActive.name}`);
+    else if (state.query.length > 1) labels.push(`${state.query.length} Query Editors — ${fromActive.name}`);
+    if (state.peers) labels.push(`Presence — ${fromActive.name}`);
+    if (labels.length > 0) {
+      const totalCount = state.query.length + (state.peers ? 1 : 0);
       const ok = await ui.showModalWarn({
         message:
-          `Switching to "${to.name}" will close ${open.length} open panels for "${fromActive.name}":\n` +
+          `Switching to "${to.name}" will close ${totalCount} open panel${totalCount === 1 ? '' : 's'} for "${fromActive.name}":\n` +
           `   • ${labels.join('\n   • ')}\n\n` +
           `These will reopen automatically the next time you connect to "${fromActive.name}".`,
         buttons: ['Switch'],
@@ -173,8 +180,16 @@ export async function performSwitch(
 
 export async function restorePanels(deps: SwitchDeps, databaseId: string): Promise<void> {
   const { tracker, panels } = deps;
-  for (const kind of tracker.list(databaseId)) {
-    if (kind === 'query') panels.showQuery(databaseId);
-    if (kind === 'peers') panels.showPeers(databaseId);
+  // Snapshot the saved state, then wipe the query slate before
+  // recreating panels — each restored panel re-registers itself with
+  // a fresh tabId, and without the wipe the array would grow on
+  // every reconnect (saved entries + newly added entries).
+  const snapshot = tracker.get(databaseId);
+  await tracker.clearQueryTabs(databaseId);
+  for (const tab of snapshot.query) {
+    panels.showQuery(databaseId, tab.text);
+  }
+  if (snapshot.peers) {
+    panels.showPeers(databaseId);
   }
 }

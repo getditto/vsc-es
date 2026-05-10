@@ -98,8 +98,8 @@ export class PeerListingPanel {
     });
     this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
-    void tracker.add(databaseId, 'peers');
-    this.disposables.push({ dispose: () => { void tracker.remove(databaseId, 'peers'); } });
+    void tracker.setPeers(databaseId, true);
+    this.disposables.push({ dispose: () => { void tracker.setPeers(databaseId, false); } });
 
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performSwitch, type SwitchDeps, type FromActive } from '../ditto/switch-orchestrator.js';
-import type { OpenPanelsTracker, OpenPanelKind } from '../ditto/OpenPanelsTracker.js';
+import type { OpenPanelsTracker, PerDbPanelState, QueryTabState } from '../ditto/OpenPanelsTracker.js';
 import type { Logger, LogLevel, LogContext } from '../logging/types.js';
 import type { StoredDittoConfig, SecretSet, StoredSubscription } from '../models/DittoConfig.js';
 
@@ -44,18 +44,20 @@ interface Recorded {
   errors: string[];
   infos: string[];
   reports: string[];
-  // tracker state per-DB
-  trackerMap: Map<string, OpenPanelKind[]>;
+  // tracker state per-DB (rich form, multi-tab)
+  trackerMap: Map<string, PerDbPanelState>;
 }
 
 interface DepsOptions {
-  open?: Map<string, OpenPanelKind[]>;          // panels currently open per DB
-  configs?: Map<string, StoredDittoConfig>;      // available configs (for rollback lookup)
-  modalAnswer?: string | undefined;              // default: 'Switch' for warn modal
+  open?: Map<string, PerDbPanelState>;            // panels currently open per DB
+  configs?: Map<string, StoredDittoConfig>;        // available configs (for rollback lookup)
+  modalAnswer?: string | undefined;                // default: 'Switch' for warn modal
   modalAnswerSequence?: Array<string | undefined>; // ordered answers per modal
   connectImpl?: (cfg: StoredDittoConfig) => Promise<void>;
   disconnectImpl?: () => Promise<void>;
 }
+
+const EMPTY_STATE: PerDbPanelState = { query: [], peers: false };
 
 function buildDeps(opts: DepsOptions = {}): { deps: SwitchDeps; rec: Recorded } {
   const calls: string[] = [];
@@ -63,19 +65,39 @@ function buildDeps(opts: DepsOptions = {}): { deps: SwitchDeps; rec: Recorded } 
   const errors: string[] = [];
   const infos: string[] = [];
   const reports: string[] = [];
-  const trackerMap = opts.open ?? new Map<string, OpenPanelKind[]>();
+  const trackerMap = opts.open ?? new Map<string, PerDbPanelState>();
   const configs = opts.configs ?? new Map<string, StoredDittoConfig>();
 
   let modalIdx = 0;
   const tracker = {
-    list: (id: string) => trackerMap.get(id) ?? [],
-    add: async (id: string, kind: OpenPanelKind) => {
-      const cur = trackerMap.get(id) ?? [];
-      if (!cur.includes(kind)) trackerMap.set(id, [...cur, kind]);
+    get: (id: string) => trackerMap.get(id) ?? EMPTY_STATE,
+    hasAny: (id: string) => {
+      const s = trackerMap.get(id) ?? EMPTY_STATE;
+      return s.query.length > 0 || s.peers;
     },
-    remove: async (id: string, kind: OpenPanelKind) => {
-      const cur = trackerMap.get(id) ?? [];
-      trackerMap.set(id, cur.filter(k => k !== kind));
+    count: (id: string) => {
+      const s = trackerMap.get(id) ?? EMPTY_STATE;
+      return s.query.length + (s.peers ? 1 : 0);
+    },
+    upsertQueryTab: async (id: string, tab: QueryTabState) => {
+      const cur = trackerMap.get(id) ?? EMPTY_STATE;
+      const idx = cur.query.findIndex(t => t.id === tab.id);
+      const nextQuery = idx >= 0
+        ? cur.query.map(t => t.id === tab.id ? tab : t)
+        : [...cur.query, tab];
+      trackerMap.set(id, { ...cur, query: nextQuery });
+    },
+    removeQueryTab: async (id: string, tabId: string) => {
+      const cur = trackerMap.get(id) ?? EMPTY_STATE;
+      trackerMap.set(id, { ...cur, query: cur.query.filter(t => t.id !== tabId) });
+    },
+    clearQueryTabs: async (id: string) => {
+      const cur = trackerMap.get(id) ?? EMPTY_STATE;
+      trackerMap.set(id, { ...cur, query: [] });
+    },
+    setPeers: async (id: string, open: boolean) => {
+      const cur = trackerMap.get(id) ?? EMPTY_STATE;
+      trackerMap.set(id, { ...cur, peers: open });
     },
     deleteAll: async (id: string) => { trackerMap.delete(id); },
   } as unknown as OpenPanelsTracker;
@@ -136,7 +158,11 @@ function buildDeps(opts: DepsOptions = {}): { deps: SwitchDeps; rec: Recorded } 
       closeQuery: () => { calls.push('panels.closeQuery'); },
       closePeers: () => { calls.push('panels.closePeers'); },
       closeSubscription: () => { calls.push('panels.closeSubscription'); },
-      showQuery: (id: string) => { calls.push(`panels.showQuery(${id})`); },
+      showQuery: (id: string, queryText?: string) => {
+        calls.push(queryText !== undefined && queryText.length > 0
+          ? `panels.showQuery(${id}, "${queryText}")`
+          : `panels.showQuery(${id})`);
+      },
       showPeers: (id: string) => { calls.push(`panels.showPeers(${id})`); },
     },
   };
@@ -146,11 +172,16 @@ function buildDeps(opts: DepsOptions = {}): { deps: SwitchDeps; rec: Recorded } 
 
 // ─── Tests ────────────────────────────────────────────────────────────────
 
+// Convenience builders for the new richer state shape.
+const stateWith = (overrides: Partial<PerDbPanelState> = {}): PerDbPanelState => ({
+  query: [], peers: false, ...overrides,
+});
+
 test('switch with empty open-panels set: skips warning modal', async () => {
   const A = makeConfig('A', 'db-A');
   const B = makeConfig('B', 'db-B');
   const { deps, rec } = buildDeps({
-    open: new Map([['A', []]]),                  // no open panels for A
+    open: new Map([['A', stateWith()]]),         // no open panels for A
     configs: new Map([['A', A], ['B', B]]),
   });
   const fromActive: FromActive = { id: 'A', name: 'db-A' };
@@ -166,7 +197,10 @@ test('switch with open panels: cancel aborts entire flow', async () => {
   const A = makeConfig('A', 'db-A');
   const B = makeConfig('B', 'db-B');
   const { deps, rec } = buildDeps({
-    open: new Map([['A', ['query', 'peers']]]),
+    open: new Map([['A', stateWith({
+      query: [{ id: 't1', text: 'SELECT 1' }],
+      peers: true,
+    })]]),
     configs: new Map([['A', A], ['B', B]]),
     modalAnswer: undefined,                       // user dismissed without choosing 'Switch'
   });
@@ -190,7 +224,10 @@ test('switch happy path: closes panels → disconnect → connect → restorePan
   const A = makeConfig('A', 'db-A');
   const B = makeConfig('B', 'db-B');
   const { deps, rec } = buildDeps({
-    open: new Map([['A', []], ['B', ['query', 'peers']]]),  // target has tracked panels
+    open: new Map([
+      ['A', stateWith()],
+      ['B', stateWith({ query: [{ id: 't-B', text: 'SELECT * FROM tasks' }], peers: true })],
+    ]),
     configs: new Map([['A', A], ['B', B]]),
   });
   const fromActive: FromActive = { id: 'A', name: 'db-A' };
@@ -208,8 +245,34 @@ test('switch happy path: closes panels → disconnect → connect → restorePan
     'panels.closeSubscription',
     'manager.disconnect',
     'manager.connect(B)',
-    'panels.showQuery(B)',
+    'panels.showQuery(B, "SELECT * FROM tasks")',
     'panels.showPeers(B)',
+  ]);
+});
+
+test('restorePanels reopens multiple Query Editor tabs in order with their saved text', async () => {
+  const B = makeConfig('B', 'db-B');
+  const { deps, rec } = buildDeps({
+    open: new Map([
+      ['B', stateWith({
+        query: [
+          { id: 't1', text: 'SELECT 1' },
+          { id: 't2', text: 'SELECT 2' },
+          { id: 't3', text: 'SELECT 3' },
+        ],
+        peers: false,
+      }),
+    ]]),
+    configs: new Map([['B', B]]),
+  });
+  // Initial connect (no fromActive) hits the same restorePanels at the end.
+  await performSwitch(deps, null, B);
+
+  const showCalls = rec.calls.filter(c => c.startsWith('panels.showQuery'));
+  assert.deepEqual(showCalls, [
+    'panels.showQuery(B, "SELECT 1")',
+    'panels.showQuery(B, "SELECT 2")',
+    'panels.showQuery(B, "SELECT 3")',
   ]);
 });
 
@@ -226,7 +289,9 @@ test('switch failure with rollback: target connect rejects, user picks Reconnect
   };
 
   const { deps, rec } = buildDeps({
-    open: new Map([['A', ['query']]]),                    // A had a query panel
+    open: new Map([
+      ['A', stateWith({ query: [{ id: 't-A', text: 'A-text' }] })],   // A had a query panel
+    ]),
     configs: new Map([['A', A], ['B', B]]),
     modalAnswerSequence: ['Switch', 'Reconnect to db-A'], // panel-warn then rollback
     connectImpl,
@@ -243,12 +308,12 @@ test('switch failure with rollback: target connect rejects, user picks Reconnect
   const modalCount = rec.calls.filter(c => c === 'ui.showModalWarn').length;
   assert.equal(modalCount, 2);
 
-  // Restore for A (its panel set was {query}).
-  assert.ok(rec.calls.includes('panels.showQuery(A)'));
+  // Restore for A (its query tab text comes back).
+  assert.ok(rec.calls.includes('panels.showQuery(A, "A-text")'));
   assert.ok(!rec.calls.includes('panels.showPeers(A)'));
 
   // Did NOT restore for B (which is the failed target).
-  assert.ok(!rec.calls.includes('panels.showQuery(B)'));
+  assert.ok(!rec.calls.some(c => c.startsWith('panels.showQuery(B')));
   assert.ok(!rec.calls.includes('panels.showPeers(B)'));
 
   // No error toast should have fired.
@@ -265,7 +330,7 @@ test('rollback failure: target connect rejects, from-connect also rejects, secon
   };
 
   const { deps, rec } = buildDeps({
-    open: new Map([['A', ['query']]]),
+    open: new Map([['A', stateWith({ query: [{ id: 't-A', text: 'A' }] })]]),
     configs: new Map([['A', A], ['B', B]]),
     modalAnswerSequence: ['Switch', 'Reconnect to db-A'],
     connectImpl,

@@ -73,8 +73,14 @@ function buildSwitchDeps(
       closeQuery: () => QueryEditorPanel.dispose(),
       closePeers: () => PeerListingPanel.dispose(),
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
-      showQuery: (databaseId) =>
-        QueryEditorPanel.show(context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, loggerArg),
+      showQuery: (databaseId, queryText) => {
+        const panel = QueryEditorPanel.show(
+          context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, loggerArg,
+        );
+        if (queryText !== undefined && queryText.length > 0) {
+          panel.loadQuery(queryText);
+        }
+      },
       showPeers: (databaseId) =>
         PeerListingPanel.show(context, manager, configStore, databaseId, tracker, inspector, loggerArg),
     },

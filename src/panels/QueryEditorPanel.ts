@@ -80,6 +80,11 @@ export class QueryEditorPanel {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private databaseId: string;
+  /** Stable id for THIS query tab's slot in OpenPanelsTracker. Generated
+   *  fresh on construction; survives until dispose. The tracker uses this
+   *  to upsert the tab's text in place, so emitting many text-change
+   *  updates doesn't shuffle the array's order. */
+  private readonly tabId: string = randomTabId();
   // Per-panel "last run" snapshot. The InspectorController is a singleton
   // shared across all Query Editor instances, so when this panel takes
   // focus it has to re-push these so the Inspector reflects ITS latest
@@ -135,11 +140,11 @@ export class QueryEditorPanel {
     });
     this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
-    void tracker.add(databaseId, 'query');
-    // tracker.remove is deferred to the static dispose() path below — only
-    // the LAST surviving Query Editor for this DB clears the kind from the
-    // open-panels set, so closing one of two editors doesn't drop the
-    // restoration hint.
+    // Register this tab in the per-DB panel state so it gets restored
+    // when the connection reopens. Initial text is whatever loadQuery
+    // pushed (if any) before the listener registered; the textChanged
+    // handler keeps it in sync from there.
+    void tracker.upsertQueryTab(databaseId, { id: this.tabId, text: '' });
 
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {
@@ -208,6 +213,10 @@ export class QueryEditorPanel {
     }
     if (msg.type === 'query.textChanged') {
       this.updateTabTitle(msg.text);
+      // Persist the text so a reconnect restores this tab with its
+      // last-edited contents. upsertQueryTab is idempotent on `id` so
+      // emitting on every keystroke just rewrites the same slot.
+      void this.tracker.upsertQueryTab(this.databaseId, { id: this.tabId, text: msg.text });
       return;
     }
     if (msg.type !== 'query.run') { return; }
@@ -313,14 +322,17 @@ export class QueryEditorPanel {
 
   private dispose() {
     QueryEditorPanel._instances.delete(this);
-    // Only mark 'query' as absent from the open-panels set once the LAST
-    // Query Editor for this DB closes — multiple coexist; the tracker is
-    // a per-kind set, not a counter.
-    const stillOpen = [...QueryEditorPanel._instances].some(i => i.databaseId === this.databaseId);
-    if (!stillOpen) {
-      void this.tracker.remove(this.databaseId, 'query');
-    }
+    // Each tab owns its own slot in the panel-state store, so we always
+    // remove on dispose. Multi-tab restoration replays each saved entry,
+    // so leaving slots behind would inflate the tab list on reconnect.
+    void this.tracker.removeQueryTab(this.databaseId, this.tabId);
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }
+}
+
+function randomTabId(): string {
+  const bytes = new Uint8Array(8);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
