@@ -8,7 +8,6 @@ import { SubscriptionStore } from './storage/SubscriptionStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
 import { LoggingTreeProvider } from './tree/LoggingTreeProvider.js';
 import { HelpTreeProvider } from './tree/HelpTreeProvider.js';
-import { CountBadgeDecorationProvider } from './tree/CountBadgeDecorationProvider.js';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
 import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
@@ -158,15 +157,6 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(manager.onLifecycleStateChange(() => treeProvider.refresh()));
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
-
-  // FileDecorationProvider that paints right-justified count chips on
-  // tree rows whose resourceUri uses the `ditto-count:` scheme — only
-  // way to get the chip-style, right-aligned count look that VS Code's
-  // Extensions panel uses (TreeItem.description always sits next to the
-  // label, never at the row's right edge).
-  context.subscriptions.push(
-    vscode.window.registerFileDecorationProvider(new CountBadgeDecorationProvider()),
-  );
 
   // When a connection becomes active, force-expand its row in the tree so
   // the user sees Subscriptions / Peer Listing / Query Editor immediately

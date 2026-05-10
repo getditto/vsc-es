@@ -4,7 +4,32 @@ import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DatabaseTreeNode } from './DatabaseTreeItem.js';
 import type { LifecycleState } from '../ditto/lifecycle-state.js';
 import type { DittoCollection } from '../models/DittoCollection.js';
-import { makeCountUri } from './CountBadgeDecorationProvider.js';
+
+/**
+ * Build a `TreeItemLabel` whose count portion is wrapped in
+ * `TreeItemLabel.highlights`. VS Code renders highlighted ranges with
+ * the editor's match-highlight background — the closest TreeView
+ * affordance to a "chip" — so the count reads as a styled pill at the
+ * end of the label.
+ *
+ * The label is a single nbsp-padded string (`<text> <count>`) so
+ * the highlight has visible padding on the left of the number,
+ * approximating chip whitespace. Counts are formatted with locale
+ * thousands separators because the previous 2-char badge cap forced
+ * truncation for collections in the hundreds/thousands.
+ */
+function labelWithCountChip(text: string, count: number): vscode.TreeItemLabel {
+  const formatted = count.toLocaleString();
+  // Surround the count with figure spaces (U+2007) so the highlighted
+  // pill has padding on both sides, and the result still copies as a
+  // plain readable string ("Documents  247  ").
+  const FIG = ' ';
+  const chip = `${FIG}${formatted}${FIG}`;
+  const label = `${text} ${chip}`;
+  const start = label.length - chip.length;
+  const end = label.length;
+  return { label, highlights: [[start, end]] };
+}
 
 export type DatabaseStatus = 'idle' | 'activating' | 'active' | 'error';
 export type StatusResolver = (databaseId: string) => DatabaseStatus;
@@ -230,13 +255,12 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         return item;
       }
       case 'subscriptionsParent': {
-        const item = new vscode.TreeItem('Subscriptions', vscode.TreeItemCollapsibleState.Expanded);
-        item.iconPath = new vscode.ThemeIcon('sync');
-        // Right-aligned chip via FileDecorationProvider — see
-        // CountBadgeDecorationProvider for why this isn't a plain
-        // description.
         const count = this.subs.list(node.databaseId).length;
-        if (count > 0) { item.resourceUri = makeCountUri(`subs/${node.databaseId}`, count); }
+        const item = new vscode.TreeItem(
+          count > 0 ? labelWithCountChip('Subscriptions', count) : 'Subscriptions',
+          vscode.TreeItemCollapsibleState.Expanded,
+        );
+        item.iconPath = new vscode.ThemeIcon('sync');
         item.contextValue = 'subscriptionsParent';
         item.id = `subs.${node.databaseId}`;
         return item;
@@ -281,14 +305,14 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         return item;
       }
       case 'documentsLeaf': {
-        const item = new vscode.TreeItem('Documents', vscode.TreeItemCollapsibleState.None);
+        const docCount = node.collection.documentCount;
+        const item = new vscode.TreeItem(
+          docCount !== undefined && docCount > 0
+            ? labelWithCountChip('Documents', docCount)
+            : 'Documents',
+          vscode.TreeItemCollapsibleState.None,
+        );
         item.iconPath = new vscode.ThemeIcon('note');
-        if (node.collection.documentCount !== undefined && node.collection.documentCount > 0) {
-          item.resourceUri = makeCountUri(
-            `docs/${node.databaseId}/${node.collection.name}`,
-            node.collection.documentCount,
-          );
-        }
         item.contextValue = 'documentsLeaf';
         item.id = `docs.${node.databaseId}.${node.collection.name}`;
         // Single-click opens the Query Editor with `SELECT * FROM <coll>`,
@@ -303,13 +327,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       case 'indexesParent': {
         const count = node.collection.indexes.length;
         const item = new vscode.TreeItem(
-          'Indexes',
+          count > 0 ? labelWithCountChip('Indexes', count) : 'Indexes',
           count > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
         );
         item.iconPath = new vscode.ThemeIcon('key');
-        if (count > 0) {
-          item.resourceUri = makeCountUri(`idxs/${node.databaseId}/${node.collection.name}`, count);
-        }
         item.contextValue = 'indexesParent';
         item.id = `idxs.${node.databaseId}.${node.collection.name}`;
         return item;
