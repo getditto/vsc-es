@@ -12,13 +12,18 @@ const outDir = path.join(root, 'dist', 'webview-ui', 'help');
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 
 fs.mkdirSync(outDir, { recursive: true });
-fs.copyFileSync(path.join(srcDir, 'help.css'), path.join(outDir, 'help.css'));
+
+// NOTE: don't emit a <link rel="stylesheet"> here — the help HTML is
+// fetched and injected via .innerHTML inside HelpContentElement's
+// shadow DOM, where a relative href resolves against the wrong base
+// URL and silently fails to load. Help styling lives in the element's
+// `static styles` block instead, scoped via the .help-root class.
 
 for (const f of fs.readdirSync(srcDir)) {
   if (!f.endsWith('.md')) continue;
   const src = fs.readFileSync(path.join(srcDir, f), 'utf8');
   const html = md.render(src);
-  const wrapped = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="help.css"><div class="help-root">${html}</div>`;
+  const wrapped = `<div class="help-root">${html}</div>`;
   fs.writeFileSync(path.join(outDir, f.replace(/\.md$/, '.html')), wrapped, 'utf8');
 }
 
