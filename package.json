@@ -210,6 +210,11 @@
           "group": "inline"
         },
         {
+          "command": "dittoVsce.refreshCollections",
+          "when": "view == dittoDatabases && viewItem == collection",
+          "group": "inline"
+        },
+        {
           "command": "dittoVsce.queryAllInCollection",
           "when": "view == dittoDatabases && viewItem == documentsLeaf",
           "group": "1_open@1"
