@@ -6,6 +6,7 @@ import { ConfigStore } from './storage/ConfigStore.js';
 import { SecretStore } from './storage/SecretStore.js';
 import { SubscriptionStore } from './storage/SubscriptionStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
+import type { DatabaseTreeNode } from './tree/DatabaseTreeItem.js';
 import { LoggingTreeProvider } from './tree/LoggingTreeProvider.js';
 import { HelpTreeProvider } from './tree/HelpTreeProvider.js';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
@@ -25,6 +26,7 @@ import { InspectorController } from './inspector/InspectorController.js';
 import { InspectorViewProvider } from './inspector/InspectorViewProvider.js';
 import { QueryHistoryStore } from './storage/QueryHistoryStore.js';
 import { QueryFavoritesStore } from './storage/QueryFavoritesStore.js';
+import { TreeExpansionStore } from './storage/TreeExpansionStore.js';
 
 let logger: Logger;
 
@@ -122,6 +124,7 @@ export function activate(context: vscode.ExtensionContext) {
   const inspectorController = new InspectorController(context.globalState);
   const historyStore = new QueryHistoryStore(context.globalState);
   const favoritesStore = new QueryFavoritesStore(context.globalState);
+  const treeExpansionStore = new TreeExpansionStore(context.globalState);
 
   // Initialize the context key to a known value so view `when` clauses
   // evaluate deterministically even before the first lifecycle transition.
@@ -159,23 +162,58 @@ export function activate(context: vscode.ExtensionContext) {
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
 
-  // When a connection becomes active, force-expand its row in the tree so
-  // the user sees Subscriptions / Peer Listing / Query Editor immediately
-  // (the Expanded collapsibleState alone is just a hint — VS Code persists
-  // the user's last expand/collapse state by id and would otherwise honor
-  // a previously-collapsed state across sessions).
+  // ─── Tree expansion persistence ──────────────────────────────
+  // VS Code's TreeView API doesn't expose "is X expanded?" — we
+  // maintain our own model by listening to expand/collapse events.
+  // Each event is keyed by the active config (every node carries
+  // databaseId or configId in its discriminated-union shape).
+  const databaseIdFor = (node: DatabaseTreeNode): string | undefined => {
+    if (node.kind === 'database' || node.kind === 'databaseDetails') { return node.config.id; }
+    if ('databaseId' in node) { return node.databaseId; }
+    return undefined;
+  };
+  context.subscriptions.push(treeView.onDidExpandElement(async ({ element }) => {
+    const dbId = databaseIdFor(element);
+    const item = treeProvider.getTreeItem(element);
+    if (dbId && item.id) { await treeExpansionStore.add(dbId, item.id); }
+  }));
+  context.subscriptions.push(treeView.onDidCollapseElement(async ({ element }) => {
+    const dbId = databaseIdFor(element);
+    const item = treeProvider.getTreeItem(element);
+    if (dbId && item.id) { await treeExpansionStore.remove(dbId, item.id); }
+  }));
+
+  // When a connection becomes active, restore the tree to the shape
+  // the user left it in last time. First-time connections (no stored
+  // state) fall back to the legacy `expand: 2` behaviour so the data
+  // + features rows are immediately visible.
   context.subscriptions.push(manager.onLifecycleStateChange(async state => {
     if (state.kind !== 'active') { return; }
     const config = configStore.get(state.configId);
     if (!config) { return; }
+    const stored = treeExpansionStore.list(state.configId);
     try {
-      // expand: 2 walks past the new `databaseDetails` wrapper so the
-      // user sees Subscriptions / Collections / Presence / Query Editor
-      // on first connect without having to click the inner chevron.
-      await treeView.reveal(
-        { kind: 'database', config, status: 'active' },
-        { expand: 2, focus: false, select: false },
-      );
+      if (stored.length === 0) {
+        // First-time connect → default expand-2 (database + databaseDetails).
+        await treeView.reveal(
+          { kind: 'database', config, status: 'active' },
+          { expand: 2, focus: false, select: false },
+        );
+        return;
+      }
+      // Restore stored expansion. Reveal each saved node with expand: true;
+      // VS Code walks up parents automatically so reveal order doesn't
+      // matter. Stale IDs (collection deleted while disconnected, etc.)
+      // resolve to undefined and are silently skipped.
+      for (const id of stored) {
+        const node = await treeProvider.findNodeById(id);
+        if (!node) { continue; }
+        try {
+          await treeView.reveal(node, { expand: true, focus: false, select: false });
+        } catch {
+          // reveal can race with the refresh emitter; safe to swallow.
+        }
+      }
     } catch {
       // reveal can race with the refresh emitter; safe to swallow.
     }

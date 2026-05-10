@@ -144,6 +144,34 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     return element ? this.getNodeChildren(element) : this.getRootChildren();
   }
 
+  /**
+   * Walk the entire tree and return the node whose `getTreeItem(...).id`
+   * matches `targetId`, or `undefined` if no match. Used by the
+   * TreeExpansionStore restore path to map a previously-saved ID back
+   * to the live node so we can call `treeView.reveal` on it.
+   *
+   * Tree size is bounded (config rows × subscriptions × collections ×
+   * indexes per collection), so a synchronous DFS walk is well within
+   * budget — keeps the implementation simple versus parsing IDs.
+   */
+  async findNodeById(targetId: string): Promise<DatabaseTreeNode | undefined> {
+    const visit = async (node: DatabaseTreeNode): Promise<DatabaseTreeNode | undefined> => {
+      const item = this.getTreeItem(node);
+      if (item.id === targetId) { return node; }
+      const children = await this.getNodeChildren(node);
+      for (const child of children) {
+        const found = await visit(child);
+        if (found) { return found; }
+      }
+      return undefined;
+    };
+    for (const root of await this.getRootChildren()) {
+      const found = await visit(root);
+      if (found) { return found; }
+    }
+    return undefined;
+  }
+
   /** Required for TreeView.reveal to walk the tree. */
   getParent(element: DatabaseTreeNode): DatabaseTreeNode | undefined {
     if (element.kind === 'database') { return undefined; }
