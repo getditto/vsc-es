@@ -238,6 +238,11 @@
           "command": "dittoVsce.addIndex",
           "when": "view == dittoDatabases && viewItem == indexesParent",
           "group": "2_index@1"
+        },
+        {
+          "command": "dittoVsce.addIndex",
+          "when": "view == dittoDatabases && viewItem == indexesParent",
+          "group": "inline"
         }
       ]
     }
