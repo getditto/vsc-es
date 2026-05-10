@@ -288,8 +288,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       case 'subscriptionQuery': {
         // Body row that shows the full DQL text — no truncation, no
         // command, no further drill-in. Tooltip duplicates the body so
-        // hover-over also reveals it inline.
+        // hover-over also reveals it inline. The `code` codicon hints
+        // that the row is a code/query body rather than a clickable
+        // sub-feature.
         const item = new vscode.TreeItem(node.sub.query, vscode.TreeItemCollapsibleState.None);
+        item.iconPath = new vscode.ThemeIcon('code');
         item.tooltip = new vscode.MarkdownString().appendCodeblock(node.sub.query, 'sql');
         item.contextValue = 'subscriptionQuery';
         item.id = `subQ.${node.databaseId}.${node.sub.id}`;
