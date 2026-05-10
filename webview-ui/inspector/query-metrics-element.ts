@@ -59,7 +59,48 @@ export class QueryMetricsElement extends LitElement {
       border: 1px solid var(--vscode-panel-border);
       border-radius: 4px;
     }
+    /* Informational tip about LIMIT — uses VS Code's editorInfo theme
+       tokens so it reads as advice, not a warning. Background tint
+       gives it visual weight; the left border is the same colour as
+       the icon so it stands out without being alarming. */
+    .tip {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+      background: color-mix(in srgb, var(--vscode-editorInfo-foreground, #3794ff) 12%, transparent);
+      border-left: 3px solid var(--vscode-editorInfo-foreground, #3794ff);
+      border-radius: 2px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .tip .codicon {
+      color: var(--vscode-editorInfo-foreground, #3794ff);
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .tip code {
+      background: var(--vscode-textCodeBlock-background);
+      padding: 1px 4px;
+      border-radius: 2px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+    }
   `];
+
+  /** True when the query is a SELECT without a LIMIT clause. We're
+   *  permissive — `\bLIMIT\s+\d+` matches the common bare form, the
+   *  parameterised form (`LIMIT :n`), and arbitrary whitespace
+   *  between the keyword and its value. False positives are unlikely
+   *  because the word boundary stops `\b` from matching identifiers
+   *  that just happen to contain the substring. */
+  private shouldHintLimit(dql: string | undefined): boolean {
+    if (!dql) { return false; }
+    const trimmed = dql.trimStart();
+    if (!/^SELECT\b/i.test(trimmed)) { return false; }
+    return !/\bLIMIT\s+\S/i.test(trimmed);
+  }
 
   render() {
     const md = this.metadata;
@@ -77,7 +118,20 @@ export class QueryMetricsElement extends LitElement {
     const locationLabel = md.location === 'http'
       ? 'HTTP'
       : md.location === 'local' ? 'Local Database' : null;
+    const showLimitTip = this.shouldHintLimit(md.dql);
     return html`
+      ${showLimitTip ? html`
+        <div class="tip" role="note">
+          <span class="codicon codicon-info"></span>
+          <div>
+            This query has no <code>LIMIT</code> clause. On large
+            collections this can return tens of thousands of rows and
+            pull the whole result set into memory. Adding e.g.
+            <code>LIMIT 100</code> usually makes the query
+            substantially faster and is enough to inspect the data.
+          </div>
+        </div>
+      ` : ''}
       ${locationLabel !== null ? html`
         <div class="row">
           <div class="label">Location</div>
