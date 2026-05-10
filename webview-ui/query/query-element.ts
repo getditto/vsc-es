@@ -289,7 +289,7 @@ export class QueryEditor extends LitElement {
         ></textarea>
         <div class="editor-toolbar">
           <button class="star" ?disabled=${!this.query.trim()} title="Save current query to favorites" @click=${this.starCurrent}>
-            ★ Star
+            ★ Favorite
           </button>
           <button class="run" ?disabled=${!this.query.trim() || this.state === 'running'} @click=${this.run}>
             ${this.state === 'running' ? 'Running…' : '▶ Run'}
