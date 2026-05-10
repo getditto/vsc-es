@@ -326,6 +326,34 @@ export class DittoManager {
     return (result.items as any[]).map(i => i.value as Record<string, unknown>);
   }
 
+  /**
+   * Sum the CBOR byte count for every row in `collectionExpr` —
+   * `collectionExpr` is whatever appears after `FROM` (caller is
+   * responsible for backtick-quoting if the collection name needs
+   * escaping). Materializes each row, reads `.cborData().byteLength`,
+   * then dematerializes — bounded memory regardless of collection
+   * size. Mirrors SwiftUI's per-row cborData() loop in
+   * `StorageRepository.computeCollectionBreakdown`.
+   */
+  async cborBytesForCollection(
+    collectionExpr: string,
+  ): Promise<{ documentCount: number; totalBytes: number }> {
+    if (!this.session) { throw new Error('No active database.'); }
+    const result = await this.session.ditto.store.execute(`SELECT * FROM ${collectionExpr}`);
+    let totalBytes = 0;
+    let documentCount = 0;
+    for (const item of result.items as any[]) {
+      try {
+        const bytes: Uint8Array = item.cborData();
+        totalBytes += bytes.byteLength;
+        documentCount += 1;
+      } finally {
+        try { item.dematerialize?.(); } catch { /* ignore */ }
+      }
+    }
+    return { documentCount, totalBytes };
+  }
+
   /** Create a new Ditto attachment from a local file path. The returned
    *  object can be passed straight into a DQL UPDATE via executeRaw's
    *  `args` map: `UPDATE col SET field = :att WHERE _id = :docId`.
