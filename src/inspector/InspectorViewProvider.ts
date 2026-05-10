@@ -10,6 +10,7 @@ import type { DittoManager } from '../ditto/DittoManager.js';
 import type { InspectorIn, InspectorOut } from '../ipc/messages.js';
 import { attachmentContentType, attachmentFilename } from './inspector-state.js';
 import type { MetricsPreferencesStore } from '../storage/MetricsPreferencesStore.js';
+import type { AttachmentCache } from './AttachmentCache.js';
 
 /**
  * `WebviewViewProvider` for the auxiliary-bar Ditto Inspector.
@@ -31,6 +32,7 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     private readonly manager: DittoManager,
     private readonly logger: Logger,
     private readonly metricsPrefs: MetricsPreferencesStore,
+    private readonly attachmentCache: AttachmentCache,
   ) {}
 
   /** Re-push the current preferences to the webview. Public so the
@@ -178,6 +180,23 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     const log = this.logger.withTag('ext:Inspector');
     // The webview sends the raw `_meta`-shaped object. Cast to the SDK's expected shape.
     const tokenAny = token as { id: string; len: number | bigint; metadata: { [k: string]: string } };
+
+    // Cache lookup. Key is (activeDatabaseId, attachmentId) — the same
+    // attachment referenced from two different query rows shares an
+    // entry. On hit we skip the SDK round-trip entirely; the user gets
+    // the preview/save back immediately instead of waiting for another
+    // download when they switch tabs and come back. Cache is cleared on
+    // disconnect (see extension.ts), so a stale entry can't outlive
+    // its database.
+    const activeDbId = this.manager.getActiveConfigId();
+    if (activeDbId) {
+      const cached = this.attachmentCache.get(activeDbId, tokenAny.id);
+      if (cached) {
+        await this.deliverAttachment(tokenId, save, cached.bytes, cached.mimeType, cached.filename);
+        return;
+      }
+    }
+
     const fetcher = this.manager.fetchAttachment(tokenAny, (ev) => {
       if (ev.type === 'Progress') {
         const total = Number(ev.totalBytes);
@@ -207,42 +226,21 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       // perfectly-valid image.
       const filename = attachmentFilename(meta);
       const contentType = attachmentContentType(meta) ?? 'application/octet-stream';
-      const ext = filename?.split('.').pop() ?? 'bin';
 
-      if (save) {
-        const uri = await vscode.window.showSaveDialog({
-          defaultUri: vscode.Uri.file(filename ?? `attachment.${ext}`),
-        });
-        if (!uri) { return; }
-        await fs.writeFile(uri.fsPath, buf);
-        this.post({ type: 'inspector.attachmentSaved', tokenId, path: uri.fsPath });
-      } else {
-        // Inline preview path. We send a base64 `data:` URI rather
-        // than writing to globalStorageUri + handing back a webview
-        // resource URI. The data-URI route is policy-free (img-src
-        // already includes `data:` in the inspector's CSP) and
-        // sidesteps two failure modes the file-write path was
-        // hitting in practice:
-        //   1. VS Code's per-webview resource roots for the
-        //      auxiliary-bar `WebviewView` quietly rejected requests
-        //      against the globalStorageUri subtree on some hosts,
-        //      yielding a broken-image icon with no console error.
-        //   2. Tokens with `_`/`-` in their id produced filenames
-        //      that some platforms URL-encoded inconsistently
-        //      between fs.writeFile and asWebviewUri.
-        // Trade-off: a 1.6 MB image becomes a ~2.2 MB string sent
-        // through postMessage. That's still well within
-        // structured-clone's budget; if we ever care about >10 MB
-        // image previews we can add a cap and fall back to the
-        // file-based path for those.
-        const dataUri = `data:${contentType};base64,${buf.toString('base64')}`;
-        this.post({
-          type: 'inspector.attachmentLoaded',
-          tokenId,
+      // Populate cache before delivery — a later switch-back will hit.
+      // Re-read activeDbId at insertion time in case the user
+      // disconnected during the fetch; nothing to cache without a DB.
+      const dbIdAtInsert = this.manager.getActiveConfigId();
+      if (dbIdAtInsert) {
+        this.attachmentCache.set(dbIdAtInsert, tokenAny.id, {
+          bytes: buf,
           mimeType: contentType,
-          webviewUri: dataUri,
+          filename,
+          sizeBytes: buf.length,
         });
       }
+
+      await this.deliverAttachment(tokenId, save, buf, contentType, filename);
     } catch (err) {
       log.error('Attachment fetch failed', {
         tokenId,
@@ -254,6 +252,61 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         message: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /**
+   * Shared "we have the bytes, now hand them to the user" path. Split
+   * out so cache hits and fresh fetches converge on identical delivery
+   * semantics — the webview can't tell which one happened.
+   *
+   * `save = true` opens the OS save dialog; cancelling is a silent
+   * no-op (matches the prior behaviour). `save = false` posts a
+   * `data:` URI to the inline viewer; see the comment block below for
+   * why we use data URIs instead of webview resource URIs.
+   */
+  private async deliverAttachment(
+    tokenId: string,
+    save: boolean,
+    buf: Buffer,
+    contentType: string,
+    filename: string | undefined,
+  ): Promise<void> {
+    if (save) {
+      const ext = filename?.split('.').pop() ?? 'bin';
+      const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(filename ?? `attachment.${ext}`),
+      });
+      if (!uri) { return; }
+      await fs.writeFile(uri.fsPath, buf);
+      this.post({ type: 'inspector.attachmentSaved', tokenId, path: uri.fsPath });
+      return;
+    }
+
+    // Inline preview path. We send a base64 `data:` URI rather
+    // than writing to globalStorageUri + handing back a webview
+    // resource URI. The data-URI route is policy-free (img-src
+    // already includes `data:` in the inspector's CSP) and
+    // sidesteps two failure modes the file-write path was
+    // hitting in practice:
+    //   1. VS Code's per-webview resource roots for the
+    //      auxiliary-bar `WebviewView` quietly rejected requests
+    //      against the globalStorageUri subtree on some hosts,
+    //      yielding a broken-image icon with no console error.
+    //   2. Tokens with `_`/`-` in their id produced filenames
+    //      that some platforms URL-encoded inconsistently
+    //      between fs.writeFile and asWebviewUri.
+    // Trade-off: a 1.6 MB image becomes a ~2.2 MB string sent
+    // through postMessage. That's still well within
+    // structured-clone's budget; if we ever care about >10 MB
+    // image previews we can add a cap and fall back to the
+    // file-based path for those.
+    const dataUri = `data:${contentType};base64,${buf.toString('base64')}`;
+    this.post({
+      type: 'inspector.attachmentLoaded',
+      tokenId,
+      mimeType: contentType,
+      webviewUri: dataUri,
+    });
   }
 
   private html(webview: vscode.Webview): string {

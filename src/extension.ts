@@ -26,6 +26,7 @@ import { attachSdkLogBridge } from './logging/sdk-bridge.js';
 import type { Logger, LogLevel } from './logging/types.js';
 import { InspectorController } from './inspector/InspectorController.js';
 import { InspectorViewProvider } from './inspector/InspectorViewProvider.js';
+import { AttachmentCache } from './inspector/AttachmentCache.js';
 import { QueryHistoryStore } from './storage/QueryHistoryStore.js';
 import { QueryFavoritesStore } from './storage/QueryFavoritesStore.js';
 import { QueryMetricsStore } from './storage/QueryMetricsStore.js';
@@ -148,10 +149,26 @@ export function activate(context: vscode.ExtensionContext) {
     manager.getCurrentLifecycleState().kind === 'active',
   );
 
+  // In-memory cache for inspector attachment bytes. Survives across
+  // tab switches so re-opening the JSON viewer doesn't re-download
+  // the attachment from the SDK. Cleared on every non-active lifecycle
+  // transition below — so a disconnect (or a connect that goes through
+  // an intermediate non-active state) drops everything it cached for
+  // the previous session. Bounded at 64 MB to keep the extension host
+  // memory profile sane; see AttachmentCache for the LRU policy.
+  const attachmentCache = new AttachmentCache();
+
   context.subscriptions.push(manager.onLifecycleStateChange(state => {
     if (state.kind !== 'active') {
       inspectorController.clearOnDisconnect();
       collectionsRepo.clear();
+      // Lifecycle leaving 'active' === the previously-cached
+      // attachments belong to a session that no longer exists; the
+      // tokens won't work against a fresh session anyway. Belt-and-
+      // suspenders: clearAll() rather than clearDatabase(prevId) so
+      // even if some other path stashed entries we don't carry orphans
+      // into the next connection.
+      attachmentCache.clearAll();
     } else {
       void collectionsRepo.load();
     }
@@ -159,7 +176,7 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 
   const inspectorView = new InspectorViewProvider(
-    context, inspectorController, historyStore, favoritesStore, manager, logger, metricsPrefs,
+    context, inspectorController, historyStore, favoritesStore, manager, logger, metricsPrefs, attachmentCache,
   );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(InspectorViewProvider.viewType, inspectorView),
