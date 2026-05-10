@@ -8,6 +8,11 @@ export type QueryResultMetadata = {
   usedIndex?: boolean;
   explain?: string;
   timestamp?: number;
+  /** Where the query ran. `'local'` → active SDK store; `'http'` → REST
+   *  API via /api/v5/store/execute. Surfaced on the Metrics tab so a
+   *  20 ms vs 200 ms difference reads as "different transport" rather
+   *  than "the same query somehow got slower". */
+  location?: 'local' | 'http';
 };
 
 export type InspectorContent =

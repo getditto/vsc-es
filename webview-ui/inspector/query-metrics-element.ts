@@ -15,6 +15,7 @@ interface QueryResultMetadata {
   explain?: string;
   timestamp?: number;
   dql?: string;
+  location?: 'local' | 'http';
 }
 
 @customElement('query-metrics-element')
@@ -73,7 +74,16 @@ export class QueryMetricsElement extends LitElement {
     const t = md.durationMs ?? 0;
     const tCls = t < 50 ? 't-ok' : t < 500 ? 't-warn' : 't-bad';
     const idxCls = md.usedIndex ? 't-ok' : 't-warn';
+    const locationLabel = md.location === 'http'
+      ? 'HTTP'
+      : md.location === 'local' ? 'Local Database' : null;
     return html`
+      ${locationLabel !== null ? html`
+        <div class="row">
+          <div class="label">Location</div>
+          <pre>${locationLabel}</pre>
+        </div>
+      ` : ''}
       <div class="row">
         <div class="label">DQL</div>
         <pre>${md.dql ?? '(unavailable)'}</pre>

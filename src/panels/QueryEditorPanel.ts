@@ -229,7 +229,11 @@ export class QueryEditorPanel {
     if (this.manager.getActiveConfigId() !== this.databaseId) {
       throw new Error('No active database. Connect first.');
     }
-    return this.manager.executeQuery(query);
+    const result = await this.manager.executeQuery(query);
+    // Stamp the run-location here rather than threading another arg
+    // through DittoManager — the manager only ever runs `local`, so
+    // the stamp is correct by construction.
+    return { ...result, metadata: { ...result.metadata, location: 'local' } };
   }
 
   /** Runs the query against the Ditto Server's REST API. Doesn't need
@@ -264,6 +268,7 @@ export class QueryEditorPanel {
       resultCount: rows.length,
       explain: '',
       timestamp: Date.now(),
+      location: 'http',
     };
     return { rows, durationMs, metadata };
   }
