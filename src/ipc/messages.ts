@@ -53,6 +53,23 @@ export type AddIndexOut =
   | { type: 'addIndex.created' };
 
 // ─── Peer listing panel ────────────────────────────────────────
+/** Minimal local-network interface descriptor — what `os.networkInterfaces()`
+ *  gives us on the host side. We deliberately stop here rather than
+ *  shelling out to `airport`, `iwconfig`, etc. for SSID/RSSI/etc. (see
+ *  the docs in PeerListingPanel for the rationale). */
+export interface LocalNetworkInterface {
+  /** Interface name as the OS reports it: en0, eth0, wlan0, … */
+  name: string;
+  /** Best-effort guess from the name pattern. Not authoritative. */
+  kind: 'wifi' | 'ethernet' | 'loopback' | 'other';
+  /** First non-internal MAC we see for this interface. */
+  mac?: string;
+  /** All IPv4 addresses; usually one but VPNs/aliases produce multiples. */
+  ipv4: { address: string; cidr: string }[];
+  /** All IPv6 addresses (link-local + global). */
+  ipv6: { address: string; cidr: string; scopeid?: number }[];
+}
+
 export type PeerIn =
   | { type: 'peer.toggleSync' }
   | {
@@ -60,7 +77,8 @@ export type PeerIn =
       isLanEnabled: boolean;
       isBluetoothLeEnabled: boolean;
       isAwdlEnabled: boolean;
-    };
+    }
+  | { type: 'peer.refreshLocalNetwork' };
 
 export type PeerOut =
   | { type: 'peer.state'; snapshot: PeerListSnapshot; sync: 'active' | 'idle' }
@@ -75,7 +93,8 @@ export type PeerOut =
       step: 'idle' | 'stoppingSync' | 'applyingConfig' | 'restartingSync' | 'complete';
       message?: string;
     }
-  | { type: 'peer.transportApplyError'; message: string };
+  | { type: 'peer.transportApplyError'; message: string }
+  | { type: 'peer.localNetwork'; interfaces: LocalNetworkInterface[] };
 
 // ─── Query editor panel ────────────────────────────────────────
 /** Where the query runs. `local` = active SDK store; `http` = REST API

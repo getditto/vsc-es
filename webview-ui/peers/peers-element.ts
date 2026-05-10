@@ -11,6 +11,14 @@ type PeerOS = 'iOS' | 'Android' | 'macOS' | 'Linux' | 'Windows' | 'tvOS' | 'Gene
 type ConnectionType = 'P2PWiFi' | 'WebSocket' | 'AccessPoint' | 'Bluetooth';
 type SyncSessionStatus = 'Connected' | 'Connecting' | 'Disconnected';
 
+interface LocalNetworkInterface {
+  name: string;
+  kind: 'wifi' | 'ethernet' | 'loopback' | 'other';
+  mac?: string;
+  ipv4: { address: string; cidr: string }[];
+  ipv6: { address: string; cidr: string; scopeid?: number }[];
+}
+
 interface ConnectionInfo {
   id: string;
   connectionType: ConnectionType;
@@ -61,7 +69,8 @@ type In =
       current: TransportPrefs;
     }
   | { type: 'peer.transportApplyStatus'; step: Exclude<ApplyStep, 'error'>; message?: string }
-  | { type: 'peer.transportApplyError'; message: string };
+  | { type: 'peer.transportApplyError'; message: string }
+  | { type: 'peer.localNetwork'; interfaces: LocalNetworkInterface[] };
 
 // ─── Visual mappings ─────────────────────────────────────────────
 
@@ -77,6 +86,32 @@ const GRADIENTS: Record<DominantType, [string, string]> = {
 };
 
 const LOCAL_GRADIENT: [string, string] = ['rgb(20, 20, 20)', 'rgb(0, 0, 0)'];
+
+/** Per-kind background gradients for the network-interface cards.
+ *  Mirror SwiftUI's NetworkInterfaceCard palette: green for Wi-Fi,
+ *  teal for Ethernet, neutral grey for other. */
+const INTERFACE_GRADIENTS: Record<LocalNetworkInterface['kind'], [string, string]> = {
+  wifi:     ['rgb(13, 133, 64)',  'rgb(5, 82, 36)'],
+  ethernet: ['rgb(13, 115, 128)', 'rgb(5, 71, 82)'],
+  loopback: ['rgb(75, 75, 80)',   'rgb(45, 45, 50)'],
+  other:    ['rgb(89, 89, 102)',  'rgb(51, 51, 64)'],
+};
+
+/** Codicon glyph for each interface kind. */
+const INTERFACE_KIND_ICON: Record<LocalNetworkInterface['kind'], string> = {
+  wifi: 'broadcast',
+  ethernet: 'plug',
+  loopback: 'circle-slash',
+  other: 'symbol-misc',
+};
+
+/** Friendly label for each interface kind. */
+const INTERFACE_KIND_LABEL: Record<LocalNetworkInterface['kind'], string> = {
+  wifi: 'Wi-Fi',
+  ethernet: 'Ethernet',
+  loopback: 'Loopback',
+  other: 'Network',
+};
 
 function dominantType(peer: PeerInfo): DominantType {
   if (peer.isDittoServer) { return 'cloud'; }
@@ -147,6 +182,9 @@ export class PeerListing extends LitElement {
    *  (only direct neighbours of local), but we offer the toggle so
    *  multi-hop topology debugging works too. */
   @state() private directConnectedOnly = true;
+  /** Local network interfaces pushed by the host. Empty until the
+   *  initial post arrives (typically within ~50ms of webview reveal). */
+  @state() private localInterfaces: LocalNetworkInterface[] = [];
   @state() private copiedId: string | null = null;
   @state() private nowTick = 0;
 
@@ -254,6 +292,43 @@ export class PeerListing extends LitElement {
     .tabs button.active {
       color: var(--vscode-foreground);
       border-bottom-color: var(--vscode-focusBorder);
+    }
+
+    /* Local Network section divider: thin rule with the section
+       title inline, mirroring the SwiftUI ConnectedPeersView layout.
+       The refresh button rides on the right end of the divider so it
+       doesn't take a full toolbar row of its own. */
+    .local-net-divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 24px 16px 12px;
+    }
+    .local-net-divider-line {
+      flex: 1;
+      height: 1px;
+      background: var(--vscode-panel-border, rgba(255, 255, 255, 0.15));
+    }
+    .local-net-divider-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--vscode-descriptionForeground);
+    }
+    .local-net-refresh {
+      background: transparent;
+      border: 0;
+      padding: 0;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      opacity: 0.75;
+    }
+    .local-net-refresh:hover { opacity: 1; color: var(--vscode-foreground); }
+    .local-net-refresh .codicon { font-size: 14px; }
+    .value.mono {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+      word-break: break-all;
     }
 
     /* Graph tab: canvas fills the available area; the small filter
@@ -677,6 +752,10 @@ export class PeerListing extends LitElement {
         this.applyMessage = msg.message;
         return;
       }
+      if (msg.type === 'peer.localNetwork') {
+        this.localInterfaces = msg.interfaces;
+        return;
+      }
     });
     this.tickInterval = window.setInterval(() => { this.nowTick++; }, 30_000);
   }
@@ -869,13 +948,69 @@ export class PeerListing extends LitElement {
 
   private renderList() {
     const { local, remote } = this.snapshot;
-    if (!local && remote.length === 0) {
+    const empty = !local && remote.length === 0 && this.localInterfaces.length === 0;
+    if (empty) {
       return html`<div class="empty">No sync status available. Connect to see peers.</div>`;
     }
     return html`
+      ${(local || remote.length > 0) ? html`
+        <div class="grid">
+          ${repeat(remote, p => p.id, p => this.renderRemoteCard(p))}
+          ${local ? this.renderLocalCard(local) : nothing}
+        </div>
+      ` : nothing}
+      ${this.localInterfaces.length > 0 ? this.renderLocalNetworkSection() : nothing}
+    `;
+  }
+
+  /**
+   * "Local Network" divider + interface card grid. Mirrors SwiftUI's
+   * ConnectedPeersView layout — the divider draws a thin rule with
+   * the section title inline, and the cards live in their own grid
+   * underneath. Refresh button is the only interaction; the host's
+   * snapshot is cheap so we don't auto-poll.
+   */
+  private renderLocalNetworkSection() {
+    return html`
+      <div class="local-net-divider" role="separator" aria-label="Local Network">
+        <span class="local-net-divider-line"></span>
+        <span class="local-net-divider-label">Local Network</span>
+        <span class="local-net-divider-line"></span>
+        <button
+          class="local-net-refresh"
+          title="Refresh local network interfaces"
+          @click=${() => postToHost({ type: 'peer.refreshLocalNetwork' })}
+        ><i class="codicon codicon-refresh"></i></button>
+      </div>
       <div class="grid">
-        ${repeat(remote, p => p.id, p => this.renderRemoteCard(p))}
-        ${local ? this.renderLocalCard(local) : nothing}
+        ${this.localInterfaces.map(i => this.renderInterfaceCard(i))}
+      </div>
+    `;
+  }
+
+  private renderInterfaceCard(iface: LocalNetworkInterface) {
+    const [start, end] = INTERFACE_GRADIENTS[iface.kind];
+    const style = `background: linear-gradient(135deg, ${start}, ${end});`;
+    const ipv4 = iface.ipv4[0];
+    const ipv6Global = iface.ipv6.find(a => !a.address.toLowerCase().startsWith('fe80'));
+    const ipv6Link = iface.ipv6.find(a => a.address.toLowerCase().startsWith('fe80'));
+    const kindLabel = INTERFACE_KIND_LABEL[iface.kind];
+    const kindIcon = INTERFACE_KIND_ICON[iface.kind];
+    return html`
+      <div class="card" style=${style}>
+        <div class="card-header">
+          <div class="card-title-block">
+            <div class="card-row"><i class=${`codicon codicon-${kindIcon}`}></i><span>${kindLabel}</span></div>
+            <h3 class="card-name" title=${iface.name}>${iface.name}</h3>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="card-body">
+          ${iface.mac ? html`<div class="card-row"><span class="label">MAC</span><span class="value mono">${iface.mac}</span></div>` : nothing}
+          ${ipv4 ? html`<div class="card-row"><span class="label">IPv4</span><span class="value mono">${ipv4.cidr}</span></div>` : nothing}
+          ${ipv6Global ? html`<div class="card-row"><span class="label">IPv6</span><span class="value mono">${ipv6Global.address}</span></div>` : nothing}
+          ${ipv6Link ? html`<div class="card-row"><span class="label">IPv6 link-local</span><span class="value mono">${ipv6Link.address}</span></div>` : nothing}
+        </div>
       </div>
     `;
   }

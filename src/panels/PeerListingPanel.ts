@@ -7,6 +7,7 @@ import type { PeerIn, PeerOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
+import { readLocalNetworkInterfaces } from '../util/local-network.js';
 
 export class PeerListingPanel {
   private static current: PeerListingPanel | undefined;
@@ -112,7 +113,16 @@ export class PeerListingPanel {
     setTimeout(() => {
       this.pushState();
       this.postPlatformInit();
+      this.postLocalNetwork();
     }, 50);
+  }
+
+  /** One-shot snapshot of the host's local network interfaces. Pushed
+   *  on resolve and again whenever the webview asks for a refresh
+   *  (`peer.refreshLocalNetwork`). Cheap — `os.networkInterfaces()`
+   *  is in-process. */
+  private postLocalNetwork() {
+    this.post({ type: 'peer.localNetwork', interfaces: readLocalNetworkInterfaces() });
   }
 
   private pushState() {
@@ -155,6 +165,10 @@ export class PeerListingPanel {
     if (msg.type === 'peer.toggleSync') {
       await this.manager.toggleSync();
       // pushState fires automatically via onSyncChange listener.
+      return;
+    }
+    if (msg.type === 'peer.refreshLocalNetwork') {
+      this.postLocalNetwork();
       return;
     }
     if (msg.type === 'peer.applyTransportConfig') {
