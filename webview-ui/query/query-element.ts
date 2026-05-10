@@ -295,6 +295,18 @@ export class QueryEditor extends LitElement {
     });
   }
 
+  /** Stronger gesture than setSelected — fires on double-click and
+   *  asks the host to flip the Inspector to its JSON tab so the
+   *  activated row gets pulled into focus. The single-click that
+   *  precedes a dblclick already updated `selectedRowIndex`, so we
+   *  read straight from state. */
+  private activateSelected() {
+    if (this.selectedRowIndex === null) { return; }
+    const row = this.rows[this.selectedRowIndex];
+    if (row === undefined) { return; }
+    postToHost({ type: 'query.rowActivated', rowJson: JSON.stringify(row) });
+  }
+
   private starCurrent() {
     if (!this.query.trim()) { return; }
     postToHost({ type: 'query.starCurrent', query: this.query });
@@ -390,6 +402,7 @@ export class QueryEditor extends LitElement {
                 class=${isSelected ? 'selected' : ''}
                 aria-selected=${isSelected ? 'true' : 'false'}
                 @click=${() => this.setSelected(i)}
+                @dblclick=${() => this.activateSelected()}
               >
                 ${this.columns.map(c => {
                   const cell = renderCell(row[c]);
@@ -431,6 +444,7 @@ export class QueryEditor extends LitElement {
       .selectedIndex=${this.selectedRowIndex ?? -1}
       wrap
       @documentSelected=${(e: CustomEvent<{ index: number }>) => this.setSelected(e.detail.index)}
+      @dblclick=${() => this.activateSelected()}
       style="display:block; height: 100%;"
     ></json-viewer>`;
   }

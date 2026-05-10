@@ -85,6 +85,10 @@ export type QueryMode = 'local' | 'http';
 export type QueryIn =
   | { type: 'query.run'; query: string; mode: QueryMode }
   | { type: 'query.rowSelected'; rowJson: string | null }
+  // User activated a row (double-click) — reveal it in the Inspector.
+  // Distinct from rowSelected (single-click) so passive selection
+  // doesn't yank the Inspector into the JSON tab on every click.
+  | { type: 'query.rowActivated'; rowJson: string }
   | { type: 'query.starCurrent'; query: string }
   | { type: 'query.textChanged'; text: string };
 

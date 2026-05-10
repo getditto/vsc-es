@@ -192,6 +192,16 @@ export class QueryEditorPanel {
       this.inspector.setSelectedRowJson(msg.rowJson);
       return;
     }
+    if (msg.type === 'query.rowActivated') {
+      // Double-click → flip the Inspector to JSON. setQueryTab is a
+      // no-op when content.kind isn't 'query', but in practice the
+      // QueryEditor sets that on every focus change so the Inspector
+      // is already in 'query' mode whenever this fires.
+      this.lastSelectedRowJson = msg.rowJson;
+      this.inspector.setSelectedRowJson(msg.rowJson);
+      void this.inspector.setQueryTab('json');
+      return;
+    }
     if (msg.type === 'query.starCurrent') {
       void this.favorites.add(this.databaseId, msg.query);
       return;
