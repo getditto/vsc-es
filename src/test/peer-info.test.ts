@@ -76,6 +76,69 @@ test('mergePeerList produces empty remote[] when presence has no remote peers', 
   assert.deepEqual(snapshot.remote, []);
 });
 
+test('mergePeerList: presenceGraph includes multi-hop peers that remote[] filters out', () => {
+  // Topology:
+  //   LOCAL ─── A ─── B    (B is multi-hop: connects to A, not to LOCAL)
+  // Direct list should hold {A}; presenceGraph should hold {A, B}.
+  const A = makePeer({
+    peerKey: 'A',
+    connections: [{ id: 'c-LA', connectionType: 'AccessPoint', peer1: LOCAL, peer2: 'A' }],
+  });
+  const B = makePeer({
+    peerKey: 'B',
+    connections: [{ id: 'c-AB', connectionType: 'AccessPoint', peer1: 'A', peer2: 'B' }],
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [A, B] } as any,
+    new Map(),
+    null,
+    [],
+  );
+  // Direct-only list: just A (B has no edge to LOCAL).
+  assert.deepEqual(snapshot.remote.map(p => p.id), ['A']);
+  // Full graph: both A and B.
+  assert.ok(snapshot.presenceGraph);
+  assert.deepEqual(
+    snapshot.presenceGraph!.remotePeers.map(p => p.peerKey).sort(),
+    ['A', 'B'],
+  );
+  // Both edges present in the full graph (deduped pair-sorted by type).
+  const edges = snapshot.presenceGraph!.connections
+    .map(c => `${[c.peer1, c.peer2].sort().join('-')}/${c.connectionType}`)
+    .sort();
+  // Sorted alphabetically: 'A-B/AccessPoint' < 'A-LOCAL/AccessPoint'
+  // (LOCAL is the string sentinel from the test fixture).
+  assert.deepEqual(edges, [
+    'A-B/AccessPoint',
+    `${[LOCAL, 'A'].sort().join('-')}/AccessPoint`,
+  ]);
+});
+
+test('mergePeerList: presenceGraph dedupes A→B and B→A of the same type', () => {
+  // SDK emits both directions as separate Connection objects.
+  // The full-graph view must keep them as a single edge.
+  const A = makePeer({
+    peerKey: 'A',
+    connections: [
+      { id: 'c-ab', connectionType: 'AccessPoint', peer1: 'A', peer2: 'B' },
+      { id: 'c-ba', connectionType: 'AccessPoint', peer1: 'B', peer2: 'A' },
+    ],
+  });
+  const B = makePeer({
+    peerKey: 'B',
+    connections: [
+      { id: 'c-ba2', connectionType: 'AccessPoint', peer1: 'B', peer2: 'A' },
+    ],
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [A, B] } as any,
+    new Map(),
+    null,
+    [],
+  );
+  assert.equal(snapshot.presenceGraph!.connections.length, 1);
+});
+
 test('each remote peer becomes a PeerInfo with id/deviceName/os/sdkVersion mapped', () => {
   const remote = makeRemotePeer('k1', 'AccessPoint', {
     deviceName: 'phone',

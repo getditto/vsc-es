@@ -53,9 +53,17 @@ interface LocalPeerInfo {
   sdkVersion: string;
 }
 
+interface RawPresenceGraph {
+  remotePeers: { peerKey: string; deviceName: string }[];
+  connections: { peer1: string; peer2: string; connectionType: ConnectionType }[];
+}
+
 interface PeerListSnapshot {
   local: LocalPeerInfo | null;
   remote: PeerInfo[];
+  /** Unfiltered presence graph — the graph webview uses this when
+   *  the user has "Direct Connected only" turned off. */
+  presenceGraph?: RawPresenceGraph;
 }
 
 type Platform = 'macos' | 'windows' | 'linux' | 'other';
@@ -1163,37 +1171,66 @@ export class PeerListing extends LitElement {
   private buildGraphInput(): PresenceGraphInput | undefined {
     const local = this.snapshot.local;
     if (!local || !local.peerKey) { return undefined; }
-    const seen = new Set<string>();
-    const connections: PresenceGraphInput['connections'] = [];
-    for (const peer of this.snapshot.remote) {
-      for (const c of peer.connections) {
-        // Dedup A↔B of the same type — the SDK reports both directions
-        // as separate ConnectionInfo entries.
-        const pair = [c.peer1, c.peer2].sort().join('|');
-        const k = `${pair}|${c.connectionType}`;
-        if (seen.has(k)) { continue; }
-        seen.add(k);
-        connections.push({ from: c.peer1, to: c.peer2, type: c.connectionType });
-      }
-    }
-    // The merged list our host computes only contains peers that are
-    // direct neighbours of local (it filters multi-hop in
-    // mergePeerList for the listing card). For the graph we still
-    // only see direct neighbours through that channel; multi-hop
-    // peers would need a separate IPC. Acceptable for now — the
-    // SwiftUI showDirectConnectedOnly default also matches what the
-    // host already gives us.
     const isCloud = this.snapshot.remote.some(p => p.isDittoServer);
+
+    // Two sources depending on the toggle:
+    // - Direct only ON  → use the pre-filtered snapshot.remote.
+    //   The host already filtered to peers whose connections involve
+    //   local AND dropped peer↔peer chord edges. Result: a clean
+    //   spoke-from-local view.
+    // - Direct only OFF → use snapshot.presenceGraph, which carries
+    //   the unfiltered SDK presence graph (multi-hop peers + every
+    //   peer↔peer edge). This is the "chaos lines" SwiftUI view.
+    if (this.directConnectedOnly) {
+      const seen = new Set<string>();
+      const connections: PresenceGraphInput['connections'] = [];
+      for (const peer of this.snapshot.remote) {
+        for (const c of peer.connections) {
+          const pair = [c.peer1, c.peer2].sort().join('|');
+          const k = `${pair}|${c.connectionType}`;
+          if (seen.has(k)) { continue; }
+          seen.add(k);
+          connections.push({ from: c.peer1, to: c.peer2, type: c.connectionType });
+        }
+      }
+      return {
+        localPeerKey: local.peerKey,
+        localDeviceName: local.deviceName,
+        isLocalConnectedToCloud: isCloud,
+        remotePeers: this.snapshot.remote
+          .filter(p => !p.isDittoServer)
+          .map(p => ({ peerKey: p.id, deviceName: p.deviceName })),
+        connections,
+      };
+    }
+
+    // Direct only OFF → use the full presence graph if the host sent
+    // one. If not (synthetic empty snapshot), fall back to whatever
+    // direct-only data we have so the panel doesn't blank out.
+    const pg = this.snapshot.presenceGraph;
+    if (!pg) {
+      return {
+        localPeerKey: local.peerKey,
+        localDeviceName: local.deviceName,
+        isLocalConnectedToCloud: isCloud,
+        remotePeers: this.snapshot.remote
+          .filter(p => !p.isDittoServer)
+          .map(p => ({ peerKey: p.id, deviceName: p.deviceName })),
+        connections: [],
+      };
+    }
+    // The cloud peer is synthesised in the scene from
+    // isLocalConnectedToCloud and lives under the well-known
+    // 'ditto-cloud-node' key — the presence graph from the SDK
+    // doesn't contain it, so no special filtering needed.
     return {
       localPeerKey: local.peerKey,
       localDeviceName: local.deviceName,
       isLocalConnectedToCloud: isCloud,
-      // Cloud peer is synthesised in the scene; filter it out of the
-      // remotePeers list so we don't duplicate its pill.
-      remotePeers: this.snapshot.remote
-        .filter(p => !p.isDittoServer)
-        .map(p => ({ peerKey: p.id, deviceName: p.deviceName })),
-      connections,
+      remotePeers: pg.remotePeers,
+      connections: pg.connections.map(c => ({
+        from: c.peer1, to: c.peer2, type: c.connectionType,
+      })),
     };
   }
 }

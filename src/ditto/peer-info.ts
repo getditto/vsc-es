@@ -227,7 +227,41 @@ export function mergePeerList(
     ordered.push(info);
   }
 
-  return { local, remote: ordered };
+  // Build the unfiltered presence-graph view alongside the
+  // direct-only `ordered` list. The Presence Graph webview reads
+  // this when the user has "Direct Connected only" turned off so
+  // multi-hop peers (X→Y→Z where Z isn't a direct neighbour of
+  // local) surface visually. Edges are pair-sorted + type-deduped
+  // because the SDK emits A→B and B→A as separate Connection
+  // objects with the same type.
+  const presenceGraph = buildPresenceGraphView(presence);
+
+  return { local, remote: ordered, presenceGraph };
+}
+
+function buildPresenceGraphView(
+  presence: PresenceGraphLike,
+): PeerListSnapshot['presenceGraph'] {
+  const remotePeers = presence.remotePeers.map(p => ({
+    peerKey: p.peerKey,
+    deviceName: p.deviceName,
+  }));
+  const seen = new Set<string>();
+  const connections: Array<{
+    peer1: string; peer2: string;
+    connectionType: ConnectionType;
+  }> = [];
+  for (const peer of presence.remotePeers) {
+    for (const c of peer.connections) {
+      if (!c.peer1 || !c.peer2) { continue; }
+      const pair = [c.peer1, c.peer2].sort().join('|');
+      const key = `${pair}|${c.connectionType}`;
+      if (seen.has(key)) { continue; }
+      seen.add(key);
+      connections.push({ peer1: c.peer1, peer2: c.peer2, connectionType: c.connectionType });
+    }
+  }
+  return { remotePeers, connections };
 }
 
 // ─── Connection-type priority (drives card gradient) ─────────────

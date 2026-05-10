@@ -108,7 +108,30 @@ export interface LocalPeerInfo {
   sdkVersion: string;
 }
 
+/**
+ * Compact representation of the raw SDK presence graph — peers + the
+ * full set of edges between them, no per-local filtering. Used ONLY
+ * by the Presence Graph webview when the user has "Direct Connected
+ * only" turned off; the regular Peers List ignores this and reads
+ * `remote` as before. We send it inline on `peer.state` rather than
+ * via a separate IPC so the graph re-renders in lockstep with the
+ * peer cards on every presence event.
+ */
+export interface RawPresenceGraph {
+  remotePeers: { peerKey: string; deviceName: string }[];
+  /** Undirected edges as the SDK reports them. Includes peer↔peer
+   *  edges that don't involve local. Caller is responsible for the
+   *  same (pair-sorted + type) dedupe the listing card does. */
+  connections: { peer1: string; peer2: string; connectionType: 'P2PWiFi' | 'WebSocket' | 'AccessPoint' | 'Bluetooth' }[];
+}
+
 export interface PeerListSnapshot {
   local: LocalPeerInfo | null;
+  /** Direct-only peer list with per-peer connections filtered to
+   *  edges that involve local. Drives the Peers List tab. */
   remote: PeerInfo[];
+  /** Optional full presence graph (no direct-only filter, all edges).
+   *  Populated when the manager has a real presence snapshot; absent
+   *  for the synthetic "no active session" payload. */
+  presenceGraph?: RawPresenceGraph;
 }
