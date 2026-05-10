@@ -13,7 +13,12 @@ h2 { font-size: 1.2em; }
 code { font-family: var(--vscode-editor-font-family); background: var(--vscode-textCodeBlock-background); padding: 2px 4px; border-radius: 3px; }
 pre { background: var(--vscode-textCodeBlock-background); padding: 8px 12px; border-radius: 4px; overflow-x: auto; }
 pre code { background: transparent; padding: 0; }
-a { color: var(--vscode-textLink-foreground); }
+/* Always underline so links are identifiable even on themes whose
+   --vscode-textLink-foreground is too dark to read against the help
+   panel's background. The underline is the universal cue; color stays
+   theme-driven so it integrates with the user's link palette. */
+a { color: var(--vscode-textLink-foreground); text-decoration: underline; }
+a:hover { color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground)); }
 ul, ol { padding-left: 1.4em; }
 table { border-collapse: collapse; }
 th, td { border: 1px solid var(--vscode-panel-border); padding: 4px 8px; }
