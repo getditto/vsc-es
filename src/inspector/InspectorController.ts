@@ -52,4 +52,14 @@ export class InspectorController {
     this.content = { kind: 'none' };
     this._onChange.fire(this.content);
   }
+
+  /**
+   * Remove every globalState key the controller persists for this DB —
+   * currently just the per-DB query-tab preference. Called from the
+   * delete-connection flow so deleted connections don't leave orphan
+   * preference keys behind. Safe to call when no key exists.
+   */
+  async clearForDatabase(databaseId: string): Promise<void> {
+    await this.state.update(QUERY_TAB_KEY + databaseId, undefined);
+  }
 }
