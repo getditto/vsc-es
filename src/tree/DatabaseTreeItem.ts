@@ -13,8 +13,9 @@ export type DatabaseTreeNode =
   | { kind: 'subscriptionsParent'; databaseId: string }
   | { kind: 'subscription'; databaseId: string; sub: StoredSubscription }
   | { kind: 'subscriptionQuery'; databaseId: string; sub: StoredSubscription }
-  | { kind: 'collectionsParent'; databaseId: string }
   | { kind: 'collection'; databaseId: string; collection: DittoCollection }
+  | { kind: 'documentsLeaf'; databaseId: string; collection: DittoCollection }
+  | { kind: 'indexesParent'; databaseId: string; collection: DittoCollection }
   | { kind: 'index'; databaseId: string; collectionName: string; index: DittoIndex }
   | { kind: 'indexField'; databaseId: string; collectionName: string; indexId: string; field: string }
   | { kind: 'peerListing'; databaseId: string }

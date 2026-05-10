@@ -53,20 +53,76 @@ test('active database has a single databaseDetails wrapper child', async () => {
   assert.deepEqual(children.map(c => c.kind), ['databaseDetails']);
 });
 
-test('databaseDetails expands to subs/collections/section/peers/query', async () => {
+test('databaseDetails expands to subs + inline collections + section + peers + query', async () => {
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
-  const provider = new DatabaseTreeProvider(cfg, () => 'active', emptySubs());
+  const collections = {
+    current: () => [
+      { name: 'tasks', documentCount: 3, indexes: [] },
+      { name: 'users', documentCount: 7, indexes: [] },
+    ],
+    onChange: () => ({ dispose: () => {} }),
+  };
+  const provider = new DatabaseTreeProvider(
+    cfg, () => 'active', emptySubs(), undefined, collections as any,
+  );
   const [root] = await provider.getRootChildren();
   const [details] = await provider.getNodeChildren(root);
   const grandchildren = await provider.getNodeChildren(details);
+  // Collections render directly between Subscriptions and the features
+  // divider — no "Collections" wrapper any more.
   assert.deepEqual(grandchildren.map(c => c.kind), [
     'subscriptionsParent',
-    'collectionsParent',
-    'sectionHeader',       // blank divider before the feature shortcuts
+    'collection',
+    'collection',
+    'sectionHeader',
     'peerListing',
     'queryEditor',
   ]);
+});
+
+test('collection expands to documentsLeaf + indexesParent', async () => {
+  const cfg = makeStore();
+  await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
+  const collections = {
+    current: () => [{ name: 'tasks', documentCount: 3, indexes: [] }],
+    onChange: () => ({ dispose: () => {} }),
+  };
+  const provider = new DatabaseTreeProvider(
+    cfg, () => 'active', emptySubs(), undefined, collections as any,
+  );
+  const [root] = await provider.getRootChildren();
+  const [details] = await provider.getNodeChildren(root);
+  const dbChildren = await provider.getNodeChildren(details);
+  const collection = dbChildren.find(n => n.kind === 'collection')!;
+  const leaves = await provider.getNodeChildren(collection);
+  assert.deepEqual(leaves.map(n => n.kind), ['documentsLeaf', 'indexesParent']);
+});
+
+test('indexesParent expands to one index node per declared index', async () => {
+  const cfg = makeStore();
+  await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
+  const collections = {
+    current: () => [{
+      name: 'tasks',
+      documentCount: 3,
+      indexes: [{ id: 'idx1', displayName: 'by_due', fields: ['dueDate'] }],
+    }],
+    onChange: () => ({ dispose: () => {} }),
+  };
+  const provider = new DatabaseTreeProvider(
+    cfg, () => 'active', emptySubs(), undefined, collections as any,
+  );
+  const [root] = await provider.getRootChildren();
+  const [details] = await provider.getNodeChildren(root);
+  const dbChildren = await provider.getNodeChildren(details);
+  const collection = dbChildren.find(n => n.kind === 'collection')!;
+  const collChildren = await provider.getNodeChildren(collection);
+  const indexes = collChildren.find(n => n.kind === 'indexesParent')!;
+  const idxNodes = await provider.getNodeChildren(indexes);
+  assert.equal(idxNodes.length, 1);
+  assert.equal(idxNodes[0].kind, 'index');
+  assert.equal(idxNodes[0].kind === 'index' && idxNodes[0].index.displayName, 'by_due');
 });
 
 test('Subscriptions parent expands to leaves from SubscriptionStore', async () => {

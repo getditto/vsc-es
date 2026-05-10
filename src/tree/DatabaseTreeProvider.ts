@@ -51,9 +51,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     }
     if (node.kind === 'databaseDetails') {
       const dbId = node.config.id;
+      // Collections list inline (no "Collections" wrapper) so the tree
+      // mirrors MongoDB's "Database → Collection → ..." shape — the
+      // wrapper added a click without surfacing anything new.
+      const collectionRows = (this.collections?.current() ?? []).map(c => ({
+        kind: 'collection' as const,
+        databaseId: dbId,
+        collection: c,
+      }));
       return [
         { kind: 'subscriptionsParent', databaseId: dbId },
-        { kind: 'collectionsParent', databaseId: dbId },
+        ...collectionRows,
         // Blank divider visually separates the data drill-ins above from the
         // feature shortcuts below (rendered as a thin rule, no label).
         { kind: 'sectionHeader', databaseId: dbId, id: 'features', label: 'Features' },
@@ -75,15 +83,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       // whether to see the body.
       return [{ kind: 'subscriptionQuery', databaseId: node.databaseId, sub: node.sub }];
     }
-    if (node.kind === 'collectionsParent') {
-      if (!this.collections) { return []; }
-      return this.collections.current().map(c => ({
-        kind: 'collection' as const,
-        databaseId: node.databaseId,
-        collection: c,
-      }));
-    }
     if (node.kind === 'collection') {
+      // Collections expand to a Documents leaf (right-click → query
+      // editor) and an Indexes parent that owns the index drill-ins.
+      // The "Documents" leaf intentionally has no further children —
+      // it's the entry point to the actual data view.
+      return [
+        { kind: 'documentsLeaf', databaseId: node.databaseId, collection: node.collection },
+        { kind: 'indexesParent', databaseId: node.databaseId, collection: node.collection },
+      ];
+    }
+    if (node.kind === 'indexesParent') {
       return node.collection.indexes.map(idx => ({
         kind: 'index' as const,
         databaseId: node.databaseId,
@@ -118,7 +128,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     if (!config) { return undefined; }
     if (element.kind === 'sectionHeader'
       || element.kind === 'subscriptionsParent'
-      || element.kind === 'collectionsParent'
+      || element.kind === 'collection'
       || element.kind === 'peerListing'
       || element.kind === 'queryEditor') {
       return { kind: 'databaseDetails', config };
@@ -129,13 +139,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     if (element.kind === 'subscriptionQuery') {
       return { kind: 'subscription', databaseId: element.databaseId, sub: element.sub };
     }
-    if (element.kind === 'collection') {
-      return { kind: 'collectionsParent', databaseId: element.databaseId };
+    if (element.kind === 'documentsLeaf' || element.kind === 'indexesParent') {
+      return { kind: 'collection', databaseId: element.databaseId, collection: element.collection };
     }
     if (element.kind === 'index') {
       const collection = this.collections?.current().find(c => c.name === element.collectionName);
       if (!collection) { return undefined; }
-      return { kind: 'collection', databaseId: element.databaseId, collection };
+      return { kind: 'indexesParent', databaseId: element.databaseId, collection };
     }
     if (element.kind === 'indexField') {
       const collection = this.collections?.current().find(c => c.name === element.collectionName);
@@ -255,28 +265,46 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.id = `subQ.${node.databaseId}.${node.sub.id}`;
         return item;
       }
-      case 'collectionsParent': {
-        const item = new vscode.TreeItem('Collections', vscode.TreeItemCollapsibleState.Expanded);
-        item.iconPath = new vscode.ThemeIcon('database');
-        item.contextValue = 'collectionsParent';
-        item.id = `cols.${node.databaseId}`;
-        return item;
-      }
       case 'collection': {
-        const hasIndexes = node.collection.indexes.length > 0;
-        const item = new vscode.TreeItem(
-          node.collection.name,
-          hasIndexes ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
-        );
-        item.iconPath = new vscode.ThemeIcon('book');
-        item.description = node.collection.documentCount?.toString() ?? '';
+        // Collections always Collapsible — even with zero indexes, the
+        // Documents leaf is always present underneath, so the chevron is
+        // always meaningful.
+        const item = new vscode.TreeItem(node.collection.name, vscode.TreeItemCollapsibleState.Collapsed);
+        item.iconPath = new vscode.ThemeIcon('folder');
         item.contextValue = 'collection';
         item.id = `col.${node.databaseId}.${node.collection.name}`;
+        // No description (drops the doc-count chip — the count now lives on
+        // the Documents leaf instead) and no `command` so single-click on
+        // the row label expands instead of running a query.
+        return item;
+      }
+      case 'documentsLeaf': {
+        const item = new vscode.TreeItem('Documents', vscode.TreeItemCollapsibleState.None);
+        item.iconPath = new vscode.ThemeIcon('note');
+        if (node.collection.documentCount !== undefined) {
+          item.description = String(node.collection.documentCount);
+        }
+        item.contextValue = 'documentsLeaf';
+        item.id = `docs.${node.databaseId}.${node.collection.name}`;
+        // Single-click opens the Query Editor with `SELECT * FROM <coll>`,
+        // matching MongoDB's "click Documents to view them" affordance.
         item.command = {
           command: 'dittoVsce.queryAllInCollection',
           title: 'SELECT * FROM …',
           arguments: [node.databaseId, node.collection.name],
         };
+        return item;
+      }
+      case 'indexesParent': {
+        const count = node.collection.indexes.length;
+        const item = new vscode.TreeItem(
+          'Indexes',
+          count > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+        );
+        item.iconPath = new vscode.ThemeIcon('key');
+        if (count > 0) { item.description = String(count); }
+        item.contextValue = 'indexesParent';
+        item.id = `idxs.${node.databaseId}.${node.collection.name}`;
         return item;
       }
       case 'index': {
