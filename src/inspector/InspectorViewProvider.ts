@@ -8,6 +8,7 @@ import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { InspectorIn, InspectorOut } from '../ipc/messages.js';
+import { attachmentContentType, attachmentFilename } from './inspector-state.js';
 
 /**
  * `WebviewViewProvider` for the auxiliary-bar Ditto Inspector.
@@ -173,9 +174,14 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       const buf = await att.data();
-      const meta = att.metadata ?? {};
-      const filename = typeof meta.filename === 'string' ? meta.filename : undefined;
-      const contentType = typeof meta.contentType === 'string' ? meta.contentType : 'application/octet-stream';
+      const meta = (att.metadata ?? {}) as Record<string, unknown>;
+      // Real-world tokens come from a few different writers — SwiftUI
+      // uses `mimeType`/`name`, the Node SDK examples use `contentType`/
+      // `filename`. Accept either via the shared helpers so the inline
+      // viewer doesn't fall back to "application/octet-stream" for a
+      // perfectly-valid image.
+      const filename = attachmentFilename(meta);
+      const contentType = attachmentContentType(meta) ?? 'application/octet-stream';
       const ext = filename?.split('.').pop() ?? 'bin';
 
       if (save) {

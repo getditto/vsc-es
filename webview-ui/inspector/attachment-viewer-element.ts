@@ -19,14 +19,35 @@ interface AttachmentMetadata {
   filename?: string;
 }
 
+/** Real SDK token shape: `{id, len, metadata}` (no `_meta` wrapper).
+ *  See node_modules/@dittolive/ditto/types/ditto.d.ts. */
 interface AttachmentToken {
-  _meta: { id: string; length: number; contentType?: string; filename?: string; [k: string]: unknown };
+  id: string;
+  len: number;
+  metadata: Record<string, string>;
 }
 
 interface DetectedAttachment {
   path: string;
   token: AttachmentToken;
   metadata: AttachmentMetadata;
+}
+
+function isAttachmentToken(obj: Record<string, unknown>): obj is AttachmentToken & Record<string, unknown> {
+  if (typeof obj.id !== 'string') { return false; }
+  if (typeof obj.len !== 'number' && typeof obj.len !== 'bigint') { return false; }
+  if (!obj.metadata || typeof obj.metadata !== 'object' || Array.isArray(obj.metadata)) { return false; }
+  return true;
+}
+
+function pickContentType(meta: Record<string, unknown>): string | undefined {
+  const m = meta as Record<string, string | undefined>;
+  return m.mimeType ?? m.contentType ?? m.mime_type ?? m.type;
+}
+
+function pickFilename(meta: Record<string, unknown>): string | undefined {
+  const m = meta as Record<string, string | undefined>;
+  return m.name ?? m.filename ?? m.fileName ?? m.file_name;
 }
 
 function detectAttachments(value: unknown, path = ''): DetectedAttachment[] {
@@ -36,24 +57,28 @@ function detectAttachments(value: unknown, path = ''): DetectedAttachment[] {
 }
 
 function walk(v: unknown, path: string, out: DetectedAttachment[]): void {
-  if (v && typeof v === 'object') {
-    const obj = v as Record<string, unknown>;
-    if (obj._meta && typeof obj._meta === 'object' && (obj._meta as { id?: string }).id) {
-      const m = obj._meta as { id: string; length: number; contentType?: string; filename?: string };
-      out.push({
-        path,
-        token: obj as unknown as AttachmentToken,
-        metadata: { id: m.id, length: m.length, contentType: m.contentType, filename: m.filename },
-      });
-      return;
-    }
-    if (Array.isArray(v)) {
-      v.forEach((el, i) => walk(el, `${path}[${i}]`, out));
-    } else {
-      for (const [k, val] of Object.entries(obj)) {
-        walk(val, path ? `${path}.${k}` : k, out);
-      }
-    }
+  if (!v || typeof v !== 'object') { return; }
+  if (Array.isArray(v)) {
+    v.forEach((el, i) => walk(el, `${path}[${i}]`, out));
+    return;
+  }
+  const obj = v as Record<string, unknown>;
+  if (isAttachmentToken(obj)) {
+    const meta = obj.metadata;
+    out.push({
+      path,
+      token: { id: obj.id, len: Number(obj.len), metadata: meta as Record<string, string> },
+      metadata: {
+        id: obj.id,
+        length: Number(obj.len),
+        contentType: pickContentType(meta),
+        filename: pickFilename(meta),
+      },
+    });
+    return;
+  }
+  for (const [k, val] of Object.entries(obj)) {
+    walk(val, path ? `${path}.${k}` : k, out);
   }
 }
 
