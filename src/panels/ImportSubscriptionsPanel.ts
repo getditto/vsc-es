@@ -4,6 +4,7 @@ import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
+import type { CollectionsRepository } from '../ditto/CollectionsRepository.js';
 import type { Logger } from '../logging/types.js';
 import type { ImportSubsIn, ImportSubsOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { StoredSubscription } from '../models/DittoConfig.js';
@@ -35,6 +36,7 @@ export class ImportSubscriptionsPanel {
     secretStore: SecretStore,
     subs: SubscriptionStore,
     manager: DittoManager,
+    collections: CollectionsRepository,
     databaseId: string,
     logger: Logger,
   ) {
@@ -46,7 +48,7 @@ export class ImportSubscriptionsPanel {
       ImportSubscriptionsPanel.current.dispose();
     }
     ImportSubscriptionsPanel.current = new ImportSubscriptionsPanel(
-      context, configStore, secretStore, subs, manager, databaseId, logger,
+      context, configStore, secretStore, subs, manager, collections, databaseId, logger,
     );
   }
 
@@ -59,6 +61,7 @@ export class ImportSubscriptionsPanel {
     private readonly secretStore: SecretStore,
     private readonly subs: SubscriptionStore,
     private readonly manager: DittoManager,
+    private readonly collections: CollectionsRepository,
     private readonly databaseId: string,
     private readonly logger: Logger,
   ) {
@@ -208,6 +211,12 @@ export class ImportSubscriptionsPanel {
           err: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+    // Each imported subscription will start pulling synced data;
+    // poll collections for ~10s so the new collections surface in
+    // the tree without the user having to disconnect/reconnect.
+    if (imported > 0 && this.manager.getActiveConfigId() === this.databaseId) {
+      this.collections.pollAfterSubscriptionSave();
     }
     this.post({ type: 'importSubs.imported', count: imported });
     vscode.window.showInformationMessage(

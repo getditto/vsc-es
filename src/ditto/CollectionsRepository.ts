@@ -35,6 +35,33 @@ export class CollectionsRepository {
     await this.hydrate('refresh');
   }
 
+  /**
+   * Schedule a short series of refreshes after a subscription was just
+   * registered. The SDK starts pulling synced data into the store
+   * asynchronously, so the new collection (the one the subscription
+   * targets) doesn't appear in `__collections` immediately — without
+   * this poll the user has to disconnect/reconnect or click refresh
+   * manually.
+   *
+   * Refreshes fire at +0 / +2s / +5s / +10s. Each one is non-fatal:
+   * a failure (e.g. the connection went away mid-poll) just logs and
+   * keeps the cache as-is. Overlapping calls (multiple sub-saves in
+   * quick succession) just run extra refreshes — `refresh()` is
+   * idempotent so this isn't worth debouncing.
+   */
+  pollAfterSubscriptionSave(): void {
+    const delays = [0, 2_000, 5_000, 10_000];
+    for (const delay of delays) {
+      setTimeout(() => {
+        void this.refresh().catch((err) => {
+          this.log.warn('Subscription-triggered refresh failed', {
+            delay, err: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }, delay);
+    }
+  }
+
   async createIndex(collection: string, fieldName: string): Promise<void> {
     const safeField = fieldName.replace(/[. ]/g, '_');
     const indexName = `idx_${collection}_${safeField}`;
