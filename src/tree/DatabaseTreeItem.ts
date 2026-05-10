@@ -12,6 +12,7 @@ export type DatabaseTreeNode =
   | { kind: 'sectionHeader'; databaseId: string; id: SectionHeaderId; label: string }
   | { kind: 'subscriptionsParent'; databaseId: string }
   | { kind: 'subscription'; databaseId: string; sub: StoredSubscription }
+  | { kind: 'subscriptionQuery'; databaseId: string; sub: StoredSubscription }
   | { kind: 'collectionsParent'; databaseId: string }
   | { kind: 'collection'; databaseId: string; collection: DittoCollection }
   | { kind: 'index'; databaseId: string; collectionName: string; index: DittoIndex }

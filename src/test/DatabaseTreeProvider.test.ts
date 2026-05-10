@@ -84,3 +84,23 @@ test('Subscriptions parent expands to leaves from SubscriptionStore', async () =
   assert.equal(leaves[0].kind, 'subscription');
   assert.equal(leaves[0].kind === 'subscription' && leaves[0].sub.name, 'tasks-all');
 });
+
+test('Subscription expands to a single subscriptionQuery leaf carrying the full DQL', async () => {
+  const cfg = makeStore();
+  await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
+  const subs = new SubscriptionStore(new FakeMemento() as any);
+  await subs.save('1', { id: 's1', name: 'tasks-all', query: 'SELECT * FROM tasks WHERE done = false' });
+  const provider = new DatabaseTreeProvider(cfg, () => 'active', subs);
+  const [root] = await provider.getRootChildren();
+  const [details] = await provider.getNodeChildren(root);
+  const dbChildren = await provider.getNodeChildren(details);
+  const subsParent = dbChildren.find(n => n.kind === 'subscriptionsParent')!;
+  const [sub] = await provider.getNodeChildren(subsParent);
+  const queryLeaves = await provider.getNodeChildren(sub);
+  assert.equal(queryLeaves.length, 1);
+  assert.equal(queryLeaves[0].kind, 'subscriptionQuery');
+  assert.equal(
+    queryLeaves[0].kind === 'subscriptionQuery' && queryLeaves[0].sub.query,
+    'SELECT * FROM tasks WHERE done = false',
+  );
+});

@@ -68,6 +68,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         sub
       }));
     }
+    if (node.kind === 'subscription') {
+      // Show the full DQL text as a child leaf — putting it in the
+      // description truncates with "…" for long queries, which makes
+      // long subscriptions unreadable. The chevron lets the user choose
+      // whether to see the body.
+      return [{ kind: 'subscriptionQuery', databaseId: node.databaseId, sub: node.sub }];
+    }
     if (node.kind === 'collectionsParent') {
       if (!this.collections) { return []; }
       return this.collections.current().map(c => ({
@@ -118,6 +125,9 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     }
     if (element.kind === 'subscription') {
       return { kind: 'subscriptionsParent', databaseId: element.databaseId };
+    }
+    if (element.kind === 'subscriptionQuery') {
+      return { kind: 'subscription', databaseId: element.databaseId, sub: element.sub };
     }
     if (element.kind === 'collection') {
       return { kind: 'collectionsParent', databaseId: element.databaseId };
@@ -210,16 +220,39 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       }
       case 'subscriptionsParent': {
         const item = new vscode.TreeItem('Subscriptions', vscode.TreeItemCollapsibleState.Expanded);
+        item.iconPath = new vscode.ThemeIcon('sync');
+        // Count chip mirrors how MongoDB shows "Collections (4)" / "Indexes (2)"
+        // on tree parents — pure description, no special styling needed.
+        const count = this.subs.list(node.databaseId).length;
+        if (count > 0) { item.description = String(count); }
         item.contextValue = 'subscriptionsParent';
         item.id = `subs.${node.databaseId}`;
         return item;
       }
       case 'subscription': {
-        const item = new vscode.TreeItem(node.sub.name);
-        item.description = node.sub.query;
+        const item = new vscode.TreeItem(node.sub.name, vscode.TreeItemCollapsibleState.Collapsed);
         item.tooltip = new vscode.MarkdownString().appendCodeblock(node.sub.query, 'sql');
         item.contextValue = 'subscription';
         item.id = `sub.${node.databaseId}.${node.sub.id}`;
+        // Single-click on the row's label opens the editor; clicking the
+        // chevron expands to show the full query text instead. (VS Code
+        // tree-views don't fire on double-click — single-click is the
+        // closest equivalent for "open detail view".)
+        item.command = {
+          command: 'dittoVsce.editSubscription',
+          title: 'Edit Subscription',
+          arguments: [node],
+        };
+        return item;
+      }
+      case 'subscriptionQuery': {
+        // Body row that shows the full DQL text — no truncation, no
+        // command, no further drill-in. Tooltip duplicates the body so
+        // hover-over also reveals it inline.
+        const item = new vscode.TreeItem(node.sub.query, vscode.TreeItemCollapsibleState.None);
+        item.tooltip = new vscode.MarkdownString().appendCodeblock(node.sub.query, 'sql');
+        item.contextValue = 'subscriptionQuery';
+        item.id = `subQ.${node.databaseId}.${node.sub.id}`;
         return item;
       }
       case 'collectionsParent': {
