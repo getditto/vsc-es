@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
-import type { CollectionsRepository } from '../ditto/CollectionsRepository.js';
 import type { StoredSubscription } from '../models/DittoConfig.js';
 import type { SubIn, SubOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
@@ -15,7 +14,6 @@ export class SubscriptionEditorPanel {
     context: vscode.ExtensionContext,
     subs: SubscriptionStore,
     manager: DittoManager,
-    collections: CollectionsRepository,
     databaseId: string,
     inspector: InspectorController,
     logger: Logger,
@@ -34,7 +32,7 @@ export class SubscriptionEditorPanel {
       });
       SubscriptionEditorPanel.current.dispose();
     }
-    SubscriptionEditorPanel.current = new SubscriptionEditorPanel(context, subs, manager, collections, databaseId, inspector, logger, existing);
+    SubscriptionEditorPanel.current = new SubscriptionEditorPanel(context, subs, manager, databaseId, inspector, logger, existing);
     autoRevealInspectorOnce(context);
   }
 
@@ -50,7 +48,6 @@ export class SubscriptionEditorPanel {
     private readonly context: vscode.ExtensionContext,
     private readonly subs: SubscriptionStore,
     private readonly manager: DittoManager,
-    private readonly collections: CollectionsRepository,
     databaseId: string,
     inspector: InspectorController,
     private readonly logger: Logger,
@@ -129,13 +126,12 @@ export class SubscriptionEditorPanel {
       await this.subs.save(this.databaseId, sub);
 
       // If active, register/replace with the SDK (Task 16 wires retrofit).
+      // The CollectionsRepository's live __collections observer picks
+      // up any new collection automatically as data syncs in — no
+      // manual refresh wiring needed here.
       if (this.manager.getActiveConfigId() === this.databaseId) {
         this.manager.cancelSubscription(sub.id);
         this.manager.registerSubscription(sub.id, sub.query);
-        // The new subscription will start pulling synced data; poll
-        // collections for ~10s so the new collection surfaces in the
-        // tree without the user having to disconnect/reconnect.
-        this.collections.pollAfterSubscriptionSave();
       }
       vscode.window.showInformationMessage(`Saved subscription "${sub.name}".`);
       this.panel.dispose();

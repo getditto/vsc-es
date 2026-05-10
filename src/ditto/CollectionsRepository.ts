@@ -3,15 +3,32 @@ import type { DittoManager } from './DittoManager.js';
 import type { Logger } from '../logging/types.js';
 import type { DittoCollection, DittoIndex } from '../models/DittoCollection.js';
 
-/** v1: manual-refresh only repo for collections + indexes under the active DB.
- *  Ports `CollectionsRepository.swift` from the SwiftUI Edge Studio app, but
- *  drops the live observer — collections/indexes are usually static and we
- *  want a simple cache here. */
+/**
+ * Cache of collections (with counts + indexes) for the active database.
+ *
+ * Hydration runs in two stages:
+ *
+ *   1. **Initial load** — runs `SELECT * FROM __collections`, fans out
+ *      `COUNT(*)` per collection, then loads indexes from
+ *      `system:indexes`. Fired by `load()` on lifecycle-active.
+ *   2. **Live observer** — registers a store observer on the same
+ *      `__collections` query so the cache updates automatically when
+ *      synced data introduces (or removes) a collection. Without this
+ *      the user has to disconnect/reconnect or manually refresh after
+ *      every new subscription before its collection appears in the
+ *      tree. Mirrors `CollectionsRepository.swift` from the SwiftUI
+ *      Edge Studio app — same call shape, same dematerialize pattern.
+ *
+ * `refresh()` is the user's manual override (e.g. the inline refresh
+ * codicon on each collection row); it re-runs hydration but doesn't
+ * restart the observer.
+ */
 export class CollectionsRepository {
   private _collections: DittoCollection[] = [];
   private readonly _changeEmitter = new vscode.EventEmitter<DittoCollection[]>();
   readonly onChange: vscode.Event<DittoCollection[]> = this._changeEmitter.event;
   private readonly log: Logger;
+  private collectionsObserver?: { cancel(): void };
 
   constructor(
     private readonly manager: DittoManager,
@@ -23,43 +40,16 @@ export class CollectionsRepository {
   /** Synchronous reader for tree provider. */
   current(): DittoCollection[] { return this._collections; }
 
-  /** Full reload of the cache. Idempotent — replaces the cache and fires
-   *  onChange even on error (cache is left empty). */
+  /** Initial cache load + start the live observer. Fired on lifecycle-active. */
   async load(): Promise<void> {
     await this.hydrate('load');
+    this.startObserver();
   }
 
-  /** Same as load(); kept distinct so logs/callers can differentiate
-   *  "auto-load on connect" vs "user clicked refresh". */
+  /** Manual re-hydrate (e.g. user clicked the refresh icon). Doesn't
+   *  restart the observer — that lives across the whole session. */
   async refresh(): Promise<void> {
     await this.hydrate('refresh');
-  }
-
-  /**
-   * Schedule a short series of refreshes after a subscription was just
-   * registered. The SDK starts pulling synced data into the store
-   * asynchronously, so the new collection (the one the subscription
-   * targets) doesn't appear in `__collections` immediately — without
-   * this poll the user has to disconnect/reconnect or click refresh
-   * manually.
-   *
-   * Refreshes fire at +0 / +2s / +5s / +10s. Each one is non-fatal:
-   * a failure (e.g. the connection went away mid-poll) just logs and
-   * keeps the cache as-is. Overlapping calls (multiple sub-saves in
-   * quick succession) just run extra refreshes — `refresh()` is
-   * idempotent so this isn't worth debouncing.
-   */
-  pollAfterSubscriptionSave(): void {
-    const delays = [0, 2_000, 5_000, 10_000];
-    for (const delay of delays) {
-      setTimeout(() => {
-        void this.refresh().catch((err) => {
-          this.log.warn('Subscription-triggered refresh failed', {
-            delay, err: err instanceof Error ? err.message : String(err),
-          });
-        });
-      }, delay);
-    }
   }
 
   async createIndex(collection: string, fieldName: string): Promise<void> {
@@ -71,9 +61,10 @@ export class CollectionsRepository {
     await this.hydrate('createIndex');
   }
 
-  /** Empties the cache and fires onChange. Called when DB transitions to
-   *  non-active. */
+  /** Empties the cache, cancels the observer, and fires onChange. Called
+   *  when DB transitions to non-active. */
   clear(): void {
+    this.stopObserver();
     if (this._collections.length === 0) {
       this._changeEmitter.fire(this._collections);
       return;
@@ -84,74 +75,77 @@ export class CollectionsRepository {
 
   // ─── private ─────────────────────────────────────────────────
 
+  /**
+   * Subscribe to live `__collections` updates. Re-entrant — if an
+   * observer is already attached, this is a no-op so calling load()
+   * twice doesn't leak.
+   */
+  private startObserver(): void {
+    if (this.collectionsObserver) {
+      this.log.info('Observer already attached — skipping');
+      return;
+    }
+    const handle = this.manager.registerStoreObserver(
+      'SELECT * FROM __collections',
+      (rows) => { void this.onCollectionsRowsChanged(rows); },
+    );
+    if (!handle) {
+      this.log.warn('No active session — collections observer not registered');
+      return;
+    }
+    this.collectionsObserver = handle;
+    this.log.info('Live __collections observer attached');
+  }
+
+  private stopObserver(): void {
+    if (!this.collectionsObserver) { return; }
+    try { this.collectionsObserver.cancel(); } catch { /* ignore */ }
+    this.collectionsObserver = undefined;
+    this.log.info('Live __collections observer cancelled');
+  }
+
+  /**
+   * Observer callback. The SDK already gave us the new `__collections`
+   * rows, so we skip the SELECT and only fan out counts + indexes.
+   * Failures are non-fatal — the cache stays at its previous state and
+   * a warning logs. Fires onChange so the tree picks up new collections
+   * without a manual refresh.
+   *
+   * NOTE: defensive guard against the observer firing with empty rows
+   * while the cache has data — that would clear the tree and is almost
+   * certainly an SDK transient (e.g. mid-write). Logged so it's
+   * obvious if this happens in practice.
+   */
+  private async onCollectionsRowsChanged(rows: Record<string, unknown>[]): Promise<void> {
+    this.log.info('Observer fired', { rowCount: rows.length, cachedCount: this._collections.length });
+    if (rows.length === 0 && this._collections.length > 0) {
+      this.log.warn('Observer fired with empty rows but cache has data — ignoring transient');
+      return;
+    }
+    try {
+      const collections = rowsToCollections(rows);
+      await this.attachCountsAndIndexes(collections);
+      collections.sort((a, b) => a.name.localeCompare(b.name));
+      this._collections = collections;
+      this.log.info('Live observer: collections updated', { count: collections.length });
+      this._changeEmitter.fire(this._collections);
+    } catch (err) {
+      this.log.warn('Live observer hydrate failed; keeping previous cache', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   private async hydrate(reason: 'load' | 'refresh' | 'createIndex'): Promise<void> {
     this.log.info('Hydrating collections', { reason });
     try {
       // A. SELECT * FROM __collections — discover non-system collections.
       const collectionRows = await this.manager.executeRaw('SELECT * FROM __collections');
-      const collections: DittoCollection[] = [];
-      for (const row of collectionRows) {
-        const _id = typeof row._id === 'string' ? row._id : '';
-        const name = typeof row.name === 'string' ? row.name : '';
-        if (!name || name.startsWith('__')) { continue; }
-        collections.push({ _id, name, indexes: [] });
-      }
+      const collections = rowsToCollections(collectionRows);
 
-      // B. Per-collection COUNT(*) — fan out with allSettled so one bad
-      // collection doesn't poison the rest. `count` is a reserved word in
-      // DQL; alias as `numDocs`.
-      const countResults = await Promise.allSettled(
-        collections.map(c => this.manager.executeRaw(`SELECT COUNT(*) AS numDocs FROM ${c.name}`)),
-      );
-      countResults.forEach((res, i) => {
-        if (res.status === 'fulfilled') {
-          const first = res.value[0];
-          const n = first?.numDocs;
-          if (typeof n === 'number') { collections[i].documentCount = n; }
-        } else {
-          this.log.warn('COUNT(*) failed for collection', {
-            collection: collections[i].name,
-            err: res.reason instanceof Error ? res.reason.message : String(res.reason),
-          });
-        }
-      });
-
-      // C. SELECT * FROM system:indexes — group by collection.
-      const indexRows = await this.manager.executeRaw('SELECT * FROM system:indexes');
-      const indexesByCollection = new Map<string, DittoIndex[]>();
-      for (const row of indexRows) {
-        const id = typeof row._id === 'string' ? row._id : '';
-        const collection = typeof row.collection === 'string' ? row.collection : '';
-        if (!id || !collection) {
-          this.log.warn('Skipping index row missing _id or collection', { row });
-          continue;
-        }
-        // Field shape #1: [{direction:'asc', key:['`fieldName`']}, …]
-        // Field shape #2 (older SDK): ['fieldName', …]
-        const rawFields = (row as any).fields;
-        const fields: string[] = [];
-        if (Array.isArray(rawFields)) {
-          for (const f of rawFields) {
-            if (typeof f === 'string') {
-              fields.push(f.replace(/`/g, ''));
-            } else if (f && typeof f === 'object') {
-              const key = (f as any).key;
-              if (Array.isArray(key) && key.length > 0 && typeof key[0] === 'string') {
-                fields.push((key[0] as string).replace(/`/g, ''));
-              }
-            }
-          }
-        }
-        const dotIdx = id.indexOf('.');
-        const displayName = dotIdx >= 0 ? id.slice(dotIdx + 1) : id;
-        const idx: DittoIndex = { id, collection, fields, displayName };
-        const existing = indexesByCollection.get(collection);
-        if (existing) { existing.push(idx); }
-        else { indexesByCollection.set(collection, [idx]); }
-      }
-      for (const c of collections) {
-        c.indexes = indexesByCollection.get(c.name) ?? [];
-      }
+      // B. + C. Fan out counts and indexes — extracted so the observer
+      // path can reuse them without re-running the __collections SELECT.
+      await this.attachCountsAndIndexes(collections);
 
       collections.sort((a, b) => a.name.localeCompare(b.name));
       this._collections = collections;
@@ -168,4 +162,88 @@ export class CollectionsRepository {
     }
     this._changeEmitter.fire(this._collections);
   }
+
+  /**
+   * Per-collection COUNT(*) + system:indexes load. Mutates `collections`
+   * in place so the caller can sort + cache the result. Used by both
+   * `hydrate` (initial + manual refresh) and `onCollectionsRowsChanged`
+   * (live observer path).
+   */
+  private async attachCountsAndIndexes(collections: DittoCollection[]): Promise<void> {
+    if (collections.length === 0) {
+      // Nothing to count or index — but we still want to clear stale
+      // index data, so we just skip the queries and return.
+      return;
+    }
+
+    // Per-collection COUNT(*) — fan out with allSettled so one bad
+    // collection doesn't poison the rest. `count` is a reserved word in
+    // DQL; alias as `numDocs`.
+    const countResults = await Promise.allSettled(
+      collections.map(c => this.manager.executeRaw(`SELECT COUNT(*) AS numDocs FROM ${c.name}`)),
+    );
+    countResults.forEach((res, i) => {
+      if (res.status === 'fulfilled') {
+        const first = res.value[0];
+        const n = first?.numDocs;
+        if (typeof n === 'number') { collections[i].documentCount = n; }
+      } else {
+        this.log.warn('COUNT(*) failed for collection', {
+          collection: collections[i].name,
+          err: res.reason instanceof Error ? res.reason.message : String(res.reason),
+        });
+      }
+    });
+
+    // SELECT * FROM system:indexes — group by collection.
+    const indexRows = await this.manager.executeRaw('SELECT * FROM system:indexes');
+    const indexesByCollection = new Map<string, DittoIndex[]>();
+    for (const row of indexRows) {
+      const id = typeof row._id === 'string' ? row._id : '';
+      const collection = typeof row.collection === 'string' ? row.collection : '';
+      if (!id || !collection) {
+        this.log.warn('Skipping index row missing _id or collection', { row });
+        continue;
+      }
+      // Field shape #1: [{direction:'asc', key:['`fieldName`']}, …]
+      // Field shape #2 (older SDK): ['fieldName', …]
+      const rawFields = (row as any).fields;
+      const fields: string[] = [];
+      if (Array.isArray(rawFields)) {
+        for (const f of rawFields) {
+          if (typeof f === 'string') {
+            fields.push(f.replace(/`/g, ''));
+          } else if (f && typeof f === 'object') {
+            const key = (f as any).key;
+            if (Array.isArray(key) && key.length > 0 && typeof key[0] === 'string') {
+              fields.push((key[0] as string).replace(/`/g, ''));
+            }
+          }
+        }
+      }
+      const dotIdx = id.indexOf('.');
+      const displayName = dotIdx >= 0 ? id.slice(dotIdx + 1) : id;
+      const idx: DittoIndex = { id, collection, fields, displayName };
+      const existing = indexesByCollection.get(collection);
+      if (existing) { existing.push(idx); }
+      else { indexesByCollection.set(collection, [idx]); }
+    }
+    for (const c of collections) {
+      c.indexes = indexesByCollection.get(c.name) ?? [];
+    }
+  }
+}
+
+/** Decode `__collections` rows → `DittoCollection[]`, filtering out
+ *  system collections. Pure, used from both the initial SELECT and the
+ *  live observer. */
+function rowsToCollections(rows: Record<string, unknown>[]): DittoCollection[] {
+  const out: DittoCollection[] = [];
+  for (const row of rows) {
+    const _id = typeof row._id === 'string' ? row._id : '';
+    const name = typeof row.name === 'string' ? row.name : '';
+    if (!name || name.startsWith('__')) { continue; }
+    out.push({ _id, name, indexes: [] });
+  }
+  return out;
 }

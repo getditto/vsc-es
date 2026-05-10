@@ -300,12 +300,12 @@ export function activate(context: vscode.ExtensionContext) {
         if (!picked) { return; }
         if (picked.label === 'Import from Server…') {
           ImportSubscriptionsPanel.show(
-            context, configStore, secretStore, subscriptionStore, manager, collectionsRepo, databaseId, logger,
+            context, configStore, secretStore, subscriptionStore, manager, databaseId, logger,
           );
           return;
         }
       }
-      SubscriptionEditorPanel.show(context, subscriptionStore, manager, collectionsRepo, databaseId, inspectorController, logger);
+      SubscriptionEditorPanel.show(context, subscriptionStore, manager, databaseId, inspectorController, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.importSubscriptionsFromServer', async (node) => {
       const databaseId = node?.kind === 'subscriptionsParent'
@@ -324,12 +324,12 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       ImportSubscriptionsPanel.show(
-        context, configStore, secretStore, subscriptionStore, manager, collectionsRepo, databaseId, logger,
+        context, configStore, secretStore, subscriptionStore, manager, databaseId, logger,
       );
     }),
     vscode.commands.registerCommand('dittoVsce.editSubscription', (node) => {
       if (node?.kind !== 'subscription') { return; }
-      SubscriptionEditorPanel.show(context, subscriptionStore, manager, collectionsRepo, node.databaseId, inspectorController, logger, node.sub);
+      SubscriptionEditorPanel.show(context, subscriptionStore, manager, node.databaseId, inspectorController, logger, node.sub);
     }),
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }

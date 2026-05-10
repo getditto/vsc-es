@@ -321,6 +321,43 @@ export class DittoManager {
     return (result.items as any[]).map(i => i.value as Record<string, unknown>);
   }
 
+  /**
+   * Register a live store observer for `query` (Node SDK
+   * `ditto.store.registerObserver`). Fires once with the current
+   * result set on registration and again whenever the SDK detects a
+   * change — used by {@link CollectionsRepository} to keep
+   * `__collections` up to date when synced data introduces (or
+   * removes) a collection. Returns a cancel handle the caller is
+   * responsible for invoking on teardown, or `null` if there is no
+   * active session.
+   *
+   * Each item is `dematerialize()`d immediately after we read its
+   * `.value` so the SDK can release the materialized object —
+   * matches the SwiftUI repository's pattern, otherwise items pin
+   * themselves in memory for the life of the result.
+   */
+  registerStoreObserver(
+    query: string,
+    callback: (rows: Record<string, unknown>[]) => void,
+  ): { cancel(): void } | null {
+    if (!this.session) { return null; }
+    const observer = this.session.ditto.store.registerObserver(query, (queryResult) => {
+      const rows: Record<string, unknown>[] = [];
+      for (const item of queryResult.items) {
+        const value = item.value as Record<string, unknown>;
+        item.dematerialize();
+        rows.push(value);
+      }
+      try { callback(rows); }
+      catch (err) {
+        this.log.warn('Store observer callback threw', {
+          query, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+    return { cancel: () => { try { observer.cancel(); } catch { /* ignore */ } } };
+  }
+
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
    *
    *  Mirrors the SwiftUI `QueryService.executeSelectedAppQuery` pattern: run the
