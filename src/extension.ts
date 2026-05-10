@@ -189,6 +189,29 @@ export function activate(context: vscode.ExtensionContext) {
     if (dbId && item.id) { await treeExpansionStore.remove(dbId, item.id); }
   }));
 
+  // Drive the Inspector's content from tree selection so clicking
+  // "Subscriptions" / "Presence" / "Query Editor" surfaces the right
+  // help even when no panel opens. Without this, the only way to see
+  // Subscriptions help was to click an existing subscription leaf —
+  // which is impossible the first time you set up a connection.
+  // Other selections (database row, collection, indexes) leave the
+  // Inspector untouched.
+  context.subscriptions.push(treeView.onDidChangeSelection(({ selection }) => {
+    const node = selection[0];
+    if (!node) { return; }
+    const dbId = databaseIdFor(node);
+    if (!dbId) { return; }
+    if (node.kind === 'subscriptionsParent'
+      || node.kind === 'subscription'
+      || node.kind === 'subscriptionQuery') {
+      inspectorController.setActiveFeature({ kind: 'subscriptions', databaseId: dbId });
+    } else if (node.kind === 'peerListing') {
+      inspectorController.setActiveFeature({ kind: 'peers', databaseId: dbId });
+    } else if (node.kind === 'queryEditor') {
+      inspectorController.setActiveFeature({ kind: 'query', databaseId: dbId });
+    }
+  }));
+
   // Restore expansion is tricky because some nodes (collections,
   // indexes) come from the live __collections observer which fires
   // asynchronously *after* lifecycle-active. IDs that don't resolve on
