@@ -15,6 +15,7 @@ import {
 import {
   drawPeerNode,
   invalidatePillWidth,
+  pillContainsPoint,
   type PeerNodeData,
 } from './peer-node.js';
 import {
@@ -72,6 +73,21 @@ export class PresenceGraphScene {
 
   /** Star field is owned here so the same RAF loop ticks both. */
   readonly stars: FloatingStars;
+
+  /** In-flight position transitions keyed by peer. tick() interpolates
+   *  toward the target with an ease-in-out curve over 500ms, matching
+   *  SwiftUI's recalculateLayout move duration. */
+  private transitions = new Map<string, { from: Point; to: Point; tStart: number; duration: number }>();
+  /** Pinned peers — set when the user drags a node. The animation
+   *  loop won't move pinned peers until they're unpinned. */
+  private pinnedKeys = new Set<string>();
+  /** Set when topology changed during a drag/pan; we rerun layout the
+   *  moment the interaction ends. Mirrors SwiftUI's
+   *  needsLayoutAfterInteraction. */
+  needsLayoutAfterInteraction = false;
+  /** True while a drag or pan is in progress. tick() defers anything
+   *  that would yank the world out from under the user. */
+  isUserInteracting = false;
 
   constructor(opts: SceneOptions = {}) {
     this.zoom = opts.zoom ?? 1.0;
@@ -266,6 +282,12 @@ export class PresenceGraphScene {
 
   private recalculateLayout(): void {
     if (!this.localKey) { return; }
+    if (this.isUserInteracting) {
+      // Don't yank the world while the user is dragging — let the
+      // tick that ends the interaction run layout instead.
+      this.needsLayoutAfterInteraction = true;
+      return;
+    }
     const allKeys = [...this.peers.keys()];
     const cs: ConnectionInfo[] = [];
     for (const line of this.lines.values()) {
@@ -273,11 +295,155 @@ export class PresenceGraphScene {
     }
     const result = calculateLayout(this.localKey, allKeys, cs);
     this.layout = result;
-    // For Phase 2 we snap positions instantly. The animation loop in
-    // the next commit will replace this with eased transitions.
-    for (const [key, pos] of result.positions) {
+    // Animate every peer to its new position over 500ms, except the
+    // ones the user has pinned (drag holds the position).
+    const now = performance.now();
+    for (const [key, target] of result.positions) {
+      if (this.pinnedKeys.has(key)) { continue; }
       const node = this.peers.get(key);
-      if (node) { node.position = pos; }
+      if (!node) { continue; }
+      this.transitions.set(key, { from: { ...node.position }, to: target, tStart: now, duration: 500 });
+    }
+  }
+
+  // ─── Animation tick ─────────────────────────────────────────
+
+  /**
+   * Advance every animated piece by one frame.
+   *
+   * - Floating stars are ticked unconditionally (background loops).
+   * - Position transitions ease-in-out over their duration; finished
+   *   ones drop out of the map.
+   * - Newly added peer nodes have their alpha/scale eased toward 1
+   *   (we don't currently flag "new", so the appear animation lands
+   *   in a follow-up — matters less than the layout transitions).
+   *
+   * Returns true if any animation is still in flight. Caller can use
+   * that to short-circuit RAF when everything has settled.
+   */
+  tick(now: number, dt: number): boolean {
+    this.stars.tick(now, dt);
+
+    let stillAnimating = false;
+    for (const [key, anim] of [...this.transitions]) {
+      const node = this.peers.get(key);
+      if (!node) { this.transitions.delete(key); continue; }
+      const elapsed = now - anim.tStart;
+      const t = Math.min(elapsed / anim.duration, 1);
+      // Cubic ease-in-out — matches SpriteKit's .easeInEaseOut feel.
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      node.position = {
+        x: anim.from.x + (anim.to.x - anim.from.x) * eased,
+        y: anim.from.y + (anim.to.y - anim.from.y) * eased,
+      };
+      if (t >= 1) {
+        this.transitions.delete(key);
+      } else {
+        stillAnimating = true;
+      }
+    }
+    // Stars never settle, so we always need the loop running while
+    // the panel is visible.
+    return true;
+  }
+
+  // ─── Interaction API ────────────────────────────────────────
+
+  /** Convert canvas-local CSS pixel coordinates to world coordinates
+   *  using the current camera transform. The Lit element calls this
+   *  before hit-testing or pinning so the user clicks land where
+   *  they look. */
+  canvasToWorld(canvasX: number, canvasY: number): Point {
+    const cx = canvasX - this.width / 2;
+    const cy = canvasY - this.height / 2;
+    return {
+      x: cx / this.zoom - this.camera.x,
+      y: cy / this.zoom - this.camera.y,
+    };
+  }
+
+  /** Top-most peer at a world point, or undefined if the click missed.
+   *  Iterates in reverse insertion order so visually-stacked nodes
+   *  return the front-most one. */
+  nodeAt(ctx: CanvasRenderingContext2D, world: Point): PeerNodeData | undefined {
+    const list = [...this.peers.values()];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const n = list[i];
+      if (pillContainsPoint(ctx, n, world)) { return n; }
+    }
+    return undefined;
+  }
+
+  /** Set hover state on at-most one node. The previously-hovered node
+   *  (if any) is un-highlighted. Returns true if hover changed. */
+  setHovered(node: PeerNodeData | undefined): boolean {
+    let changed = false;
+    for (const n of this.peers.values()) {
+      const wantHighlighted = n === node;
+      if (!!n.highlighted !== wantHighlighted) {
+        n.highlighted = wantHighlighted;
+        changed = true;
+      }
+    }
+    if (node) {
+      // Highlight every line connected to the hovered node.
+      for (const line of this.lines.values()) {
+        const want = line.fromKey === node.key || line.toKey === node.key;
+        if (!!line.highlighted !== want) {
+          line.highlighted = want;
+          changed = true;
+        }
+      }
+    } else {
+      for (const line of this.lines.values()) {
+        if (line.highlighted) { line.highlighted = false; changed = true; }
+      }
+    }
+    return changed;
+  }
+
+  /** Pin a peer's position (drag start) so transitions can't move it. */
+  pin(key: string): void {
+    this.pinnedKeys.add(key);
+    this.transitions.delete(key);
+  }
+
+  /** Unpin a peer and re-run layout if the topology changed during the drag. */
+  unpin(key: string): void {
+    this.pinnedKeys.delete(key);
+  }
+
+  /** Set the position of a peer directly (drag move). */
+  setPeerPosition(key: string, pos: Point): void {
+    const node = this.peers.get(key);
+    if (node) { node.position = pos; }
+  }
+
+  /** Clamp helper for zoom changes — same 0.5–2.0 range as SwiftUI. */
+  setZoom(z: number): void {
+    this.zoom = Math.max(0.5, Math.min(2.0, z));
+  }
+
+  /** Pan the camera by a delta in canvas (CSS) pixels. Adjust by zoom
+   *  so panning feels 1:1 at any zoom level. */
+  panBy(dxCanvas: number, dyCanvas: number): void {
+    this.camera = {
+      x: this.camera.x + dxCanvas / this.zoom,
+      y: this.camera.y + dyCanvas / this.zoom,
+    };
+  }
+
+  /** Mark the user as interacting; suspends layout transitions. */
+  beginInteraction(): void {
+    this.isUserInteracting = true;
+  }
+
+  /** End the interaction; re-runs deferred layout if topology changed. */
+  endInteraction(): void {
+    this.isUserInteracting = false;
+    if (this.needsLayoutAfterInteraction) {
+      this.needsLayoutAfterInteraction = false;
+      this.recalculateLayout();
     }
   }
 

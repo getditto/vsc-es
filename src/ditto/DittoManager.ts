@@ -667,6 +667,9 @@ export class DittoManager {
       const items: any[] = (result as any).items ?? [];
       const first = items[0]?.value ?? {};
       this.localPeerInfo = {
+        // peerKey is stamped by firePresence when the first presence
+        // graph arrives — at construction time we don't have it yet.
+        peerKey: '',
         deviceName: 'VS Code',
         sdkLanguage: typeof first.ditto_sdk_language === 'string' ? first.ditto_sdk_language : '',
         sdkPlatform: typeof first.ditto_sdk_platform === 'string' ? first.ditto_sdk_platform : '',
@@ -679,6 +682,15 @@ export class DittoManager {
   }
 
   private firePresence() {
+    // Stamp the local peer key onto localPeerInfo from the latest
+    // presence graph — we don't know it at loadLocalPeerInfo time.
+    // The graph webview needs this as the BFS root.
+    if (this.localPeerInfo && this.latestPresence) {
+      const presenceLocalKey = (this.latestPresence as any)?.localPeer?.peerKey;
+      if (typeof presenceLocalKey === 'string' && presenceLocalKey) {
+        this.localPeerInfo.peerKey = presenceLocalKey;
+      }
+    }
     if (this.latestPresence) {
       const snap = mergePeerList(
         this.latestPresence as any,

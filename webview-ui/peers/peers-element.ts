@@ -2,6 +2,8 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
+import '../presence-graph/presence-graph-element.js';
+import type { PresenceGraphInput } from '../presence-graph/scene.js';
 
 // ─── Types (mirror src/models/DittoConfig.ts; can't import from ext host) ──
 
@@ -31,6 +33,9 @@ interface PeerInfo {
 }
 
 interface LocalPeerInfo {
+  /** peerKey from presence.localPeer; the graph view uses it as the
+   *  BFS root and to recognise local-involving edges. */
+  peerKey: string;
   deviceName: string;
   sdkLanguage: string;
   sdkPlatform: string;
@@ -138,6 +143,10 @@ export class PeerListing extends LitElement {
   @state() private snapshot: PeerListSnapshot = { local: null, remote: [] };
   @state() private sync: 'active' | 'idle' = 'idle';
   @state() private tab: 'list' | 'graph' = 'list';
+  /** Bound to the toggle in the graph tab. SwiftUI default is true
+   *  (only direct neighbours of local), but we offer the toggle so
+   *  multi-hop topology debugging works too. */
+  @state() private directConnectedOnly = true;
   @state() private copiedId: string | null = null;
   @state() private nowTick = 0;
 
@@ -246,6 +255,38 @@ export class PeerListing extends LitElement {
       color: var(--vscode-foreground);
       border-bottom-color: var(--vscode-focusBorder);
     }
+
+    /* Graph tab: canvas fills the available area; the small filter
+       toggle floats above it on the top-left mirroring the SwiftUI
+       layout (zoom controls live inside the graph element on the
+       bottom-right). */
+    .graph-host {
+      position: relative;
+      width: 100%;
+      height: calc(100vh - 140px);
+      min-height: 400px;
+    }
+    .graph-toggle {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 10;
+      padding: 6px 10px;
+      background: rgba(30, 30, 30, 0.85);
+      border: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--vscode-foreground);
+      backdrop-filter: blur(8px);
+    }
+    .graph-toggle label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .graph-toggle input { cursor: pointer; }
+    ditto-presence-graph { width: 100%; height: 100%; display: block; }
 
     .grid {
       display: grid;
@@ -734,7 +775,7 @@ export class PeerListing extends LitElement {
         <button class=${this.tab === 'graph' ? 'active' : ''} @click=${() => this.tab = 'graph'}>Presence Graph</button>
       </div>
 
-      ${this.tab === 'list' ? this.renderList() : this.renderGraphPlaceholder()}
+      ${this.tab === 'list' ? this.renderList() : this.renderGraphTab()}
     `;
   }
 
@@ -946,5 +987,75 @@ export class PeerListing extends LitElement {
 
   private renderGraphPlaceholder() {
     return html`<div class="placeholder">Presence Graph — coming soon.<br><br>The force-directed network visualization is planned for a future release.</div>`;
+  }
+
+  private renderGraphTab() {
+    const input = this.buildGraphInput();
+    if (!input) {
+      return html`<div class="placeholder">Waiting for presence — connect to see the graph.</div>`;
+    }
+    return html`
+      <div class="graph-host">
+        <div class="graph-toggle">
+          <label>
+            <input
+              type="checkbox"
+              .checked=${this.directConnectedOnly}
+              @change=${(e: Event) => this.directConnectedOnly = (e.target as HTMLInputElement).checked}
+            />
+            Direct Connected only
+          </label>
+        </div>
+        <ditto-presence-graph
+          .input=${input}
+          ?direct-connected-only=${this.directConnectedOnly}
+        ></ditto-presence-graph>
+      </div>
+    `;
+  }
+
+  /**
+   * Translate the wire-shape PeerListSnapshot the host pushes into the
+   * graph element's expected input. Edges come from each remote peer's
+   * `connections[]`; we don't include cloud here — the cloud edge is
+   * synthesised inside the scene from `isLocalConnectedToCloud` so the
+   * "Ditto Cloud" pill can appear without a real connection in the
+   * SDK presence graph.
+   */
+  private buildGraphInput(): PresenceGraphInput | undefined {
+    const local = this.snapshot.local;
+    if (!local || !local.peerKey) { return undefined; }
+    const seen = new Set<string>();
+    const connections: PresenceGraphInput['connections'] = [];
+    for (const peer of this.snapshot.remote) {
+      for (const c of peer.connections) {
+        // Dedup A↔B of the same type — the SDK reports both directions
+        // as separate ConnectionInfo entries.
+        const pair = [c.peer1, c.peer2].sort().join('|');
+        const k = `${pair}|${c.connectionType}`;
+        if (seen.has(k)) { continue; }
+        seen.add(k);
+        connections.push({ from: c.peer1, to: c.peer2, type: c.connectionType });
+      }
+    }
+    // The merged list our host computes only contains peers that are
+    // direct neighbours of local (it filters multi-hop in
+    // mergePeerList for the listing card). For the graph we still
+    // only see direct neighbours through that channel; multi-hop
+    // peers would need a separate IPC. Acceptable for now — the
+    // SwiftUI showDirectConnectedOnly default also matches what the
+    // host already gives us.
+    const isCloud = this.snapshot.remote.some(p => p.isDittoServer);
+    return {
+      localPeerKey: local.peerKey,
+      localDeviceName: local.deviceName,
+      isLocalConnectedToCloud: isCloud,
+      // Cloud peer is synthesised in the scene; filter it out of the
+      // remotePeers list so we don't duplicate its pill.
+      remotePeers: this.snapshot.remote
+        .filter(p => !p.isDittoServer)
+        .map(p => ({ peerKey: p.id, deviceName: p.deviceName })),
+      connections,
+    };
   }
 }

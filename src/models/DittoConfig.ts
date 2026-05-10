@@ -96,6 +96,12 @@ export interface PeerInfo {
 }
 
 export interface LocalPeerInfo {
+  /** Stable peer-key for this device — `presenceGraph.localPeer.peerKey`.
+   *  Needed so the network-graph webview can use it as the BFS root
+   *  and recognise edges that involve "this device" without having
+   *  to derive the key from a connection's peer1/peer2 (which fails
+   *  when the device isn't currently connected to anyone). */
+  peerKey: string;
   deviceName: string;
   sdkLanguage: string;
   sdkPlatform: string;
