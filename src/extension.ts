@@ -26,6 +26,7 @@ import { InspectorController } from './inspector/InspectorController.js';
 import { InspectorViewProvider } from './inspector/InspectorViewProvider.js';
 import { QueryHistoryStore } from './storage/QueryHistoryStore.js';
 import { QueryFavoritesStore } from './storage/QueryFavoritesStore.js';
+import { QueryMetricsStore } from './storage/QueryMetricsStore.js';
 import { TreeExpansionStore } from './storage/TreeExpansionStore.js';
 import { MetricsPreferencesStore } from './storage/MetricsPreferencesStore.js';
 
@@ -41,6 +42,7 @@ function buildSwitchDeps(
   inspector: InspectorController,
   history: QueryHistoryStore,
   favorites: QueryFavoritesStore,
+  metrics: QueryMetricsStore,
   loggerArg: Logger,
 ): SwitchDeps {
   return {
@@ -76,7 +78,7 @@ function buildSwitchDeps(
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
       showQuery: (databaseId, queryText) => {
         const panel = QueryEditorPanel.show(
-          context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, loggerArg,
+          context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, metrics, loggerArg,
         );
         if (queryText !== undefined && queryText.length > 0) {
           panel.loadQuery(queryText);
@@ -131,6 +133,7 @@ export function activate(context: vscode.ExtensionContext) {
   const inspectorController = new InspectorController(context.globalState);
   const historyStore = new QueryHistoryStore(context.globalState);
   const favoritesStore = new QueryFavoritesStore(context.globalState);
+  const queryMetricsStore = new QueryMetricsStore();
   const treeExpansionStore = new TreeExpansionStore(context.globalState);
   const metricsPrefs = new MetricsPreferencesStore(context.globalState);
 
@@ -332,7 +335,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Already connected to "${node.config.name}".`);
         return;
       }
-      const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, inspectorController, historyStore, favoritesStore, logger);
+      const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger);
       await performSwitch(deps, fromActive, node.config);
     }),
     vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
@@ -438,7 +441,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
-      QueryEditorPanel.show(context, manager, configStore, secretStore, databaseId, tracker, inspectorController, historyStore, favoritesStore, logger);
+      QueryEditorPanel.show(context, manager, configStore, secretStore, databaseId, tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.setApplicationLogLevel', async () => {
       const picked = await pickLogLevel(logger.getChannelLevel(), 'Set Application Log Level');
@@ -484,7 +487,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (cur.kind !== 'active') { return; }
       const panel = QueryEditorPanel.show(
         context, manager, configStore, secretStore, cur.configId,
-        tracker, inspectorController, historyStore, favoritesStore, logger,
+        tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger,
       );
       panel.loadQuery(query);
     }),

@@ -10,6 +10,7 @@ import type { InspectorController } from '../inspector/InspectorController.js';
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
+import type { QueryMetricsStore } from '../storage/QueryMetricsStore.js';
 import { executeRemoteQuery } from '../ditto/HttpQueryService.js';
 import { extractCollectionName } from '../ditto/import-subscription-parser.js';
 import { detectAttachments } from '../inspector/inspector-state.js';
@@ -93,10 +94,11 @@ export class QueryEditorPanel {
     inspector: InspectorController,
     history: QueryHistoryStore,
     favorites: QueryFavoritesStore,
+    metrics: QueryMetricsStore,
     logger: Logger,
   ): QueryEditorPanel {
     const inst = new QueryEditorPanel(
-      context, manager, configs, secrets, databaseId, tracker, inspector, history, favorites, logger,
+      context, manager, configs, secrets, databaseId, tracker, inspector, history, favorites, metrics, logger,
     );
     QueryEditorPanel._instances.add(inst);
     autoRevealInspectorOnce(context);
@@ -157,6 +159,7 @@ export class QueryEditorPanel {
     private readonly inspector: InspectorController,
     private readonly history: QueryHistoryStore,
     private readonly favorites: QueryFavoritesStore,
+    private readonly metrics: QueryMetricsStore,
     private readonly logger: Logger,
   ) {
     this.databaseId = databaseId;
@@ -295,6 +298,11 @@ export class QueryEditorPanel {
       this.inspector.setLastResultMetadata(metadata);
       this.inspector.setSelectedRowJson(null);
       void this.history.add(this.databaseId, msg.query);
+      // Capture into the Query Metrics ring buffer so the Query
+      // Metrics panel can replay any past query's EXPLAIN. The
+      // metadata already carries the location, dql, durationMs,
+      // resultCount, explain, and timestamp the panel needs.
+      this.metrics.capture(this.databaseId, metadata);
     } catch (err) {
       this.post({ type: 'query.error', message: err instanceof Error ? err.message : String(err) });
     }
