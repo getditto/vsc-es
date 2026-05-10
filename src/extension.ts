@@ -168,9 +168,12 @@ export function activate(context: vscode.ExtensionContext) {
     const config = configStore.get(state.configId);
     if (!config) { return; }
     try {
+      // expand: 2 walks past the new `databaseDetails` wrapper so the
+      // user sees Subscriptions / Collections / Presence / Query Editor
+      // on first connect without having to click the inner chevron.
       await treeView.reveal(
         { kind: 'database', config, status: 'active' },
-        { expand: true, focus: false, select: false },
+        { expand: 2, focus: false, select: false },
       );
     } catch {
       // reveal can race with the refresh emitter; safe to swallow.

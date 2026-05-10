@@ -44,13 +44,23 @@ test('idle database has no children', async () => {
   assert.deepEqual(children, []);
 });
 
-test('active database has section headers, Subscriptions parent, Collections parent, Peer Listing, and Query Editor as children', async () => {
+test('active database has a single databaseDetails wrapper child', async () => {
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
   const provider = new DatabaseTreeProvider(cfg, () => 'active', emptySubs());
   const [root] = await provider.getRootChildren();
   const children = await provider.getNodeChildren(root);
-  assert.deepEqual(children.map(c => c.kind), [
+  assert.deepEqual(children.map(c => c.kind), ['databaseDetails']);
+});
+
+test('databaseDetails expands to subs/collections/section/peers/query', async () => {
+  const cfg = makeStore();
+  await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
+  const provider = new DatabaseTreeProvider(cfg, () => 'active', emptySubs());
+  const [root] = await provider.getRootChildren();
+  const [details] = await provider.getNodeChildren(root);
+  const grandchildren = await provider.getNodeChildren(details);
+  assert.deepEqual(grandchildren.map(c => c.kind), [
     'subscriptionsParent',
     'collectionsParent',
     'sectionHeader',       // blank divider before the feature shortcuts
@@ -66,7 +76,8 @@ test('Subscriptions parent expands to leaves from SubscriptionStore', async () =
   await subs.save('1', { id: 's1', name: 'tasks-all', query: 'SELECT * FROM tasks' });
   const provider = new DatabaseTreeProvider(cfg, () => 'active', subs);
   const [root] = await provider.getRootChildren();
-  const dbChildren = await provider.getNodeChildren(root);
+  const [details] = await provider.getNodeChildren(root);
+  const dbChildren = await provider.getNodeChildren(details);
   const subsParent = dbChildren.find(n => n.kind === 'subscriptionsParent')!;
   const leaves = await provider.getNodeChildren(subsParent);
   assert.equal(leaves.length, 1);

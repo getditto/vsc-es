@@ -43,6 +43,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
   async getNodeChildren(node: DatabaseTreeNode): Promise<DatabaseTreeNode[]> {
     if (node.kind === 'database') {
       if (node.status !== 'active') { return []; }
+      // Wrap the data + feature children inside a single `databaseDetails`
+      // node (label "<databaseId> - <mode>") so the tree mirrors MongoDB's
+      // "Connection → Database → ..." shape: the outer row is the friendly
+      // connection name, the inner row exposes the technical details.
+      return [{ kind: 'databaseDetails', config: node.config }];
+    }
+    if (node.kind === 'databaseDetails') {
       const dbId = node.config.id;
       return [
         { kind: 'subscriptionsParent', databaseId: dbId },
@@ -97,19 +104,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
   /** Required for TreeView.reveal to walk the tree. */
   getParent(element: DatabaseTreeNode): DatabaseTreeNode | undefined {
     if (element.kind === 'database') { return undefined; }
+    if (element.kind === 'databaseDetails') {
+      return { kind: 'database', config: element.config, status: this.statusFor(element.config.id) };
+    }
     const config = this.configs.list().find(c => c.id === element.databaseId);
     if (!config) { return undefined; }
-    const dbNode: DatabaseTreeNode = {
-      kind: 'database',
-      config,
-      status: this.statusFor(config.id),
-    };
     if (element.kind === 'sectionHeader'
       || element.kind === 'subscriptionsParent'
       || element.kind === 'collectionsParent'
       || element.kind === 'peerListing'
       || element.kind === 'queryEditor') {
-      return dbNode;
+      return { kind: 'databaseDetails', config };
     }
     if (element.kind === 'subscription') {
       return { kind: 'subscriptionsParent', databaseId: element.databaseId };
@@ -135,17 +140,22 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
   getTreeItem(node: DatabaseTreeNode): vscode.TreeItem {
     switch (node.kind) {
       case 'database': {
-        const dot = node.status === 'active' ? '●'
-                  : node.status === 'activating' ? '◐'
-                  : node.status === 'error' ? '⊗'
-                  : '○';
         const item = new vscode.TreeItem(
-          `${dot} ${node.config.name || '(unnamed)'}`,
+          node.config.name || '(unnamed)',
           node.status === 'active'
             ? vscode.TreeItemCollapsibleState.Expanded
             : vscode.TreeItemCollapsibleState.None
         );
-        item.description = `${node.config.mode === 'server' ? 'Server' : 'SmallPeers'} · ${node.config.databaseId.slice(0, 6)}…`;
+        // Match MongoDB's connection-row look: a status-colored circle, the
+        // friendly connection name, and "connected" only when active. The
+        // technical mode + databaseId have moved into the inner
+        // `databaseDetails` row so the top-level row stays scannable.
+        item.iconPath = node.status === 'active'
+          ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'))
+          : node.status === 'error'
+            ? new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'))
+            : new vscode.ThemeIcon('circle-outline');
+        item.description = node.status === 'active' ? 'connected' : undefined;
         item.contextValue = `database.${node.status}`;
         item.tooltip = node.config.name;
         item.id = `db.${node.config.id}`;
@@ -163,10 +173,25 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         }
         if (transitionLabel) {
           item.iconPath = new vscode.ThemeIcon('sync~spin');
-          item.description = `${transitionLabel} · ${node.config.databaseId.slice(0, 6)}…`;
+          item.description = transitionLabel;
           item.contextValue = 'database.transitioning';
           item.command = undefined;
         }
+        return item;
+      }
+      case 'databaseDetails': {
+        // Inner "database" row that mirrors MongoDB's "Connection → Database"
+        // shape. Label is `<databaseId> - <mode>` so operators can read off
+        // the technical identity while the outer row keeps the friendly name.
+        const mode = node.config.mode === 'server' ? 'Server' : 'SmallPeers';
+        const item = new vscode.TreeItem(
+          `${node.config.databaseId} - ${mode}`,
+          vscode.TreeItemCollapsibleState.Expanded,
+        );
+        item.iconPath = new vscode.ThemeIcon('database');
+        item.contextValue = 'databaseDetails';
+        item.tooltip = `${node.config.databaseId} (${mode})`;
+        item.id = `dbDetails.${node.config.id}`;
         return item;
       }
       case 'sectionHeader': {

@@ -8,6 +8,7 @@ export type SectionHeaderId = 'data' | 'features';
 
 export type DatabaseTreeNode =
   | { kind: 'database'; config: StoredDittoConfig; status: 'idle' | 'activating' | 'active' | 'error' }
+  | { kind: 'databaseDetails'; config: StoredDittoConfig }
   | { kind: 'sectionHeader'; databaseId: string; id: SectionHeaderId; label: string }
   | { kind: 'subscriptionsParent'; databaseId: string }
   | { kind: 'subscription'; databaseId: string; sub: StoredSubscription }
