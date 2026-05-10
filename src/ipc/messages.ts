@@ -120,6 +120,38 @@ export type MetricsIn =
 export type MetricsOut =
   | { type: 'metrics.state'; records: QueryMetricsRecord[] };
 
+// ─── Database Metrics panel ────────────────────────────────────
+export interface DbMetricsCollectionStats {
+  name: string;
+  documentCount: number;
+  cborPayloadBytes: number;
+}
+
+export interface DbMetricsSnapshot {
+  storeBytes: number;
+  replicationBytes: number;
+  attachmentsBytes: number;
+  authBytes: number;
+  walShmBytes: number;
+  logsBytes: number;
+  otherBytes: number;
+  collectionBreakdown: DbMetricsCollectionStats[];
+  collectionPayloadBytes: number;
+  totalDiskBytes: number;
+  /** epoch ms — when this snapshot finished computing. Surfaced on
+   *  the panel as "last refreshed" so users know if they're looking
+   *  at stale numbers. */
+  computedAt: number;
+}
+
+export type DbMetricsIn =
+  | { type: 'dbMetrics.refresh' };
+
+export type DbMetricsOut =
+  | { type: 'dbMetrics.loading' }
+  | { type: 'dbMetrics.snapshot'; snapshot: DbMetricsSnapshot }
+  | { type: 'dbMetrics.error'; message: string };
+
 // ─── Inspector view (auxiliary bar) ────────────────────────────
 export type InspectorIn =
   | { type: 'inspector.tabSelected'; tab: QueryInspectorTab }

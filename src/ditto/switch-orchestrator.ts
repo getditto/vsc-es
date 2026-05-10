@@ -58,6 +58,9 @@ export interface SwitchPanels {
    *  previous connection's history through a panel labelled with its
    *  old DB name. */
   closeQueryMetrics(): void;
+  /** Dispose the Database Metrics panel if it's open. Same per-DB
+   *  reasoning as the Query Metrics close. */
+  closeDatabaseMetrics(): void;
   /** Open a Query Editor on `databaseId`. The optional `queryText`
    *  preloads the editor — used during restore to bring back the
    *  user's saved query body. */
@@ -123,6 +126,7 @@ export async function performSwitch(
         panels.closePeers();
         panels.closeSubscription();
         panels.closeQueryMetrics();
+        panels.closeDatabaseMetrics();
         await manager.disconnect();
       }
 

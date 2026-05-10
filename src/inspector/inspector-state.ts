@@ -20,6 +20,7 @@ export type InspectorContent =
   | { kind: 'subscriptions'; databaseId: string }
   | { kind: 'peers'; databaseId: string }
   | { kind: 'metrics'; databaseId: string }
+  | { kind: 'databaseMetrics'; databaseId: string }
   | {
       kind: 'query';
       databaseId: string;

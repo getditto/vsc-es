@@ -94,6 +94,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         { kind: 'peerListing', databaseId: dbId },
         { kind: 'queryEditor', databaseId: dbId },
         { kind: 'queryMetrics', databaseId: dbId },
+        { kind: 'databaseMetrics', databaseId: dbId },
       ];
     }
     if (node.kind === 'subscriptionsParent') {
@@ -186,7 +187,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       || element.kind === 'collection'
       || element.kind === 'peerListing'
       || element.kind === 'queryEditor'
-      || element.kind === 'queryMetrics') {
+      || element.kind === 'queryMetrics'
+      || element.kind === 'databaseMetrics') {
       return { kind: 'databaseDetails', config };
     }
     if (element.kind === 'subscription') {
@@ -415,6 +417,18 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.contextValue = 'queryMetrics';
         item.id = `qmetrics.${node.databaseId}`;
         item.command = { command: 'dittoVsce.openQueryMetrics', title: 'Open Query Metrics', arguments: [node.databaseId] };
+        return item;
+      }
+      case 'databaseMetrics': {
+        // pie-chart codicon — the panel is a storage-breakdown view,
+        // which reads as a pie chart far more obviously than another
+        // gauge. Distinct from the dashboard used by Query Metrics
+        // and the database icon used for the inner DB wrapper.
+        const item = new vscode.TreeItem('Database Metrics');
+        item.iconPath = new vscode.ThemeIcon('pie-chart');
+        item.contextValue = 'databaseMetrics';
+        item.id = `dbmetrics.${node.databaseId}`;
+        item.command = { command: 'dittoVsce.openDatabaseMetrics', title: 'Open Database Metrics', arguments: [node.databaseId] };
         return item;
       }
     }

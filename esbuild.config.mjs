@@ -32,6 +32,7 @@ const webviewCtx = await esbuild.context({
     addIndex: 'webview-ui/addIndex/main.ts',
     importSubscriptions: 'webview-ui/import-subscriptions/main.ts',
     queryMetrics: 'webview-ui/queryMetrics/main.ts',
+    databaseMetrics: 'webview-ui/databaseMetrics/main.ts',
   },
   bundle: true,
   outdir: 'dist/webview-ui',

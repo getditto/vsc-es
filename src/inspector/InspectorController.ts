@@ -9,7 +9,8 @@ export type ActiveFeature =
   | { kind: 'subscriptions'; databaseId: string }
   | { kind: 'peers'; databaseId: string }
   | { kind: 'query'; databaseId: string }
-  | { kind: 'metrics'; databaseId: string };
+  | { kind: 'metrics'; databaseId: string }
+  | { kind: 'databaseMetrics'; databaseId: string };
 
 export class InspectorController {
   private content: InspectorContent = { kind: 'none' };

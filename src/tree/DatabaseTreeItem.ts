@@ -20,4 +20,5 @@ export type DatabaseTreeNode =
   | { kind: 'indexField'; databaseId: string; collectionName: string; indexId: string; field: string }
   | { kind: 'peerListing'; databaseId: string }
   | { kind: 'queryEditor'; databaseId: string }
-  | { kind: 'queryMetrics'; databaseId: string };
+  | { kind: 'queryMetrics'; databaseId: string }
+  | { kind: 'databaseMetrics'; databaseId: string };

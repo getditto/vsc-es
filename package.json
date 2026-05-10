@@ -112,6 +112,11 @@
         "icon": "$(dashboard)"
       },
       {
+        "command": "dittoVsce.openDatabaseMetrics",
+        "title": "Open Database Metrics",
+        "icon": "$(pie-chart)"
+      },
+      {
         "command": "dittoVsce.setApplicationLogLevel",
         "title": "Ditto: Set Application Log Level"
       },

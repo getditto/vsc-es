@@ -79,6 +79,7 @@ test('databaseDetails expands to subs + inline collections + section + peers + q
     'peerListing',
     'queryEditor',
     'queryMetrics',
+    'databaseMetrics',
   ]);
 });
 
