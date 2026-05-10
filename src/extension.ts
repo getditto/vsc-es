@@ -216,6 +216,8 @@ export function activate(context: vscode.ExtensionContext) {
       inspectorController.setActiveFeature({ kind: 'peers', databaseId: dbId });
     } else if (node.kind === 'queryEditor') {
       inspectorController.setActiveFeature({ kind: 'query', databaseId: dbId });
+    } else if (node.kind === 'queryMetrics') {
+      inspectorController.setActiveFeature({ kind: 'metrics', databaseId: dbId });
     }
   }));
 
