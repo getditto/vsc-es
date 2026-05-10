@@ -50,6 +50,13 @@ export class QueryEditor extends LitElement {
   // doesn't flicker through an empty state.
   @state() private availableModes: QueryMode[] = ['local'];
   @state() private mode: QueryMode = 'local';
+  // Pagination — slicing happens entirely in the webview so a 21k-row
+  // result doesn't blow up the table renderer or the JSON tokenizer.
+  // Page sizes scale with the result count (mirrors SwiftUI's
+  // QueryResultsView). 1000 is the cap — larger pages defeat the
+  // point of paginating.
+  @state() private currentPage = 1;
+  @state() private pageSize = 100;
 
   static styles = css`
     :host {
@@ -215,6 +222,48 @@ export class QueryEditor extends LitElement {
       word-break: break-all;
     }
 
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 8px;
+      border-top: 1px solid var(--vscode-panel-border);
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .pagination .spacer { flex: 1; }
+    .pagination-total {
+      font-family: var(--vscode-editor-font-family);
+    }
+    .pagination-size {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pagination select {
+      padding: 3px 6px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 2px;
+      font: inherit;
+    }
+    .pagination button.page-nav {
+      padding: 2px 10px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 2px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .pagination button.page-nav[disabled] { opacity: 0.4; cursor: not-allowed; }
+    .pagination-pos {
+      min-width: 80px;
+      text-align: center;
+      font-family: var(--vscode-editor-font-family);
+    }
+
     .error-banner {
       padding: 12px;
       background: var(--vscode-inputValidation-errorBackground);
@@ -231,6 +280,43 @@ export class QueryEditor extends LitElement {
     }
   `;
 
+  /** Page sizes available given the current result count. Show every
+   *  size up to and including the first one that fits the entire
+   *  result set — so 30 rows offers `[10, 25, 50]` (50 fits all),
+   *  150 offers `[10, 25, 50, 100, 200]`, 21k offers all sizes.
+   *  Mirrors SwiftUI's QueryResultsView.pageSizes pattern. */
+  private get pageSizes(): number[] {
+    const n = this.rows.length;
+    const all = [10, 25, 50, 100, 200, 250, 1000];
+    if (n <= 10) { return [10]; }
+    const out: number[] = [];
+    for (const s of all) {
+      out.push(s);
+      if (s >= n) { break; }
+    }
+    return out;
+  }
+
+  /** Total page count for current pageSize. At least 1 — empty results
+   *  still show "1 of 1" rather than "1 of 0". */
+  private get pageCount(): number {
+    return Math.max(1, Math.ceil(this.rows.length / this.pageSize));
+  }
+
+  /** Zero-based offset into `rows` for the current page. Used to map
+   *  page-local row indices back to the full array (selection events,
+   *  rowJson payloads). */
+  private get pageOffset(): number {
+    return (this.currentPage - 1) * this.pageSize;
+  }
+
+  /** Rows for the current page. The table render and JSON doc both
+   *  consume this — never the full `rows` array — so a 21k-row query
+   *  still tokenizes only `pageSize` rows of JSON. */
+  private get pagedRows(): Record<string, unknown>[] {
+    return this.rows.slice(this.pageOffset, this.pageOffset + this.pageSize);
+  }
+
   connectedCallback(): void {
     super.connectedCallback();
     onHostMessage<In>(msg => {
@@ -241,6 +327,11 @@ export class QueryEditor extends LitElement {
         this.errorMessage = null;
         this.state = 'success';
         this.selectedRowIndex = null;
+        // New result → snap pagination to page 1, and clamp pageSize
+        // to a value that's valid for this size.
+        this.currentPage = 1;
+        const sizes = this.pageSizes;
+        if (!sizes.includes(this.pageSize)) { this.pageSize = sizes[0]; }
       } else if (msg.type === 'query.error') {
         this.errorMessage = msg.message;
         this.rows = [];
@@ -286,9 +377,17 @@ export class QueryEditor extends LitElement {
     }, 200);
   }
 
-  private setSelected(i: number) {
-    this.selectedRowIndex = i;
-    const row = this.rows[i];
+  /** Convert a page-local index (the i-th row visible on the current
+   *  page) to the absolute index into `rows`. Selection state is stored
+   *  in absolute terms so it survives a page change cleanly. */
+  private absoluteIndex(pageLocalIndex: number): number {
+    return this.pageOffset + pageLocalIndex;
+  }
+
+  private setSelected(pageLocalIndex: number) {
+    const abs = this.absoluteIndex(pageLocalIndex);
+    this.selectedRowIndex = abs;
+    const row = this.rows[abs];
     postToHost({
       type: 'query.rowSelected',
       rowJson: row !== undefined ? JSON.stringify(row) : null,
@@ -298,13 +397,35 @@ export class QueryEditor extends LitElement {
   /** Stronger gesture than setSelected — fires on double-click and
    *  asks the host to flip the Inspector to its JSON tab so the
    *  activated row gets pulled into focus. The single-click that
-   *  precedes a dblclick already updated `selectedRowIndex`, so we
-   *  read straight from state. */
+   *  precedes a dblclick already updated `selectedRowIndex` (absolute),
+   *  so we read straight from state. */
   private activateSelected() {
     if (this.selectedRowIndex === null) { return; }
     const row = this.rows[this.selectedRowIndex];
     if (row === undefined) { return; }
     postToHost({ type: 'query.rowActivated', rowJson: JSON.stringify(row) });
+  }
+
+  // ─── Pagination helpers ───────────────────────────────────────
+  private gotoPage(p: number) {
+    const clamped = Math.max(1, Math.min(p, this.pageCount));
+    if (clamped === this.currentPage) { return; }
+    this.currentPage = clamped;
+    // Selection is stored in absolute terms — on page change we just
+    // drop it visually since the row may not be on the new page.
+    this.selectedRowIndex = null;
+    postToHost({ type: 'query.rowSelected', rowJson: null });
+  }
+
+  private setPageSize(size: number) {
+    if (size === this.pageSize) { return; }
+    // Try to keep the user roughly where they were after a size change
+    // (anchor on the first row of the current page, then re-derive page).
+    const firstAbs = this.pageOffset;
+    this.pageSize = size;
+    this.currentPage = Math.max(1, Math.floor(firstAbs / size) + 1);
+    this.selectedRowIndex = null;
+    postToHost({ type: 'query.rowSelected', rowJson: null });
   }
 
   private starCurrent() {
@@ -380,6 +501,7 @@ export class QueryEditor extends LitElement {
         ${(this.state === 'success' || this.state === 'running') && this.view === 'table' ? this.renderTable() : nothing}
         ${(this.state === 'success' || this.state === 'running') && this.view === 'json' ? this.renderJson() : nothing}
       </div>
+      ${this.renderPagination()}
     `;
   }
 
@@ -387,6 +509,8 @@ export class QueryEditor extends LitElement {
     if (this.rows.length === 0) {
       return html`<div class="empty">Query returned no rows.</div>`;
     }
+    const paged = this.pagedRows;
+    const offset = this.pageOffset;
     return html`
       <table>
         <thead>
@@ -395,8 +519,9 @@ export class QueryEditor extends LitElement {
           </tr>
         </thead>
         <tbody>
-          ${this.rows.map((row, i) => {
-            const isSelected = this.selectedRowIndex === i;
+          ${paged.map((row, i) => {
+            const abs = offset + i;
+            const isSelected = this.selectedRowIndex === abs;
             return html`
               <tr
                 class=${isSelected ? 'selected' : ''}
@@ -416,21 +541,22 @@ export class QueryEditor extends LitElement {
     `;
   }
 
-  /** Stringifies rows as a JSON array AND records the [from,to] character
-   *  range of each top-level item, so the embedded <json-viewer> can map a
-   *  click position back to a row index. */
+  /** Stringifies the CURRENT PAGE's rows (not the full result set) so
+   *  CodeMirror only tokenizes pageSize rows of JSON. The `ranges` are
+   *  page-local — `setSelected` translates to absolute on click. */
   private buildJsonDoc(): { doc: string; ranges: { from: number; to: number }[] } {
-    if (this.rows.length === 0) { return { doc: '[]', ranges: [] }; }
+    const paged = this.pagedRows;
+    if (paged.length === 0) { return { doc: '[]', ranges: [] }; }
     const ranges: { from: number; to: number }[] = [];
     let doc = '[\n';
-    for (let i = 0; i < this.rows.length; i++) {
-      const itemStr = JSON.stringify(this.rows[i], null, 2)
+    for (let i = 0; i < paged.length; i++) {
+      const itemStr = JSON.stringify(paged[i], null, 2)
         .split('\n').map(l => '  ' + l).join('\n');
       const from = doc.length;
       doc += itemStr;
       const to = doc.length;
       ranges.push({ from, to });
-      doc += i < this.rows.length - 1 ? ',\n' : '\n';
+      doc += i < paged.length - 1 ? ',\n' : '\n';
     }
     doc += ']';
     return { doc, ranges };
@@ -438,14 +564,59 @@ export class QueryEditor extends LitElement {
 
   private renderJson() {
     const { doc, ranges } = this.buildJsonDoc();
+    // selectedIndex passed to json-viewer is page-local: subtract the
+    // page offset to translate the absolute selection back to the
+    // current page's frame, or -1 if the selection isn't on this page.
+    const pageLocalSelection =
+      this.selectedRowIndex !== null
+      && this.selectedRowIndex >= this.pageOffset
+      && this.selectedRowIndex < this.pageOffset + this.pageSize
+        ? this.selectedRowIndex - this.pageOffset
+        : -1;
     return html`<json-viewer
       .value=${doc}
       .ranges=${ranges}
-      .selectedIndex=${this.selectedRowIndex ?? -1}
+      .selectedIndex=${pageLocalSelection}
       wrap
       @documentSelected=${(e: CustomEvent<{ index: number }>) => this.setSelected(e.detail.index)}
       @dblclick=${() => this.activateSelected()}
       style="display:block; height: 100%;"
     ></json-viewer>`;
+  }
+
+  /** Pagination footer — total count, page-size picker, prev/next,
+   *  "X of Y". Mirrors SwiftUI's PaginationControls. Sits below the
+   *  results so the top toolbar (Run / Mode / Favorite) stays uncrowded. */
+  private renderPagination() {
+    if (this.state !== 'success' || this.rows.length === 0) { return nothing; }
+    const sizes = this.pageSizes;
+    return html`
+      <div class="pagination">
+        <span class="pagination-total" title="Total rows">${this.rows.length} total</span>
+        <span class="spacer"></span>
+        <label class="pagination-size">
+          Page size
+          <select
+            .value=${String(this.pageSize)}
+            @change=${(e: Event) => this.setPageSize(Number((e.target as HTMLSelectElement).value))}
+          >
+            ${sizes.map(s => html`<option value=${String(s)} ?selected=${s === this.pageSize}>${s}</option>`)}
+          </select>
+        </label>
+        <button
+          class="page-nav"
+          ?disabled=${this.currentPage <= 1}
+          @click=${() => this.gotoPage(this.currentPage - 1)}
+          title="Previous page"
+        >‹</button>
+        <span class="pagination-pos">${this.currentPage} of ${this.pageCount}</span>
+        <button
+          class="page-nav"
+          ?disabled=${this.currentPage >= this.pageCount}
+          @click=${() => this.gotoPage(this.currentPage + 1)}
+          title="Next page"
+        >›</button>
+      </div>
+    `;
   }
 }
