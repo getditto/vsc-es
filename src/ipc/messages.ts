@@ -60,8 +60,13 @@ export type AddIndexOut =
 export interface LocalNetworkInterface {
   /** Interface name as the OS reports it: en0, eth0, wlan0, … */
   name: string;
-  /** Best-effort guess from the name pattern. Not authoritative. */
-  kind: 'wifi' | 'ethernet' | 'loopback' | 'other';
+  /** Best-effort kind from the name pattern. We collapse Wi-Fi and
+   *  Ethernet into a single `'lan'` kind because `os.networkInterfaces()`
+   *  can't reliably tell them apart (e.g. `en0` is Wi-Fi on a MacBook
+   *  but Ethernet via a Thunderbolt dock). This also matches the
+   *  umbrella "LAN" label our network graph already uses for the
+   *  AccessPoint transport. */
+  kind: 'lan' | 'loopback' | 'other';
   /** First non-internal MAC we see for this interface. */
   mac?: string;
   /** All IPv4 addresses; usually one but VPNs/aliases produce multiples. */

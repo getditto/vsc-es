@@ -31,6 +31,7 @@ export function readLocalNetworkInterfaces(): LocalNetworkInterface[] {
   const out: LocalNetworkInterface[] = [];
   for (const [name, addresses] of Object.entries(raw)) {
     if (!addresses || addresses.length === 0) { continue; }
+    if (shouldHideInterface(name, addresses[0]?.internal === true)) { continue; }
 
     let mac: string | undefined;
     const ipv4: { address: string; cidr: string }[] = [];
@@ -56,22 +57,41 @@ export function readLocalNetworkInterfaces(): LocalNetworkInterface[] {
       ipv6,
     });
   }
-  // Stable, predictable order for the UI: loopback last, then by
-  // name. Ditto's transports never use loopback so the user usually
-  // wants the real interfaces up top.
-  out.sort((a, b) => {
-    if (a.kind === 'loopback' && b.kind !== 'loopback') { return 1; }
-    if (b.kind === 'loopback' && a.kind !== 'loopback') { return -1; }
-    return a.name.localeCompare(b.name);
-  });
+  out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }
 
 /**
- * Best-effort guess of "Wi-Fi vs Ethernet vs other" from the interface
- * name. Loopback is detected via the `internal` flag on the address
- * struct. Everything else is name-pattern heuristics that work on the
- * common platforms and degrade gracefully (`other` is fine for the UI).
+ * Whether to drop an interface from the displayed list entirely. The
+ * panel is for "what real networks am I on" diagnostics; tunnel-style
+ * pseudo-interfaces just clutter that:
+ *
+ *   - **loopback** (`internal: true`) — never used by Ditto for sync.
+ *   - **utun\\*** — macOS VPN / hypervisor tunnels (Tailscale, Docker
+ *     Desktop, VMware Fusion, etc.). They show up with their own
+ *     IPs that aren't useful for "is my LAN reachable" questions.
+ *   - **llw\\*** — macOS low-latency wireless (AWDL companion link
+ *     used for Continuity / AirDrop). Always present on Apple
+ *     Silicon, never relevant to the operator.
+ *
+ * Exported so the unit test can verify each filter rule.
+ */
+export function shouldHideInterface(name: string, internal: boolean): boolean {
+  if (internal) { return true; }
+  const n = name.toLowerCase();
+  if (n.startsWith('utun')) { return true; }
+  if (n.startsWith('llw')) { return true; }
+  return false;
+}
+
+/**
+ * Best-effort classifier for the interface name. We deliberately do
+ * NOT try to split Wi-Fi from Ethernet — on macOS specifically, `en0`
+ * could be either (it's Wi-Fi on a bare laptop but Ethernet when a
+ * Thunderbolt dock is plugged in), and `os.networkInterfaces()`
+ * doesn't give us the medium type. The single `'lan'` label also
+ * matches the existing "LAN" umbrella our network graph uses for
+ * the AccessPoint transport, which spans both physical mediums.
  *
  * Exported separately so the unit test can drive it directly without
  * pulling in `os.networkInterfaces()`.
@@ -79,23 +99,19 @@ export function readLocalNetworkInterfaces(): LocalNetworkInterface[] {
 export function classifyInterface(name: string, internal: boolean): LocalNetworkInterface['kind'] {
   if (internal) { return 'loopback'; }
   const n = name.toLowerCase();
-  // macOS: en0 is usually Wi-Fi on laptops, Ethernet on desktops.
-  // We can't tell from the name alone, so we lean on *common* device
-  // patterns and let `other` cover the cases where we can't be sure.
+  // Any name pattern that's known to be a "real" network adapter on
+  // any supported platform → LAN. Order doesn't matter because every
+  // branch returns the same kind.
   if (n.startsWith('wlan') || n.startsWith('wlp') || n.startsWith('wifi') || n === 'wi-fi') {
-    return 'wifi';
+    return 'lan';
   }
-  // Linux ethernet conventions are checked BEFORE the macOS en*
-  // shortcut so that eno*/ens*/enp* (which all start with "en")
-  // don't get misclassified as Wi-Fi on Linux running this code.
   if (n.startsWith('eth') || n.startsWith('eno') || n.startsWith('ens') || n.startsWith('enp')) {
-    return 'ethernet';
+    return 'lan';
   }
   if (n.startsWith('en')) {
-    // On macOS en0/en1 are conventionally Wi-Fi on laptops; we mark
-    // them as wifi to match SwiftUI's behaviour on that platform.
-    if (process.platform === 'darwin') { return 'wifi'; }
-    return 'ethernet';
+    // macOS en0/en1/en2 — could be Wi-Fi or Ethernet via a dock;
+    // either way it's LAN-traffic-capable for Ditto's purposes.
+    return 'lan';
   }
   return 'other';
 }

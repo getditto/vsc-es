@@ -13,7 +13,10 @@ type SyncSessionStatus = 'Connected' | 'Connecting' | 'Disconnected';
 
 interface LocalNetworkInterface {
   name: string;
-  kind: 'wifi' | 'ethernet' | 'loopback' | 'other';
+  // Wi-Fi and Ethernet are intentionally collapsed into 'lan' —
+  // os.networkInterfaces() can't tell them apart and our network
+  // graph already uses LAN as the umbrella for both.
+  kind: 'lan' | 'loopback' | 'other';
   mac?: string;
   ipv4: { address: string; cidr: string }[];
   ipv6: { address: string; cidr: string; scopeid?: number }[];
@@ -91,24 +94,24 @@ const LOCAL_GRADIENT: [string, string] = ['rgb(20, 20, 20)', 'rgb(0, 0, 0)'];
  *  Mirror SwiftUI's NetworkInterfaceCard palette: green for Wi-Fi,
  *  teal for Ethernet, neutral grey for other. */
 const INTERFACE_GRADIENTS: Record<LocalNetworkInterface['kind'], [string, string]> = {
-  wifi:     ['rgb(13, 133, 64)',  'rgb(5, 82, 36)'],
-  ethernet: ['rgb(13, 115, 128)', 'rgb(5, 71, 82)'],
+  // Green matches the AccessPoint (LAN) colour in our network-graph
+  // connection palette, so the same idea reads the same way in both
+  // places.
+  lan:      ['rgb(13, 133, 64)',  'rgb(5, 82, 36)'],
   loopback: ['rgb(75, 75, 80)',   'rgb(45, 45, 50)'],
   other:    ['rgb(89, 89, 102)',  'rgb(51, 51, 64)'],
 };
 
 /** Codicon glyph for each interface kind. */
 const INTERFACE_KIND_ICON: Record<LocalNetworkInterface['kind'], string> = {
-  wifi: 'broadcast',
-  ethernet: 'plug',
+  lan: 'globe',
   loopback: 'circle-slash',
   other: 'symbol-misc',
 };
 
 /** Friendly label for each interface kind. */
 const INTERFACE_KIND_LABEL: Record<LocalNetworkInterface['kind'], string> = {
-  wifi: 'Wi-Fi',
-  ethernet: 'Ethernet',
+  lan: 'LAN',
   loopback: 'Loopback',
   other: 'Network',
 };
