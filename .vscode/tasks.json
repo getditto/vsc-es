@@ -15,7 +15,19 @@
       "presentation": { "reveal": "always", "panel": "dedicated" },
       "problemMatcher": {
         "owner": "esbuild",
-        "pattern": [{ "regexp": "^$" }],
+        "fileLocation": "absolute",
+        "pattern": [
+          {
+            "regexp": "^✘ \\[ERROR\\] (.+)$",
+            "message": 1
+          },
+          {
+            "regexp": "^\\s+(.*?):(\\d+):(\\d+):$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          }
+        ],
         "background": {
           "activeOnStart": true,
           "beginsPattern": ".*\\[esbuild\\] watching.*",
