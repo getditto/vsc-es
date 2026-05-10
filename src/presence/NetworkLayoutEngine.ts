@@ -72,15 +72,24 @@ const START_ANGLE = Math.PI / 2;
  * `allPeerKeys` must include the local peer; disconnected peers (no
  * BFS path from local) are placed in the outermost ring rather than
  * dropped. Edges in `connections` are treated as undirected.
+ *
+ * `radiusScale` (default 1.0) multiplies the base ring radius + the
+ * per-ring increment. Used by the Presence Graph webview to spread
+ * peers wider when "Direct Connected only" is OFF — a fully-connected
+ * mesh at the default tight spacing is unreadable, but at 1.75× the
+ * chord lines stop overlapping nearly as much. The crowding-based
+ * minimum-circumference floor is intentionally NOT scaled (pill sizes
+ * don't change), so very small meshes don't drift apart for no reason.
  */
 export function calculateLayout(
   localPeerKey: string,
   allPeerKeys: readonly string[],
   connections: readonly ConnectionInfo[],
+  radiusScale: number = 1,
 ): LayoutResult {
   const adjacency = buildAdjacencyGraph(connections);
   const { ringAssignments, parentMap } = performBFS(localPeerKey, adjacency, allPeerKeys);
-  const ringRadii = calculateRingRadii(ringAssignments);
+  const ringRadii = calculateRingRadii(ringAssignments, radiusScale);
   const positions = calculatePositions(ringAssignments, ringRadii, localPeerKey, parentMap, adjacency);
   return { positions, ringAssignments, ringRadii };
 }
@@ -157,16 +166,21 @@ function performBFS(
 
 // ─── Stage 3a: ring radii (may expand when crowded) ────────────
 
-function calculateRingRadii(ringAssignments: Map<number, string[]>): Map<number, number> {
+function calculateRingRadii(
+  ringAssignments: Map<number, string[]>,
+  radiusScale: number,
+): Map<number, number> {
   const radii = new Map<number, number>();
   radii.set(0, 0);
   const sortedRings = [...ringAssignments.keys()].filter(r => r > 0).sort((a, b) => a - b);
   for (const ring of sortedRings) {
     const peers = ringAssignments.get(ring) ?? [];
     const peerCount = peers.length;
-    const baseForRing = BASE_RADIUS + (ring - 1) * RADIUS_INCREMENT;
+    const baseForRing = (BASE_RADIUS + (ring - 1) * RADIUS_INCREMENT) * radiusScale;
     // Minimum circumference required to fit `peerCount` pills with
     // PEER_SPACING gaps between them — same heuristic SwiftUI uses.
+    // NOT scaled by radiusScale: pill sizes are fixed, so this floor
+    // represents physical crowding, not visual breathing room.
     const minimumCircumference = peerCount * (PEER_DIAMETER + PEER_SPACING);
     const minimumRadius = minimumCircumference / (2 * Math.PI);
     radii.set(ring, Math.max(baseForRing, minimumRadius));

@@ -301,6 +301,46 @@ test('layout: mixed scenario (3 ring-1 + 2 ring-2 + 1 disconnected) is consisten
   }
 });
 
+test('layout: radiusScale > 1 spreads rings outward proportionally', () => {
+  // 4-peer star, no inter-peer edges → all 4 sit at the base ring 1
+  // radius. Re-running with scale=1.75 should put them at exactly
+  // 1.75× the radius (the crowding floor doesn't kick in for 4 peers
+  // at the base radius, so the scale is the only factor).
+  const peers = ['local', 'A', 'B', 'C', 'D'];
+  const cs: ConnectionInfo[] = [
+    { fromPeer: 'local', toPeer: 'A' },
+    { fromPeer: 'local', toPeer: 'B' },
+    { fromPeer: 'local', toPeer: 'C' },
+    { fromPeer: 'local', toPeer: 'D' },
+  ];
+  const r1 = calculateLayout('local', peers, cs);
+  const r2 = calculateLayout('local', peers, cs, 1.75);
+  const radius1 = r1.ringRadii.get(1) ?? 0;
+  const radius2 = r2.ringRadii.get(1) ?? 0;
+  assert.ok(Math.abs(radius2 - radius1 * 1.75) < 1e-6,
+    `expected ring 1 radius to scale 1.75× (${radius1} → ${radius1 * 1.75}), got ${radius2}`);
+  // Per-peer positions should scale 1.75× as well — same angles, bigger radius.
+  for (const k of ['A', 'B', 'C', 'D']) {
+    const p1 = r1.positions.get(k)!;
+    const p2 = r2.positions.get(k)!;
+    assert.ok(Math.abs(p2.x - p1.x * 1.75) < 1e-6, `${k}.x should scale 1.75×`);
+    assert.ok(Math.abs(p2.y - p1.y * 1.75) < 1e-6, `${k}.y should scale 1.75×`);
+  }
+});
+
+test('layout: radiusScale does not shrink rings below the crowding floor', () => {
+  // 20 ring-1 peers — crowding pushes radius well above base. Scaling
+  // DOWN with a tiny scale must NOT shrink the ring below the floor
+  // (pills would visually overlap).
+  const peers = ['local', ...Array.from({ length: 20 }, (_, i) => `P${i}`)];
+  const cs: ConnectionInfo[] = peers.slice(1).map(p => ({ fromPeer: 'local', toPeer: p }));
+  const tight = calculateLayout('local', peers, cs, 0.1);
+  const radius = tight.ringRadii.get(1) ?? 0;
+  // 20 peers × 80pt circumference / 2π ≈ 254. Should stay near that
+  // floor regardless of the tiny scale.
+  assert.ok(radius > 200, `crowding floor should hold ring at ~254, got ${radius}`);
+});
+
 test('layout: rerunning the same input produces the same output (determinism)', () => {
   const peers = ['local', 'A', 'B', 'C', 'D'];
   const cs: ConnectionInfo[] = [

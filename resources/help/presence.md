@@ -101,11 +101,16 @@ Bluetooth.
 > view, and it's what you want 95% of the time.
 >
 > **Turning it off shows the full mesh — every peer the SDK knows
-> about and every connection between every pair of them.** On a mesh
-> with more than a handful of peers, this gets messy fast: you'll see
-> a tangle of chord lines crossing each other. The layout engine does
-> its best (BFS rings, parent-anchored placement, outward-arc chords)
-> but there is no algorithm that can lay out a fully-connected mesh
+> about and every connection between every pair of them.** The rings
+> auto-spread wider in this mode so chord lines have room to arc
+> around the cluster rather than stab through it; you'll see the
+> peers smoothly drift outward when you flip the toggle.
+>
+> Even with that spread, a fully-connected mesh of more than a handful
+> of peers gets messy fast: you'll see a tangle of chord lines
+> crossing each other. The layout engine does its best (BFS rings,
+> parent-anchored placement, outward-arc chords, ring-expansion at the
+> spread scale) but no algorithm can lay out a fully-connected mesh
 > nicely. **It's not meant to look pretty** — it's meant to surface
 > the underlying topology. Use this view to confirm "yes, there's a
 > path between any two devices" or to diagnose silent partitions, not

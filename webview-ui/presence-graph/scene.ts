@@ -40,6 +40,13 @@ export interface PresenceGraphInput {
 
 const CLOUD_KEY = 'ditto-cloud-node';
 
+/** Ring radius multiplier applied when "Direct Connected only" is OFF.
+ *  At 1.0 (default), peers cluster tightly enough that a fully-meshed
+ *  ring-1 looks like a ball of yarn. At 1.75 the ring breathes enough
+ *  that ring-1↔ring-1 chords stop overlapping the centre, while still
+ *  fitting comfortably inside a typical panel viewport at zoom 100%. */
+const EXPANDED_RADIUS_SCALE = 1.75;
+
 export interface SceneOptions {
   /** Initial scale (1.0 = 100%). Clamped 0.5–2.0 by zoom helpers. */
   zoom?: number;
@@ -293,7 +300,12 @@ export class PresenceGraphScene {
     for (const line of this.lines.values()) {
       cs.push({ fromPeer: line.fromKey, toPeer: line.toKey });
     }
-    const result = calculateLayout(this.localKey, allKeys, cs);
+    // Spread rings wider in full-mesh mode so chord lines have room to
+    // arc around the cluster instead of stabbing through it. The 500ms
+    // transitions below animate the change in/out smoothly when the
+    // user toggles "Direct Connected only".
+    const scale = this.showDirectConnectedOnly ? 1 : EXPANDED_RADIUS_SCALE;
+    const result = calculateLayout(this.localKey, allKeys, cs, scale);
     this.layout = result;
     // Animate every peer to its new position over 500ms, except the
     // ones the user has pinned (drag holds the position).
