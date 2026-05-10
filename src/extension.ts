@@ -189,12 +189,40 @@ export function activate(context: vscode.ExtensionContext) {
     if (dbId && item.id) { await treeExpansionStore.remove(dbId, item.id); }
   }));
 
+  // Restore expansion is tricky because some nodes (collections,
+  // indexes) come from the live __collections observer which fires
+  // asynchronously *after* lifecycle-active. IDs that don't resolve on
+  // the first pass get parked here and retried each time the
+  // collections list changes — see the collectionsRepo.onChange
+  // subscriber below.
+  const pendingExpansionRetry = new Map<string, Set<string>>(); // dbId → unresolved IDs
+
+  /** Try to reveal each id; returns the set of ids that didn't resolve
+   *  (because the corresponding tree node doesn't exist yet). */
+  const restoreExpansion = async (dbId: string, ids: readonly string[]): Promise<Set<string>> => {
+    const remaining = new Set<string>();
+    for (const id of ids) {
+      const node = await treeProvider.findNodeById(id);
+      if (!node) { remaining.add(id); continue; }
+      try {
+        await treeView.reveal(node, { expand: true, focus: false, select: false });
+      } catch {
+        // reveal can race with the refresh emitter; safe to swallow.
+      }
+    }
+    return remaining;
+  };
+
   // When a connection becomes active, restore the tree to the shape
   // the user left it in last time. First-time connections (no stored
   // state) fall back to the legacy `expand: 2` behaviour so the data
   // + features rows are immediately visible.
   context.subscriptions.push(manager.onLifecycleStateChange(async state => {
-    if (state.kind !== 'active') { return; }
+    if (state.kind !== 'active') {
+      // Disconnect → drop any pending retries; they'd be stale anyway.
+      pendingExpansionRetry.clear();
+      return;
+    }
     const config = configStore.get(state.configId);
     if (!config) { return; }
     const stored = treeExpansionStore.list(state.configId);
@@ -207,22 +235,29 @@ export function activate(context: vscode.ExtensionContext) {
         );
         return;
       }
-      // Restore stored expansion. Reveal each saved node with expand: true;
-      // VS Code walks up parents automatically so reveal order doesn't
-      // matter. Stale IDs (collection deleted while disconnected, etc.)
-      // resolve to undefined and are silently skipped.
-      for (const id of stored) {
-        const node = await treeProvider.findNodeById(id);
-        if (!node) { continue; }
-        try {
-          await treeView.reveal(node, { expand: true, focus: false, select: false });
-        } catch {
-          // reveal can race with the refresh emitter; safe to swallow.
-        }
+      const remaining = await restoreExpansion(state.configId, stored);
+      if (remaining.size > 0) {
+        // Park unresolved IDs (e.g. collections that haven't synced
+        // yet) so they get re-tried as the collections observer fires.
+        pendingExpansionRetry.set(state.configId, remaining);
       }
     } catch {
       // reveal can race with the refresh emitter; safe to swallow.
     }
+  }));
+
+  // Retry pending expansion whenever the collections list changes —
+  // i.e. when the live __collections observer or a manual refresh
+  // surfaces new collection rows. Once every parked ID resolves, the
+  // entry drops out of the map and we stop spinning on each event.
+  context.subscriptions.push(collectionsRepo.onChange(async () => {
+    const activeId = manager.getActiveConfigId();
+    if (!activeId) { return; }
+    const pending = pendingExpansionRetry.get(activeId);
+    if (!pending || pending.size === 0) { return; }
+    const remaining = await restoreExpansion(activeId, [...pending]);
+    if (remaining.size === 0) { pendingExpansionRetry.delete(activeId); }
+    else { pendingExpansionRetry.set(activeId, remaining); }
   }));
 
   const loggingProvider = new LoggingTreeProvider(logger);
