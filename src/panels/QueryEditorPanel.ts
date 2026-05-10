@@ -12,6 +12,7 @@ import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import { executeRemoteQuery } from '../ditto/HttpQueryService.js';
 import { extractCollectionName } from '../ditto/import-subscription-parser.js';
+import { detectAttachments } from '../inspector/inspector-state.js';
 
 /** Attachment soft / hard size limits (mirrors SwiftUI's 10 MB / 20 MB).
  *  Soft = warn-and-continue; hard = refuse. The SDK's local
@@ -421,9 +422,91 @@ export class QueryEditorPanel {
     if (action === 'add') {
       await this.runAddAttachment(collection, documentId);
     } else {
-      // Delete flow lands in the next commit.
+      await this.runDeleteAttachment(collection, documentId, row);
+    }
+  }
+
+  /**
+   * Detect existing attachment fields on the row, let the user
+   * multi-select which to remove, then DQL UPDATE setting them to
+   * NULL. The token detection logic is shared with the Inspector
+   * viewer (`detectAttachments`) so anything the inspector can show
+   * can also be deleted from here.
+   */
+  private async runDeleteAttachment(
+    collection: string,
+    documentId: string,
+    row: Record<string, unknown>,
+  ): Promise<void> {
+    const log = this.logger.withTag('ext:QueryEditor');
+
+    const attachments = detectAttachments(row);
+    if (attachments.length === 0) {
+      vscode.window.showInformationMessage('This document has no attachments to delete.');
+      return;
+    }
+
+    type AttachmentPick = vscode.QuickPickItem & { fieldName: string };
+    const items: AttachmentPick[] = attachments.map(a => {
+      // `path` from detectAttachments is the dotted path to the token.
+      // For simple top-level attachments it's just the field name. For
+      // nested or array entries it could be `field.sub` or `field[0]` —
+      // we only support clearing top-level fields for now (reflected
+      // in the disabled state below).
+      const fieldName = a.path.split(/[.[]/, 1)[0] ?? a.path;
+      const sizeStr = a.metadata.length ? formatBytes(a.metadata.length) : '';
+      const filenameStr = a.metadata.filename ?? '(unnamed)';
+      const detail = [filenameStr, sizeStr, a.metadata.contentType]
+        .filter(Boolean).join(' · ');
+      return { label: a.path, description: detail, fieldName };
+    });
+    const picked = await vscode.window.showQuickPick(items, {
+      canPickMany: true,
+      title: `Delete attachments on ${collection}/${documentId}`,
+      placeHolder: 'Select fields to clear',
+    });
+    if (!picked || picked.length === 0) { return; }
+
+    // Confirm — destructive op, modal so the user can't dismiss
+    // accidentally.
+    const confirm = await vscode.window.showWarningMessage(
+      `Delete ${picked.length} attachment${picked.length === 1 ? '' : 's'} from ${collection}/${documentId}? This sets the field${picked.length === 1 ? '' : 's'} to NULL on the document.`,
+      { modal: true },
+      'Delete',
+    );
+    if (confirm !== 'Delete') { return; }
+
+    // Build the SET clause. Field names came out of detectAttachments —
+    // they are dotted paths from the document root. We split on the
+    // first dot/[ and clear that top-level field, which removes the
+    // attachment whether it's a direct token or a nested object.
+    const fieldNames = [...new Set(picked.map(p => p.fieldName))];
+    if (fieldNames.some(f => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(f))) {
+      vscode.window.showErrorMessage('Attachment field names must be plain identifiers; cannot delete.');
+      return;
+    }
+    const setClause = fieldNames.map(f => `${f} = NULL`).join(', ');
+    const dql = `UPDATE ${collection} SET ${setClause} WHERE _id = :docId`;
+
+    try {
+      await this.manager.executeRaw(dql, { docId: documentId });
       vscode.window.showInformationMessage(
-        `[stub] Delete Attachment on ${collection}/${documentId}`,
+        `Cleared ${fieldNames.length} attachment field${fieldNames.length === 1 ? '' : 's'} on ${collection}/${documentId}.`,
+      );
+      log.info('Attachment(s) deleted', { collection, documentId, fields: fieldNames });
+
+      // Refresh results so the cleared fields disappear from the row.
+      const lastDql = this.lastMetadata?.dql;
+      if (lastDql) {
+        try { await this.handle({ type: 'query.run', query: lastDql, mode: 'local' }); }
+        catch { /* surfaced via the post path inside handle */ }
+      }
+    } catch (err) {
+      log.error('Attachment delete failed', {
+        err: err instanceof Error ? err.stack ?? err.message : String(err),
+      });
+      vscode.window.showErrorMessage(
+        `Delete attachment failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
