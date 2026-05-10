@@ -267,11 +267,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       }
       case 'subscription': {
         const item = new vscode.TreeItem(node.sub.name, vscode.TreeItemCollapsibleState.Collapsed);
-        // arrow-swap reads as a sync-flavoured icon (bidirectional arrows)
-        // while staying visually distinct from the parent's circular `sync`
-        // icon — the row shape now matches the "icon + label + chip"
-        // rhythm of the rest of the tree.
-        item.iconPath = new vscode.ThemeIcon('arrow-swap');
+        // pulse reads as "actively syncing data" — a wavy heartbeat-like
+        // line, distinct from the parent Subscriptions row's circular
+        // `sync` icon.
+        item.iconPath = new vscode.ThemeIcon('pulse');
         item.tooltip = new vscode.MarkdownString().appendCodeblock(node.sub.query, 'sql');
         item.contextValue = 'subscription';
         item.id = `sub.${node.databaseId}.${node.sub.id}`;
