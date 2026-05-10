@@ -6,6 +6,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { codiconStyles } from './codicon-styles.js';
+import { postToHost } from '../shared/messaging.js';
 import '../shared/json-viewer.js';
 
 interface QueryResultMetadata {
@@ -21,6 +22,10 @@ interface QueryResultMetadata {
 @customElement('query-metrics-element')
 export class QueryMetricsElement extends LitElement {
   @property({ type: Object }) metadata: QueryResultMetadata | undefined;
+  /** When true, suppress the LIMIT-clause suggestion entirely. Sticky
+   *  user preference set by clicking the tip's dismiss × — bound from
+   *  inspector-element which sources it from the host. */
+  @property({ type: Boolean }) hideLimitHint = false;
 
   static styles = [codiconStyles, css`
     :host { display: block; padding: 12px; color: var(--vscode-foreground); }
@@ -75,11 +80,12 @@ export class QueryMetricsElement extends LitElement {
       font-size: 12px;
       line-height: 1.45;
     }
-    .tip .codicon {
+    .tip .codicon-info {
       color: var(--vscode-editorInfo-foreground, #3794ff);
       flex-shrink: 0;
       margin-top: 1px;
     }
+    .tip-body { flex: 1; min-width: 0; }
     .tip code {
       background: var(--vscode-textCodeBlock-background);
       padding: 1px 4px;
@@ -87,6 +93,19 @@ export class QueryMetricsElement extends LitElement {
       font-family: var(--vscode-editor-font-family);
       font-size: 11px;
     }
+    .tip-dismiss {
+      background: transparent;
+      border: 0;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      padding: 0;
+      margin: 0;
+      flex-shrink: 0;
+      opacity: 0.7;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .tip-dismiss:hover { opacity: 1; color: var(--vscode-foreground); }
   `];
 
   /** True when the query is a SELECT without a LIMIT clause. We're
@@ -101,6 +120,15 @@ export class QueryMetricsElement extends LitElement {
     if (!/^SELECT\b/i.test(trimmed)) { return false; }
     return !/\bLIMIT\s+\S/i.test(trimmed);
   }
+
+  /** Optimistically suppress the tip locally, then ask the host to
+   *  persist the preference. The host re-pushes via inspector.preferences
+   *  on every webview that's resolved, so other Inspector views (if
+   *  the user has more than one) update too. */
+  private dismissLimitHint = (): void => {
+    this.hideLimitHint = true;
+    postToHost({ type: 'inspector.dismissLimitHint' });
+  };
 
   render() {
     const md = this.metadata;
@@ -118,18 +146,24 @@ export class QueryMetricsElement extends LitElement {
     const locationLabel = md.location === 'http'
       ? 'HTTP'
       : md.location === 'local' ? 'Local Database' : null;
-    const showLimitTip = this.shouldHintLimit(md.dql);
+    const showLimitTip = !this.hideLimitHint && this.shouldHintLimit(md.dql);
     return html`
       ${showLimitTip ? html`
         <div class="tip" role="note">
           <span class="codicon codicon-info"></span>
-          <div>
+          <div class="tip-body">
             This query has no <code>LIMIT</code> clause. On large
             collections this can return tens of thousands of rows and
             pull the whole result set into memory. Adding e.g.
             <code>LIMIT 100</code> usually makes the query
             substantially faster and is enough to inspect the data.
           </div>
+          <button
+            class="tip-dismiss"
+            title="Don't show this tip again. Re-enable from the Command Palette → Ditto: Reset Query Metrics Tips."
+            aria-label="Dismiss tip"
+            @click=${this.dismissLimitHint}
+          >×</button>
         </div>
       ` : ''}
       ${locationLabel !== null ? html`

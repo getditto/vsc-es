@@ -119,6 +119,10 @@
         "title": "Ditto: Open Output Channel"
       },
       {
+        "command": "dittoVsce.resetQueryMetricsTips",
+        "title": "Ditto: Reset Query Metrics Tips"
+      },
+      {
         "command": "dittoVsce.exportLogs",
         "title": "Ditto: Export Logs for Bug Report…"
       },

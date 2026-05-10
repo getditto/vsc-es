@@ -115,7 +115,11 @@ export type InspectorIn =
   | { type: 'inspector.addFavorite'; query: string }
   | { type: 'inspector.removeFavorite'; id: string }
   | { type: 'inspector.fetchAttachment'; token: unknown; tokenId: string }
-  | { type: 'inspector.saveAttachment'; token: unknown; tokenId: string };
+  | { type: 'inspector.saveAttachment'; token: unknown; tokenId: string }
+  // User clicked the dismiss × on the LIMIT-suggestion tip. The host
+  // persists the preference (per-installation) and re-pushes
+  // inspector.preferences so any other open Inspector view updates.
+  | { type: 'inspector.dismissLimitHint' };
 
 export type InspectorOut =
   | { type: 'inspector.contentChanged'; content: InspectorContent }
@@ -125,7 +129,11 @@ export type InspectorOut =
   | { type: 'inspector.attachmentProgress'; tokenId: string; pct: number }
   | { type: 'inspector.attachmentLoaded'; tokenId: string; mimeType: string; webviewUri: string }
   | { type: 'inspector.attachmentSaved'; tokenId: string; path: string }
-  | { type: 'inspector.attachmentError'; tokenId: string; message: string };
+  | { type: 'inspector.attachmentError'; tokenId: string; message: string }
+  // Per-installation Inspector preferences (currently just the
+  // dismiss flag for the LIMIT hint). Pushed once on resolve and
+  // again whenever the user toggles a preference.
+  | { type: 'inspector.preferences'; hideLimitHint: boolean };
 
 // ─── Logging (any panel webview → host, host → any webview) ──────
 /** Webview → host: emit a log line. */

@@ -35,6 +35,10 @@ export class DittoInspectorElement extends LitElement {
   @state() private history: QueryHistoryEntry[] = [];
   @state() private favorites: QueryFavoriteEntry[] = [];
   @state() private helpUris: { subscription?: string; query?: string; presence?: string } = {};
+  // Inspector preferences (per-installation, pushed by the host on
+  // resolve and on every dismiss/reset). Defaults to "show all tips"
+  // until the host's first push lands.
+  @state() private prefs: { hideLimitHint: boolean } = { hideLimitHint: false };
 
   static styles = [codiconStyles, css`
     :host {
@@ -98,6 +102,9 @@ export class DittoInspectorElement extends LitElement {
       case 'inspector.helpHtml':
         this.helpUris = { ...this.helpUris, [m.kind]: m.uri };
         break;
+      case 'inspector.preferences':
+        this.prefs = { hideLimitHint: !!m.hideLimitHint };
+        break;
     }
   };
 
@@ -156,7 +163,7 @@ export class DittoInspectorElement extends LitElement {
       case 'json':
         return html`<query-json-element .json=${c.selectedRowJson}></query-json-element>`;
       case 'metrics':
-        return html`<query-metrics-element .metadata=${c.lastResultMetadata}></query-metrics-element>`;
+        return html`<query-metrics-element .metadata=${c.lastResultMetadata} .hideLimitHint=${this.prefs.hideLimitHint}></query-metrics-element>`;
       case 'help':
         return html`<help-content-element .uri=${this.helpUris.query ?? ''}></help-content-element>`;
       default:

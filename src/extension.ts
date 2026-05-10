@@ -27,6 +27,7 @@ import { InspectorViewProvider } from './inspector/InspectorViewProvider.js';
 import { QueryHistoryStore } from './storage/QueryHistoryStore.js';
 import { QueryFavoritesStore } from './storage/QueryFavoritesStore.js';
 import { TreeExpansionStore } from './storage/TreeExpansionStore.js';
+import { MetricsPreferencesStore } from './storage/MetricsPreferencesStore.js';
 
 let logger: Logger;
 
@@ -131,6 +132,7 @@ export function activate(context: vscode.ExtensionContext) {
   const historyStore = new QueryHistoryStore(context.globalState);
   const favoritesStore = new QueryFavoritesStore(context.globalState);
   const treeExpansionStore = new TreeExpansionStore(context.globalState);
+  const metricsPrefs = new MetricsPreferencesStore(context.globalState);
 
   // Initialize the context key to a known value so view `when` clauses
   // evaluate deterministically even before the first lifecycle transition.
@@ -150,7 +152,7 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 
   const inspectorView = new InspectorViewProvider(
-    context, inspectorController, historyStore, favoritesStore, manager, logger,
+    context, inspectorController, historyStore, favoritesStore, manager, logger, metricsPrefs,
   );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(InspectorViewProvider.viewType, inspectorView),
@@ -451,6 +453,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('dittoVsce.openOutputChannel', () => {
       channel.show();
+    }),
+    vscode.commands.registerCommand('dittoVsce.resetQueryMetricsTips', async () => {
+      await metricsPrefs.resetAll();
+      inspectorView.pushPreferences();
+      vscode.window.showInformationMessage('Query Metrics tips re-enabled.');
     }),
     vscode.commands.registerCommand('dittoVsce.exportLogs', async () => {
       const ok = await vscode.window.showWarningMessage(

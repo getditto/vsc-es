@@ -9,6 +9,7 @@ import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { InspectorIn, InspectorOut } from '../ipc/messages.js';
 import { attachmentContentType, attachmentFilename } from './inspector-state.js';
+import type { MetricsPreferencesStore } from '../storage/MetricsPreferencesStore.js';
 
 /**
  * `WebviewViewProvider` for the auxiliary-bar Ditto Inspector.
@@ -29,7 +30,16 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     private readonly favorites: QueryFavoritesStore,
     private readonly manager: DittoManager,
     private readonly logger: Logger,
+    private readonly metricsPrefs: MetricsPreferencesStore,
   ) {}
+
+  /** Re-push the current preferences to the webview. Public so the
+   *  "Reset Query Metrics Tips" command can ask us to refresh after
+   *  flipping the flag back. */
+  pushPreferences(): void {
+    const p = this.metricsPrefs.get();
+    this.post({ type: 'inspector.preferences', hideLimitHint: p.hideLimitHint });
+  }
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
@@ -93,6 +103,11 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     // onContentChange handler above re-posts them on every content switch.
     pushHelpUris();
 
+    // Push the (sticky) Inspector preferences — same defensive path
+    // as the help URIs, since the webview's first render needs to
+    // know whether to suppress the LIMIT tip.
+    this.pushPreferences();
+
     // Push initial state.
     this.post({ type: 'inspector.contentChanged', content: this.controller.getContent() });
 
@@ -141,6 +156,10 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         return;
       case 'inspector.removeFavorite':
         if (cur.kind === 'query') { void this.favorites.delete(cur.databaseId, msg.id); }
+        return;
+      case 'inspector.dismissLimitHint':
+        await this.metricsPrefs.dismissLimitHint();
+        this.pushPreferences();
         return;
       case 'inspector.fetchAttachment':
         await this.fetchAttachment(msg.token, msg.tokenId, /* save */ false);
