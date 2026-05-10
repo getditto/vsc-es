@@ -238,8 +238,10 @@ export class QueryEditorPanel {
 
   /** Runs the query against the Ditto Server's REST API. Doesn't need
    *  an active SDK connection — only the connection's stored httpApiUrl
-   *  + httpApiKey. EXPLAIN isn't fetched (would be a separate HTTP call;
-   *  matches the SwiftUI HTTP path which also skips it). */
+   *  + httpApiKey. After the data run we issue a second `EXPLAIN <query>`
+   *  call so the Metrics tab's plan section isn't blank — mirrors the
+   *  local path's runExplain in DittoManager (non-fatal, skipped when
+   *  the user already prefixed EXPLAIN). */
   private async runViaHttp(query: string): Promise<{
     rows: Record<string, unknown>[];
     durationMs: number;
@@ -250,27 +252,53 @@ export class QueryEditorPanel {
     if (!cfg?.httpApiUrl || !secrets.httpApiKey) {
       throw new Error('HTTP mode requires httpApiUrl and httpApiKey on this connection.');
     }
-    const start = performance.now();
-    const response = await executeRemoteQuery({
+    const httpReq = {
       httpApiUrl: cfg.httpApiUrl,
       httpApiKey: secrets.httpApiKey,
       allowUntrustedCerts: cfg.allowUntrustedCerts,
-      query,
-    }, this.logger);
+    };
+    const start = performance.now();
+    const response = await executeRemoteQuery({ ...httpReq, query }, this.logger);
     const durationMs = Math.round(performance.now() - start);
     const rows = response.items.filter(
       (it): it is Record<string, unknown> =>
         typeof it === 'object' && it !== null && !Array.isArray(it),
     );
+
+    const explain = await this.fetchHttpExplain(httpReq, query);
+
     const metadata: QueryResultMetadata = {
       dql: query,
       durationMs,
       resultCount: rows.length,
-      explain: '',
+      explain,
       timestamp: Date.now(),
       location: 'http',
     };
     return { rows, durationMs, metadata };
+  }
+
+  /** Best-effort EXPLAIN fetch over HTTP. Returns a pretty-printed JSON
+   *  string, or '' on any failure (network, server error, parse error)
+   *  so the Metrics tab degrades to "(plan unavailable)" rather than
+   *  failing the whole query. Skips when the user already prefixed
+   *  EXPLAIN, matching DittoManager.runExplain on the local path. */
+  private async fetchHttpExplain(
+    httpReq: { httpApiUrl: string; httpApiKey: string; allowUntrustedCerts: boolean },
+    query: string,
+  ): Promise<string> {
+    if (query.trimStart().toUpperCase().startsWith('EXPLAIN')) { return ''; }
+    try {
+      const r = await executeRemoteQuery({ ...httpReq, query: `EXPLAIN ${query}` }, this.logger);
+      const first = r.items[0];
+      if (!first || typeof first !== 'object') { return ''; }
+      return JSON.stringify(first, null, 2);
+    } catch (err) {
+      this.logger.withTag('ext:QueryEditor').warn('HTTP EXPLAIN failed; plan will be unavailable', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return '';
+    }
   }
 
   private dispose() {
