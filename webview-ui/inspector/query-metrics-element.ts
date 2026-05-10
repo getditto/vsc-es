@@ -160,7 +160,7 @@ export class QueryMetricsElement extends LitElement {
           </div>
           <button
             class="tip-dismiss"
-            title="Don't show this tip again. Re-enable from the Command Palette → Ditto: Reset Query Metrics Tips."
+            title="Don't show this tip again. Re-enable from Help → Reset Warnings (or Command Palette → Ditto: Reset Warnings)."
             aria-label="Dismiss tip"
             @click=${this.dismissLimitHint}
           >×</button>

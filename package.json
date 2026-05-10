@@ -119,8 +119,9 @@
         "title": "Ditto: Open Output Channel"
       },
       {
-        "command": "dittoVsce.resetQueryMetricsTips",
-        "title": "Ditto: Reset Query Metrics Tips"
+        "command": "dittoVsce.resetWarnings",
+        "title": "Ditto: Reset Warnings",
+        "icon": "$(refresh)"
       },
       {
         "command": "dittoVsce.exportLogs",

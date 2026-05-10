@@ -454,10 +454,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dittoVsce.openOutputChannel', () => {
       channel.show();
     }),
-    vscode.commands.registerCommand('dittoVsce.resetQueryMetricsTips', async () => {
+    vscode.commands.registerCommand('dittoVsce.resetWarnings', async () => {
       await metricsPrefs.resetAll();
       inspectorView.pushPreferences();
-      vscode.window.showInformationMessage('Query Metrics tips re-enabled.');
+      vscode.window.showInformationMessage('Ditto warnings and tips re-enabled.');
     }),
     vscode.commands.registerCommand('dittoVsce.exportLogs', async () => {
       const ok = await vscode.window.showWarningMessage(
