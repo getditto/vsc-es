@@ -19,4 +19,5 @@ export type DatabaseTreeNode =
   | { kind: 'index'; databaseId: string; collectionName: string; index: DittoIndex }
   | { kind: 'indexField'; databaseId: string; collectionName: string; indexId: string; field: string }
   | { kind: 'peerListing'; databaseId: string }
-  | { kind: 'queryEditor'; databaseId: string };
+  | { kind: 'queryEditor'; databaseId: string }
+  | { kind: 'queryMetrics'; databaseId: string };

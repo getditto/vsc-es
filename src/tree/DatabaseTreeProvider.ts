@@ -93,6 +93,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         { kind: 'sectionHeader', databaseId: dbId, id: 'features', label: 'Features' },
         { kind: 'peerListing', databaseId: dbId },
         { kind: 'queryEditor', databaseId: dbId },
+        { kind: 'queryMetrics', databaseId: dbId },
       ];
     }
     if (node.kind === 'subscriptionsParent') {
@@ -184,7 +185,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       || element.kind === 'subscriptionsParent'
       || element.kind === 'collection'
       || element.kind === 'peerListing'
-      || element.kind === 'queryEditor') {
+      || element.kind === 'queryEditor'
+      || element.kind === 'queryMetrics') {
       return { kind: 'databaseDetails', config };
     }
     if (element.kind === 'subscription') {
@@ -402,6 +404,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.contextValue = 'queryEditor';
         item.id = `query.${node.databaseId}`;
         item.command = { command: 'dittoVsce.openQueryEditor', title: 'Open Query Editor', arguments: [node.databaseId] };
+        return item;
+      }
+      case 'queryMetrics': {
+        // Dashboard codicon — same gauge glyph the Query Inspector's
+        // Metrics tab uses, so the feature reads as "the same thing,
+        // but for every past run."
+        const item = new vscode.TreeItem('Query Metrics');
+        item.iconPath = new vscode.ThemeIcon('dashboard');
+        item.contextValue = 'queryMetrics';
+        item.id = `qmetrics.${node.databaseId}`;
+        item.command = { command: 'dittoVsce.openQueryMetrics', title: 'Open Query Metrics', arguments: [node.databaseId] };
         return item;
       }
     }

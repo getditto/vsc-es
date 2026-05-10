@@ -8,7 +8,8 @@ const QUERY_TAB_KEY = 'dittoInspectorQueryTab.v1.';
 export type ActiveFeature =
   | { kind: 'subscriptions'; databaseId: string }
   | { kind: 'peers'; databaseId: string }
-  | { kind: 'query'; databaseId: string };
+  | { kind: 'query'; databaseId: string }
+  | { kind: 'metrics'; databaseId: string };
 
 export class InspectorController {
   private content: InspectorContent = { kind: 'none' };

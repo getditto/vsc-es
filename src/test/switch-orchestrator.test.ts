@@ -158,6 +158,7 @@ function buildDeps(opts: DepsOptions = {}): { deps: SwitchDeps; rec: Recorded } 
       closeQuery: () => { calls.push('panels.closeQuery'); },
       closePeers: () => { calls.push('panels.closePeers'); },
       closeSubscription: () => { calls.push('panels.closeSubscription'); },
+      closeQueryMetrics: () => { calls.push('panels.closeQueryMetrics'); },
       showQuery: (id: string, queryText?: string) => {
         calls.push(queryText !== undefined && queryText.length > 0
           ? `panels.showQuery(${id}, "${queryText}")`
@@ -236,6 +237,7 @@ test('switch happy path: closes panels → disconnect → connect → restorePan
   // Filter to the call-order signal we care about.
   const sig = rec.calls.filter(c =>
     c === 'panels.closeQuery' || c === 'panels.closePeers' || c === 'panels.closeSubscription' ||
+    c === 'panels.closeQueryMetrics' ||
     c === 'manager.disconnect' || c.startsWith('manager.connect') ||
     c.startsWith('panels.showQuery') || c.startsWith('panels.showPeers'),
   );
@@ -243,6 +245,7 @@ test('switch happy path: closes panels → disconnect → connect → restorePan
     'panels.closeQuery',
     'panels.closePeers',
     'panels.closeSubscription',
+    'panels.closeQueryMetrics',
     'manager.disconnect',
     'manager.connect(B)',
     'panels.showQuery(B, "SELECT * FROM tasks")',

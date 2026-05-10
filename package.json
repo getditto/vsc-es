@@ -107,6 +107,11 @@
         "title": "Open Query Editor"
       },
       {
+        "command": "dittoVsce.openQueryMetrics",
+        "title": "Open Query Metrics",
+        "icon": "$(dashboard)"
+      },
+      {
         "command": "dittoVsce.setApplicationLogLevel",
         "title": "Ditto: Set Application Log Level"
       },

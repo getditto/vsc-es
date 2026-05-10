@@ -12,6 +12,7 @@ import { HelpTreeProvider } from './tree/HelpTreeProvider.js';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel.js';
 import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
+import { QueryMetricsPanel } from './panels/QueryMetricsPanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
@@ -76,6 +77,7 @@ function buildSwitchDeps(
       closeQuery: () => QueryEditorPanel.dispose(),
       closePeers: () => PeerListingPanel.dispose(),
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
+      closeQueryMetrics: () => QueryMetricsPanel.dispose(),
       showQuery: (databaseId, queryText) => {
         const panel = QueryEditorPanel.show(
           context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, metrics, loggerArg,
@@ -442,6 +444,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
       QueryEditorPanel.show(context, manager, configStore, secretStore, databaseId, tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger);
+    }),
+    vscode.commands.registerCommand('dittoVsce.openQueryMetrics', (databaseId: string) => {
+      if (!databaseId) { return; }
+      QueryMetricsPanel.show(context, configStore, queryMetricsStore, databaseId, inspectorController, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.setApplicationLogLevel', async () => {
       const picked = await pickLogLevel(logger.getChannelLevel(), 'Set Application Log Level');

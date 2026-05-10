@@ -107,6 +107,19 @@ export type QueryOut =
   | { type: 'query.modeInit'; availableModes: QueryMode[] }
   | { type: 'query.setText'; text: string };
 
+// ─── Query Metrics panel ───────────────────────────────────────
+/** A single record in the Query Metrics history. The shape is the
+ *  same as QueryResultMetadata with a stable id minted by the store. */
+export interface QueryMetricsRecord extends QueryResultMetadata {
+  id: string;
+}
+
+export type MetricsIn =
+  | { type: 'metrics.clear' };
+
+export type MetricsOut =
+  | { type: 'metrics.state'; records: QueryMetricsRecord[] };
+
 // ─── Inspector view (auxiliary bar) ────────────────────────────
 export type InspectorIn =
   | { type: 'inspector.tabSelected'; tab: QueryInspectorTab }
