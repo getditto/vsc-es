@@ -215,8 +215,18 @@
           "group": "1_open@1"
         },
         {
+          "command": "dittoVsce.queryAllInCollection",
+          "when": "view == dittoDatabases && viewItem == collection",
+          "group": "1_open@1"
+        },
+        {
           "command": "dittoVsce.addIndex",
           "when": "view == dittoDatabases && viewItem == collection",
+          "group": "2_index@1"
+        },
+        {
+          "command": "dittoVsce.addIndex",
+          "when": "view == dittoDatabases && viewItem == indexesParent",
           "group": "2_index@1"
         }
       ]
