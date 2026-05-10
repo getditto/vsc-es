@@ -11,6 +11,7 @@ import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import { executeRemoteQuery } from '../ditto/HttpQueryService.js';
+import { extractCollectionName } from '../ditto/import-subscription-parser.js';
 
 function computeColumns(rows: Record<string, unknown>[]): string[] {
   const keys = new Set<string>();
@@ -197,6 +198,14 @@ export class QueryEditorPanel {
       this.inspector.setSelectedRowJson(msg.rowJson);
       return;
     }
+    if (msg.type === 'query.addAttachment') {
+      await this.handleAttachmentAction(msg.rowJson, 'add');
+      return;
+    }
+    if (msg.type === 'query.deleteAttachment') {
+      await this.handleAttachmentAction(msg.rowJson, 'delete');
+      return;
+    }
     if (msg.type === 'query.rowActivated') {
       // Double-click → flip the Inspector to JSON. setQueryTab is a
       // no-op when content.kind isn't 'query', but in practice the
@@ -318,6 +327,57 @@ export class QueryEditorPanel {
       });
       return '';
     }
+  }
+
+  /**
+   * Shared entry point for the right-click attachment actions. Validates
+   * preconditions (active connection, parseable row, single-collection
+   * query) and dispatches to the action-specific handler. Errors are
+   * surfaced as toasts because the right-click flow has no inline error
+   * surface.
+   *
+   * NOTE: this commit only wires the scaffolding. The actual add/delete
+   * implementations land in follow-up commits — for now we surface a
+   * placeholder toast so end-to-end IPC + collection extraction can be
+   * verified independently of the file-picker / DQL UPDATE machinery.
+   */
+  private async handleAttachmentAction(rowJson: string, action: 'add' | 'delete'): Promise<void> {
+    if (this.manager.getActiveConfigId() !== this.databaseId) {
+      vscode.window.showWarningMessage('Connect to this database first.');
+      return;
+    }
+    const lastDql = this.lastMetadata?.dql;
+    if (!lastDql) {
+      vscode.window.showWarningMessage('Run a query first so we know which collection to target.');
+      return;
+    }
+    const collection = extractCollectionName(lastDql);
+    if (!collection || collection.startsWith('__')) {
+      vscode.window.showWarningMessage(
+        `Attachment actions need a single user collection in the last query (got "${collection ?? 'no FROM clause'}").`,
+      );
+      return;
+    }
+
+    let row: Record<string, unknown>;
+    try { row = JSON.parse(rowJson) as Record<string, unknown>; }
+    catch {
+      vscode.window.showErrorMessage('Could not parse the selected row.');
+      return;
+    }
+    const documentId = typeof row._id === 'string' ? row._id : undefined;
+    if (!documentId) {
+      vscode.window.showWarningMessage('The selected row has no string `_id` — cannot target it.');
+      return;
+    }
+
+    // Placeholder so end-to-end wiring (right-click → menu → IPC →
+    // host → collection/_id resolution) can be verified before the
+    // real file-picker / DQL UPDATE logic lands. Replaced in the
+    // next two commits.
+    vscode.window.showInformationMessage(
+      `[stub] ${action === 'add' ? 'Add' : 'Delete'} Attachment on ${collection}/${documentId}`,
+    );
   }
 
   private dispose() {

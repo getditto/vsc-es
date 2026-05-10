@@ -57,6 +57,10 @@ export class QueryEditor extends LitElement {
   // point of paginating.
   @state() private currentPage = 1;
   @state() private pageSize = 100;
+  // Right-click context menu (host VS Code's TreeView context menu API
+  // doesn't reach inside webviews; we render our own popover and route
+  // selections through IPC). `null` means hidden.
+  @state() private contextMenu: { x: number; y: number; rowAbsIndex: number } | null = null;
 
   static styles = css`
     :host {
@@ -222,6 +226,38 @@ export class QueryEditor extends LitElement {
       word-break: break-all;
     }
 
+    /* ─── Context menu (right-click on a result row) ─────────
+       Webviews can't tap into VS Code's native context-menu APIs, so
+       we render our own. Looks/behaves like VS Code's editor right-click. */
+    .ctx-menu {
+      position: fixed;
+      z-index: 1000;
+      min-width: 200px;
+      padding: 4px 0;
+      background: var(--vscode-menu-background, var(--vscode-editor-background));
+      color: var(--vscode-menu-foreground, var(--vscode-foreground));
+      border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      font-size: 13px;
+      font-family: var(--vscode-font-family);
+    }
+    .ctx-menu-item {
+      padding: 4px 16px;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .ctx-menu-item:hover {
+      background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground));
+      color: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground));
+    }
+    .ctx-menu-sep {
+      height: 1px;
+      margin: 4px 0;
+      background: var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
+    }
+
     .pagination {
       display: flex;
       align-items: center;
@@ -319,6 +355,13 @@ export class QueryEditor extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    // Click-away closes the context menu — register at the document
+    // level so a click anywhere outside the menu (including outside
+    // this element) dismisses it. capture:false so the menu's own
+    // stopPropagation handler can short-circuit. Listeners are
+    // removed in disconnectedCallback to avoid leaks across reloads.
+    document.addEventListener('click', this.closeContextMenu);
+    document.addEventListener('contextmenu', this.closeContextMenu);
     onHostMessage<In>(msg => {
       if (msg.type === 'query.result') {
         this.rows = msg.rows;
@@ -352,6 +395,12 @@ export class QueryEditor extends LitElement {
         }
       }
     });
+  }
+
+  disconnectedCallback(): void {
+    document.removeEventListener('click', this.closeContextMenu);
+    document.removeEventListener('contextmenu', this.closeContextMenu);
+    super.disconnectedCallback();
   }
 
   private run() {
@@ -405,6 +454,56 @@ export class QueryEditor extends LitElement {
     if (row === undefined) { return; }
     postToHost({ type: 'query.rowActivated', rowJson: JSON.stringify(row) });
   }
+
+  // ─── Context menu helpers ─────────────────────────────────────
+  /** Open the context menu at the cursor position for a specific row. */
+  private openContextMenu(e: MouseEvent, rowAbsIndex: number) {
+    e.preventDefault();
+    // stopPropagation so the document-level contextmenu listener that
+    // closes the menu doesn't immediately fire on the same event we're
+    // using to open it.
+    e.stopPropagation();
+    // Mark the row as selected too so the user has visual feedback that
+    // the menu's actions will target this row. Matches VS Code's editor
+    // right-click behaviour.
+    this.selectedRowIndex = rowAbsIndex;
+    const row = this.rows[rowAbsIndex];
+    postToHost({
+      type: 'query.rowSelected',
+      rowJson: row !== undefined ? JSON.stringify(row) : null,
+    });
+    this.contextMenu = { x: e.clientX, y: e.clientY, rowAbsIndex };
+  }
+
+  private closeContextMenu = () => { this.contextMenu = null; };
+
+  private contextAdd = () => {
+    if (!this.contextMenu) { return; }
+    const row = this.rows[this.contextMenu.rowAbsIndex];
+    this.contextMenu = null;
+    if (!row) { return; }
+    postToHost({ type: 'query.addAttachment', rowJson: JSON.stringify(row) });
+  };
+
+  private contextDelete = () => {
+    if (!this.contextMenu) { return; }
+    const row = this.rows[this.contextMenu.rowAbsIndex];
+    this.contextMenu = null;
+    if (!row) { return; }
+    postToHost({ type: 'query.deleteAttachment', rowJson: JSON.stringify(row) });
+  };
+
+  /** Right-click on the JSON viewer doesn't carry a row index — derive
+   *  one from the doc's character offset against the page-local ranges
+   *  and translate to absolute. Falls back to the currently-selected
+   *  row if the click landed outside any document. */
+  private onJsonContextMenu = (e: MouseEvent) => {
+    // The json-viewer fires `documentSelected` on click; by the time
+    // contextmenu fires, selectedRowIndex is already on the row the
+    // user just clicked. Use that if available; otherwise no-op.
+    if (this.selectedRowIndex === null) { return; }
+    this.openContextMenu(e, this.selectedRowIndex);
+  };
 
   // ─── Pagination helpers ───────────────────────────────────────
   private gotoPage(p: number) {
@@ -502,6 +601,7 @@ export class QueryEditor extends LitElement {
         ${(this.state === 'success' || this.state === 'running') && this.view === 'json' ? this.renderJson() : nothing}
       </div>
       ${this.renderPagination()}
+      ${this.renderContextMenu()}
     `;
   }
 
@@ -528,6 +628,7 @@ export class QueryEditor extends LitElement {
                 aria-selected=${isSelected ? 'true' : 'false'}
                 @click=${() => this.setSelected(i)}
                 @dblclick=${() => this.activateSelected()}
+                @contextmenu=${(e: MouseEvent) => this.openContextMenu(e, abs)}
               >
                 ${this.columns.map(c => {
                   const cell = renderCell(row[c]);
@@ -580,8 +681,25 @@ export class QueryEditor extends LitElement {
       wrap
       @documentSelected=${(e: CustomEvent<{ index: number }>) => this.setSelected(e.detail.index)}
       @dblclick=${() => this.activateSelected()}
+      @contextmenu=${this.onJsonContextMenu}
       style="display:block; height: 100%;"
     ></json-viewer>`;
+  }
+
+  /** Floating right-click menu. Click anywhere else closes it. */
+  private renderContextMenu() {
+    if (!this.contextMenu) { return nothing; }
+    return html`
+      <div
+        class="ctx-menu"
+        style=${`left:${this.contextMenu.x}px; top:${this.contextMenu.y}px;`}
+        @click=${(e: Event) => e.stopPropagation()}
+      >
+        <div class="ctx-menu-item" @click=${this.contextAdd}>Add Attachment…</div>
+        <div class="ctx-menu-sep"></div>
+        <div class="ctx-menu-item" @click=${this.contextDelete}>Delete Attachment…</div>
+      </div>
+    `;
   }
 
   /** Pagination footer — total count, page-size picker, prev/next,

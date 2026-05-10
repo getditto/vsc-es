@@ -90,7 +90,12 @@ export type QueryIn =
   // doesn't yank the Inspector into the JSON tab on every click.
   | { type: 'query.rowActivated'; rowJson: string }
   | { type: 'query.starCurrent'; query: string }
-  | { type: 'query.textChanged'; text: string };
+  | { type: 'query.textChanged'; text: string }
+  // Right-click menu items on a results row. The webview emits the
+  // raw row JSON; the host derives the collection from the last-run
+  // DQL and walks the user through the attachment dialog.
+  | { type: 'query.addAttachment'; rowJson: string }
+  | { type: 'query.deleteAttachment'; rowJson: string };
 
 export type QueryOut =
   | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: QueryResultMetadata }
