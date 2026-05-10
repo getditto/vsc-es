@@ -253,6 +253,7 @@ export function activate(context: vscode.ExtensionContext) {
         await historyStore.deleteAll(node.config.id);
         await favoritesStore.deleteAll(node.config.id);
         await inspectorController.clearForDatabase(node.config.id);
+        await treeExpansionStore.clearAll(node.config.id);
         const dir = vscode.Uri.joinPath(context.globalStorageUri, 'dittoData', node.config.id);
         try { await vscode.workspace.fs.delete(dir, { recursive: true, useTrash: false }); } catch { /* fine if missing */ }
       }
