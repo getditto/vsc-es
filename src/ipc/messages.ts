@@ -121,7 +121,7 @@ export type InspectorOut =
   | { type: 'inspector.contentChanged'; content: InspectorContent }
   | { type: 'inspector.historyChanged'; databaseId: string; entries: QueryHistoryEntry[] }
   | { type: 'inspector.favoritesChanged'; databaseId: string; entries: QueryFavoriteEntry[] }
-  | { type: 'inspector.helpHtml'; kind: 'subscription' | 'query'; uri: string }
+  | { type: 'inspector.helpHtml'; kind: 'subscription' | 'query' | 'presence'; uri: string }
   | { type: 'inspector.attachmentProgress'; tokenId: string; pct: number }
   | { type: 'inspector.attachmentLoaded'; tokenId: string; mimeType: string; webviewUri: string }
   | { type: 'inspector.attachmentSaved'; tokenId: string; path: string }

@@ -34,7 +34,7 @@ export class DittoInspectorElement extends LitElement {
   @state() private content: InspectorContent = { kind: 'none' };
   @state() private history: QueryHistoryEntry[] = [];
   @state() private favorites: QueryFavoriteEntry[] = [];
-  @state() private helpUris: { subscription?: string; query?: string } = {};
+  @state() private helpUris: { subscription?: string; query?: string; presence?: string } = {};
 
   static styles = [codiconStyles, css`
     :host {
@@ -110,8 +110,11 @@ export class DittoInspectorElement extends LitElement {
     if (c.kind === 'none') {
       return html`<div class="empty">No active database.</div>`;
     }
-    if (c.kind === 'subscriptions' || c.kind === 'peers') {
+    if (c.kind === 'subscriptions') {
       return html`<help-content-element .uri=${this.helpUris.subscription ?? ''}></help-content-element>`;
+    }
+    if (c.kind === 'peers') {
+      return html`<help-content-element .uri=${this.helpUris.presence ?? ''}></help-content-element>`;
     }
     if (c.kind === 'query') {
       const tabs: QueryInspectorTab[] = ['history', 'favorites', 'json', 'metrics', 'help'];

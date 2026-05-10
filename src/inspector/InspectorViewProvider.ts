@@ -50,9 +50,11 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     const helpDir = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview-ui', 'help');
     const subscriptionHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'subscription.html')).toString();
     const queryHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'query.html')).toString();
+    const presenceHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'presence.html')).toString();
     const pushHelpUris = () => {
       this.post({ type: 'inspector.helpHtml', kind: 'subscription', uri: subscriptionHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'query',        uri: queryHelpUri });
+      this.post({ type: 'inspector.helpHtml', kind: 'presence',     uri: presenceHelpUri });
     };
 
     this.disposables.push(
