@@ -93,6 +93,24 @@ This is the easiest way to spot issues like one device being a hub for
 all the others, or a connection silently downgrading from LAN to
 Bluetooth.
 
+> **About the "Direct Connected only" toggle**
+>
+> The toggle in the top-right of the graph defaults to **on** — only
+> peers that have at least one direct edge to this device are shown,
+> and only the spokes from this device are drawn. That's the readable
+> view, and it's what you want 95% of the time.
+>
+> **Turning it off shows the full mesh — every peer the SDK knows
+> about and every connection between every pair of them.** On a mesh
+> with more than a handful of peers, this gets messy fast: you'll see
+> a tangle of chord lines crossing each other. The layout engine does
+> its best (BFS rings, parent-anchored placement, outward-arc chords)
+> but there is no algorithm that can lay out a fully-connected mesh
+> nicely. **It's not meant to look pretty** — it's meant to surface
+> the underlying topology. Use this view to confirm "yes, there's a
+> path between any two devices" or to diagnose silent partitions, not
+> to take a screenshot for a slide deck.
+
 ### Local Network
 
 The **Local Network** section reports what transports your machine
