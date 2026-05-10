@@ -321,6 +321,34 @@ export class DittoManager {
     return (result.items as any[]).map(i => i.value as Record<string, unknown>);
   }
 
+  /**
+   * Register a live store observer for `query`. The callback fires every
+   * time the SDK detects a change to the result set — used by
+   * {@link CollectionsRepository} to keep `__collections` up to date when
+   * synced data introduces (or removes) a collection. Returns a cancel
+   * handle the caller is responsible for invoking on teardown.
+   *
+   * Mirrors `ditto.store.registerObserver(query, callback)` from the
+   * SwiftUI repository layer. Returns `null` if there is no active
+   * session — callers should treat that as "no live updates available"
+   * and fall back to manual refresh.
+   */
+  registerStoreObserver(
+    query: string,
+    callback: (rows: Record<string, unknown>[]) => void,
+  ): { cancel(): void } | null {
+    if (!this.session) { return null; }
+    const observer = (this.session.ditto.store as any).registerObserver(query, (result: any) => {
+      const rows = (result.items as any[]).map(i => i.value as Record<string, unknown>);
+      try { callback(rows); } catch (err) {
+        this.log.warn('Store observer callback threw', {
+          query, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+    return { cancel: () => { try { observer.cancel?.(); } catch { /* ignore */ } } };
+  }
+
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
    *
    *  Mirrors the SwiftUI `QueryService.executeSelectedAppQuery` pattern: run the
