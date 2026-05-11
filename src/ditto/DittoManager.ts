@@ -185,8 +185,8 @@ export class DittoManager {
         if ((result as any).error) { throw new Error(`Login failed: ${(result as any).error}`); }
       }
 
-      await ditto.store.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 12');
-      this.log.info('Set mesh_chooser_max_wlan_clients to 12 to improve amount of peers connectivity.');
+      await ditto.store.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 4');
+      this.log.info('Set mesh_chooser_max_wlan_clients to 4 to improve amount of peers connectivity.');
       ditto.sync.start();
 
       this.session = {
