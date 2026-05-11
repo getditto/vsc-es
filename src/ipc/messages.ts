@@ -175,7 +175,13 @@ export type QueryIn =
   // raw row JSON; the host derives the collection from the last-run
   // DQL and walks the user through the attachment dialog.
   | { type: 'query.addAttachment'; rowJson: string }
-  | { type: 'query.deleteAttachment'; rowJson: string };
+  | { type: 'query.deleteAttachment'; rowJson: string }
+  // User clicked Export — the webview has already JSON.stringify'd the
+  // FULL result set (not just the current page) into `json`. Host
+  // shows a save dialog and writes the file. `rowCount` is surfaced
+  // for the success message; deriving it from the string by re-parsing
+  // would defeat the point of the webview serialising once.
+  | { type: 'query.exportRows'; json: string; rowCount: number };
 
 export type QueryOut =
   | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: QueryResultMetadata }
@@ -185,7 +191,13 @@ export type QueryOut =
   // httpApiUrl and httpApiKey are configured. The webview hides the
   // dropdown entirely when only one mode is available.
   | { type: 'query.modeInit'; availableModes: QueryMode[] }
-  | { type: 'query.setText'; text: string };
+  | { type: 'query.setText'; text: string }
+  // Acknowledgements for `query.exportRows`. The webview uses these to
+  // clear its "Exporting…" indicator and (on error) surface the
+  // message inline rather than via a modal.
+  | { type: 'query.exportDone'; rowCount: number; path: string }
+  | { type: 'query.exportCancelled' }
+  | { type: 'query.exportError'; message: string };
 
 // ─── Query Metrics panel ───────────────────────────────────────
 /** A single record in the Query Metrics history. The shape is the

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'node:fs/promises';
 import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
@@ -263,6 +264,10 @@ export class QueryEditorPanel {
       await this.handleAttachmentAction(msg.rowJson, 'delete');
       return;
     }
+    if (msg.type === 'query.exportRows') {
+      await this.handleExport(msg.json, msg.rowCount);
+      return;
+    }
     if (msg.type === 'query.rowActivated') {
       // Double-click → flip the Inspector to JSON. setQueryTab is a
       // no-op when content.kind isn't 'query', but in practice the
@@ -389,6 +394,71 @@ export class QueryEditorPanel {
       });
       return '';
     }
+  }
+
+  /**
+   * Persist the webview-serialised JSON array to disk. The webview has
+   * already stringified the ENTIRE result set (not the visible page),
+   * so this handler is just: pick a path, write the bytes, ack.
+   *
+   * Why we don't re-validate the JSON: the webview built it from the
+   * in-memory rows that the same panel just produced. A round-trip
+   * through `JSON.parse` here would double the memory footprint on a
+   * 21k-row export for zero gain.
+   *
+   * Suggests a filename derived from the current query so a sequence of
+   * exports doesn't all land as `query_results.json`: `users.json` for
+   * `SELECT * FROM users`, `query_results.json` as the fallback when the
+   * collection can't be parsed out (joins, system queries, etc).
+   */
+  private async handleExport(json: string, rowCount: number): Promise<void> {
+    const log = this.logger.withTag('ext:QueryEditor');
+    const suggested = this.suggestedExportFilename();
+    const defaultPath = vscode.workspace.workspaceFolders?.[0]?.uri
+      ? vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, suggested)
+      : vscode.Uri.file(suggested);
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: defaultPath,
+      filters: { 'JSON files': ['json'] },
+      saveLabel: 'Export',
+    });
+    if (!target) {
+      this.post({ type: 'query.exportCancelled' });
+      return;
+    }
+    try {
+      await fs.writeFile(target.fsPath, json);
+      log.info('Query results exported', {
+        path: target.fsPath,
+        rowCount,
+        bytes: json.length,
+      });
+      this.post({ type: 'query.exportDone', rowCount, path: target.fsPath });
+      const fileName = target.fsPath.split(/[\\/]/).pop() ?? target.fsPath;
+      vscode.window.showInformationMessage(
+        `Exported ${rowCount.toLocaleString()} row${rowCount === 1 ? '' : 's'} to ${fileName}`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error('Query export failed', {
+        path: target.fsPath,
+        err: err instanceof Error ? err.stack ?? message : message,
+      });
+      this.post({ type: 'query.exportError', message });
+    }
+  }
+
+  /** Pull the collection from the last-run DQL (we already extract it
+   *  for attachment actions) and use it as the default filename. Falls
+   *  back to `query_results.json` when the query touches multiple
+   *  collections or none. Sanitises so the result is a portable
+   *  filename across platforms. */
+  private suggestedExportFilename(): string {
+    const collection = extractCollectionName(this.lastMetadata?.dql ?? '');
+    const base = collection && /^[A-Za-z0-9_\-]+$/.test(collection)
+      ? collection
+      : 'query_results';
+    return `${base}.json`;
   }
 
   /**

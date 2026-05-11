@@ -9,7 +9,10 @@ type In =
   | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: unknown }
   | { type: 'query.error'; message: string }
   | { type: 'query.setText'; text: string }
-  | { type: 'query.modeInit'; availableModes: QueryMode[] };
+  | { type: 'query.modeInit'; availableModes: QueryMode[] }
+  | { type: 'query.exportDone'; rowCount: number; path: string }
+  | { type: 'query.exportCancelled' }
+  | { type: 'query.exportError'; message: string };
 
 type View = 'table' | 'json';
 type RunState = 'idle' | 'running' | 'success' | 'error';
@@ -61,6 +64,10 @@ export class QueryEditor extends LitElement {
   // doesn't reach inside webviews; we render our own popover and route
   // selections through IPC). `null` means hidden.
   @state() private contextMenu: { x: number; y: number; rowAbsIndex: number } | null = null;
+  // Export-in-progress flag — keeps the button disabled and the label
+  // showing "Exporting…" between the click and the host's
+  // `query.exportDone`/`exportCancelled`/`exportError` response.
+  @state() private isExporting = false;
 
   static styles = css`
     :host {
@@ -299,6 +306,23 @@ export class QueryEditor extends LitElement {
       text-align: center;
       font-family: var(--vscode-editor-font-family);
     }
+    /* Export button shares the pagination footer with the page controls
+       so it lives near the row-count it acts on. Styled like the
+       primary "Run" button (button-background) to call attention to it
+       — exports are an explicit user action, not a navigation. */
+    .pagination button.export-btn {
+      padding: 2px 12px;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 2px;
+      cursor: pointer;
+      font: inherit;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .pagination button.export-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 
     .error-banner {
       padding: 12px;
@@ -393,6 +417,15 @@ export class QueryEditor extends LitElement {
         if (!this.availableModes.includes(this.mode)) {
           this.mode = this.availableModes[0];
         }
+      } else if (
+        msg.type === 'query.exportDone'
+        || msg.type === 'query.exportCancelled'
+        || msg.type === 'query.exportError'
+      ) {
+        // Three flavours of "export over" — clear the busy flag in all
+        // three. The success/error toasts are owned by the host so the
+        // webview doesn't render its own banner.
+        this.isExporting = false;
       }
     });
   }
@@ -530,6 +563,42 @@ export class QueryEditor extends LitElement {
   private starCurrent() {
     if (!this.query.trim()) { return; }
     postToHost({ type: 'query.starCurrent', query: this.query });
+  }
+
+  /**
+   * Serialise the ENTIRE in-memory result set (not just `pagedRows`) as
+   * a JSON array and ship it to the host. We pretty-print with 2-space
+   * indent so the resulting file is human-readable and survives a
+   * round-trip through the Import Data feature (which only requires a
+   * valid JSON array of objects with `_id` — pretty-printed is fine).
+   *
+   * Serialisation runs on the webview thread because `this.rows` lives
+   * here and shipping the full array across postMessage would cost an
+   * extra structured-clone hop. A 21k-row JSON.stringify can take
+   * 100-300 ms on commodity hardware — we set `isExporting = true`
+   * BEFORE stringify so the button repaints disabled first, then yield
+   * via a microtask so the repaint actually lands before we block.
+   */
+  private async exportRows(): Promise<void> {
+    if (this.isExporting || this.rows.length === 0) { return; }
+    this.isExporting = true;
+    // Microtask yield so the disabled-button repaint commits before the
+    // synchronous JSON.stringify steals the main thread.
+    await Promise.resolve();
+    let json: string;
+    try {
+      json = JSON.stringify(this.rows, null, 2);
+    } catch (err) {
+      // JSON.stringify only throws on cyclic refs — extremely unlikely
+      // for SDK rows but we don't want a freak result to wedge the
+      // button in "Exporting…" forever.
+      this.isExporting = false;
+      // Surface to the user via the same error banner the query error
+      // path uses, so they at least see *something*.
+      this.errorMessage = `Could not serialise results for export: ${err instanceof Error ? err.message : String(err)}`;
+      return;
+    }
+    postToHost({ type: 'query.exportRows', json, rowCount: this.rows.length });
   }
 
   private handleKeydown(e: KeyboardEvent) {
@@ -734,6 +803,14 @@ export class QueryEditor extends LitElement {
           @click=${() => this.gotoPage(this.currentPage + 1)}
           title="Next page"
         >›</button>
+        <button
+          class="export-btn"
+          ?disabled=${this.isExporting || this.rows.length === 0}
+          @click=${this.exportRows}
+          title="Export all ${this.rows.length.toLocaleString()} rows to a JSON file (compatible with the Import Data feature)"
+        >
+          ${this.isExporting ? 'Exporting…' : '⤓ Export'}
+        </button>
       </div>
     `;
   }
