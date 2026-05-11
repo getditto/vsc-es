@@ -12,6 +12,11 @@ type HelpNode =
   | { kind: 'action'; label: string; icon: string; command: string };
 
 const ITEMS: HelpNode[] = [
+  // Top of the list — the onboarding panel. Lives at the top because
+  // it's the most useful row for users who are still learning the
+  // extension, and lining it up next to "What's New" reads as
+  // "orientation material."
+  { kind: 'action', label: 'Welcome to Ditto',      icon: 'rocket',    command: 'dittoVsce.openWelcome' },
   { kind: 'link', label: "What's New",              icon: 'star',      url: 'https://docs.ditto.live/release-notes' },
   { kind: 'link', label: 'Extension Documentation', icon: 'book',      url: 'https://docs.ditto.live' },
   { kind: 'link', label: 'Ditto Documentation',     icon: 'book',      url: 'https://docs.ditto.live' },
