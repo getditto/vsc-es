@@ -181,7 +181,26 @@ export function activate(context: vscode.ExtensionContext) {
     context, inspectorController, historyStore, favoritesStore, manager, logger, metricsPrefs, attachmentCache,
   );
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(InspectorViewProvider.viewType, inspectorView),
+    // `retainContextWhenHidden: true` keeps the Inspector's webview
+    // process (and therefore all its UI state — selected tab, scroll
+    // position, parsed JSON in the viewer, in-flight attachment
+    // previews) alive when the user switches to a different view in
+    // the auxiliary bar (Claude Code, Chat, etc.) and back.
+    //
+    // Without this, VS Code disposes the webview on hide; the next
+    // reveal re-runs the bundle from scratch and the controller's
+    // `getContent()` is re-pushed — but the user perceives this as
+    // "the Inspector lost everything" because the tab state, scroll
+    // position, and ephemeral preview state are gone.
+    //
+    // The cost is memory (the webview process keeps running while
+    // hidden). For an auxiliary-bar inspector that's tiny relative
+    // to the UX win.
+    vscode.window.registerWebviewViewProvider(
+      InspectorViewProvider.viewType,
+      inspectorView,
+      { webviewOptions: { retainContextWhenHidden: true } },
+    ),
   );
 
   const treeProvider = new DatabaseTreeProvider(
