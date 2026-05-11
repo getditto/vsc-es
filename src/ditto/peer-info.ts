@@ -242,15 +242,15 @@ export function mergePeerList(
 function buildPresenceGraphView(
   presence: PresenceGraphLike,
 ): PeerListSnapshot['presenceGraph'] {
-  const remotePeers = presence.remotePeers.map(p => ({
-    peerKey: p.peerKey,
-    deviceName: p.deviceName,
-  }));
+  // Pass 1: collect deduped edges. The SDK emits A→B and B→A as
+  // separate Connection objects with the same type — pair-sorted +
+  // type key folds those into a single edge.
   const seen = new Set<string>();
   const connections: Array<{
     peer1: string; peer2: string;
     connectionType: ConnectionType;
   }> = [];
+  const peersInAnyEdge = new Set<string>();
   for (const peer of presence.remotePeers) {
     for (const c of peer.connections) {
       if (!c.peer1 || !c.peer2) { continue; }
@@ -259,8 +259,27 @@ function buildPresenceGraphView(
       if (seen.has(key)) { continue; }
       seen.add(key);
       connections.push({ peer1: c.peer1, peer2: c.peer2, connectionType: c.connectionType });
+      peersInAnyEdge.add(c.peer1);
+      peersInAnyEdge.add(c.peer2);
     }
   }
+
+  // Pass 2: only emit remote peers that participate in at least one
+  // edge of the graph. Without this filter, the unfiltered ("Direct
+  // Connected only" toggle = off) view shows orphan pills floating at
+  // the outermost ring whenever the SDK has discovered a peer over
+  // mDNS/BLE but hasn't (re)established a sync session — most
+  // commonly observed in the window right after `sync.stop()` →
+  // `sync.start()`, where transports stay alive across the toggle but
+  // sync sessions don't. Filtering on "appears in at least one edge"
+  // is preferred to dropping the peer if it has no `connections`
+  // array entries directly, because peer X might only be reachable
+  // via its appearance as peer2 in peer Y's connection list — we
+  // still want to draw X when Y advertises an edge to it.
+  const remotePeers = presence.remotePeers
+    .filter(p => peersInAnyEdge.has(p.peerKey))
+    .map(p => ({ peerKey: p.peerKey, deviceName: p.deviceName }));
+
   return { remotePeers, connections };
 }
 

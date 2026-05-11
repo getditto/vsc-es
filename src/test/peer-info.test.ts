@@ -114,6 +114,63 @@ test('mergePeerList: presenceGraph includes multi-hop peers that remote[] filter
   ]);
 });
 
+test('mergePeerList: presenceGraph drops orphan peers (discovered but no edges) — regression for sync stop/start', () => {
+  // Repro: after `ditto.sync.stop()` → `sync.start()`, the SDK
+  // temporarily keeps peers in the presence graph (mDNS/BLE
+  // discovery survives the toggle) but their `connections` arrays
+  // are empty (sync sessions haven't re-established). The
+  // unfiltered Presence Graph would render these as orphan pills
+  // floating at the outermost ring with no edges — perceived as a
+  // broken view.
+  //
+  // The filter keeps peers that appear in ANY edge in the graph
+  // (so a peer reachable only via someone else's connection list
+  // is still kept), and drops peers whose connections array is
+  // empty AND who aren't referenced by any other peer's edges.
+  const A = makePeer({
+    peerKey: 'A',
+    connections: [{ id: 'c-LA', connectionType: 'AccessPoint', peer1: LOCAL, peer2: 'A' }],
+  });
+  const orphan = makePeer({ peerKey: 'orphan', connections: [] });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [A, orphan] } as any,
+    new Map(),
+    null,
+    [],
+  );
+  // Direct list correctly excludes orphan (no edge to local).
+  assert.deepEqual(snapshot.remote.map(p => p.id), ['A']);
+  // Full graph also excludes the orphan — that's the new behaviour.
+  assert.ok(snapshot.presenceGraph);
+  assert.deepEqual(snapshot.presenceGraph!.remotePeers.map(p => p.peerKey), ['A']);
+});
+
+test('mergePeerList: presenceGraph keeps a peer that only appears as the OTHER endpoint of someone else\'s edge', () => {
+  // Topology: LOCAL ─ A ─ B, but B's own `connections` array is
+  // empty (the SDK only reports the edge from A's side). B should
+  // still appear in the unfiltered graph because A's connection
+  // list names it as `peer2` of an edge.
+  const A = makePeer({
+    peerKey: 'A',
+    connections: [
+      { id: 'c-LA', connectionType: 'AccessPoint', peer1: LOCAL, peer2: 'A' },
+      { id: 'c-AB', connectionType: 'AccessPoint', peer1: 'A',   peer2: 'B' },
+    ],
+  });
+  const B = makePeer({ peerKey: 'B', connections: [] });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [A, B] } as any,
+    new Map(),
+    null,
+    [],
+  );
+  assert.ok(snapshot.presenceGraph);
+  assert.deepEqual(
+    snapshot.presenceGraph!.remotePeers.map(p => p.peerKey).sort(),
+    ['A', 'B'],
+  );
+});
+
 test('mergePeerList: presenceGraph dedupes A→B and B→A of the same type', () => {
   // SDK emits both directions as separate Connection objects.
   // The full-graph view must keep them as a single edge.
