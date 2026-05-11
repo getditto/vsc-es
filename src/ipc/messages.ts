@@ -13,6 +13,21 @@ import type { QueryHistoryEntry } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoriteEntry } from '../storage/QueryFavoritesStore.js';
 import type { ImportableSubscription } from '../ditto/import-subscription-parser.js';
 
+// ─── Welcome / first-run onboarding panel ──────────────────────
+/** Webview → host. The welcome panel has two action buttons: a primary
+ *  "Register Database" that fans out to dittoVsce.registerDatabase, and
+ *  a soft "Close" that disposes the panel. */
+export type WelcomeIn =
+  | { type: 'welcome.registerDatabase' }
+  | { type: 'welcome.close' };
+
+/** Host → webview. The init payload tells the panel whether at least
+ *  one database is already configured — when it is, the panel hides
+ *  its "this is a guided first-run" framing and reads as a reference
+ *  card the user re-opened on purpose. */
+export type WelcomeOut =
+  | { type: 'welcome.init'; hasExistingDatabases: boolean };
+
 // ─── Database editor panel ─────────────────────────────────────
 export type EditorIn =
   | { type: 'editor.save'; config: StoredDittoConfig; secrets: SecretSet }

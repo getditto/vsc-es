@@ -15,6 +15,7 @@ import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { QueryMetricsPanel } from './panels/QueryMetricsPanel.js';
 import { DatabaseMetricsPanel } from './panels/DatabaseMetricsPanel.js';
 import { ImportDataPanel } from './panels/ImportDataPanel.js';
+import { WelcomePanel } from './panels/WelcomePanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
 import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
@@ -497,6 +498,9 @@ export function activate(context: vscode.ExtensionContext) {
       if (!databaseId) { return; }
       DatabaseMetricsPanel.show(context, configStore, manager, databaseId, inspectorController, logger);
     }),
+    vscode.commands.registerCommand('dittoVsce.openWelcome', () => {
+      WelcomePanel.show(context, configStore, logger);
+    }),
     vscode.commands.registerCommand('dittoVsce.openImportData', (databaseIdOrNode: any) => {
       // Two call sites converge here:
       //   1. The "Import Data" tree leaf — passes a plain string databaseId.
@@ -592,6 +596,27 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push({ dispose: () => manager.disconnect() });
   log.info('Ditto Edge Studio extension activated.');
+
+  // First-run / blank-slate onboarding. When the user has no database
+  // connections configured we open the Welcome panel automatically —
+  // it walks them through getting Portal credentials and dropping
+  // them straight into the Register dialog. Users can always re-open
+  // it via the "Ditto: Welcome" command or the tree-view title bar.
+  //
+  // Defer one tick so VS Code finishes the rest of activate before
+  // a webview spawns; doing this synchronously inside activate has
+  // (on rare hosts) shown up as "view container not ready yet" race
+  // warnings in the extension log.
+  if (configStore.list().length === 0) {
+    setTimeout(() => {
+      // Recheck — another extension command or migration could have
+      // added a connection in the interim. Cheap to check; cheaper
+      // than dismissing the panel right after it opens.
+      if (configStore.list().length === 0) {
+        WelcomePanel.show(context, configStore, logger);
+      }
+    }, 100);
+  }
 
   process.on('uncaughtException', (err) => {
     log.error('UNCAUGHT EXCEPTION', { stack: err.stack ?? err.message });

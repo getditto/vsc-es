@@ -34,6 +34,7 @@ const webviewCtx = await esbuild.context({
     queryMetrics: 'webview-ui/queryMetrics/main.ts',
     databaseMetrics: 'webview-ui/databaseMetrics/main.ts',
     importData: 'webview-ui/importData/main.ts',
+    welcome: 'webview-ui/welcome/main.ts',
   },
   bundle: true,
   outdir: 'dist/webview-ui',

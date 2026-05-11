@@ -54,6 +54,12 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "dittoDatabases",
+        "contents": "No Ditto connections yet.\n\nNew to Ditto? Take the guided tour to set up your first connection.\n[Open Welcome](command:dittoVsce.openWelcome)\n\nAlready have Portal credentials?\n[Register Connection…](command:dittoVsce.registerDatabase)"
+      }
+    ],
     "commands": [
       {
         "command": "dittoVsce.registerDatabase",
@@ -122,6 +128,11 @@
         "icon": "$(cloud-upload)"
       },
       {
+        "command": "dittoVsce.openWelcome",
+        "title": "Ditto: Welcome",
+        "icon": "$(question)"
+      },
+      {
         "command": "dittoVsce.setApplicationLogLevel",
         "title": "Ditto: Set Application Log Level"
       },
@@ -186,6 +197,16 @@
           "command": "dittoVsce.registerDatabase",
           "when": "view == dittoDatabases",
           "group": "navigation"
+        },
+        {
+          "command": "dittoVsce.openWelcome",
+          "when": "view == dittoDatabases",
+          "group": "navigation@9"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dittoVsce.openWelcome"
         }
       ],
       "view/item/context": [
