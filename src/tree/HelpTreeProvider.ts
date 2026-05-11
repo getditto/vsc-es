@@ -15,15 +15,22 @@ const ITEMS: HelpNode[] = [
   // Top of the list — the onboarding panel. Lives at the top because
   // it's the most useful row for users who are still learning the
   // extension, and lining it up next to "What's New" reads as
-  // "orientation material."
+  // "orientation material." The dedicated Welcome panel + the
+  // per-screen help that the Inspector renders is the extension's
+  // documentation, so there's no separate "Extension Documentation"
+  // row — Welcome is it.
   { kind: 'action', label: 'Welcome to Ditto',      icon: 'rocket',    command: 'dittoVsce.openWelcome' },
   { kind: 'link', label: "What's New",              icon: 'star',      url: 'https://docs.ditto.live/release-notes' },
-  { kind: 'link', label: 'Extension Documentation', icon: 'book',      url: 'https://docs.ditto.live' },
   { kind: 'link', label: 'Ditto Documentation',     icon: 'book',      url: 'https://docs.ditto.live' },
   { kind: 'link', label: 'Ditto Portal',            icon: 'cloud',     url: 'https://portal.ditto.live' },
   { kind: 'link', label: 'Quickstart Repos',        icon: 'package',   url: 'https://github.com/getditto/quickstart' },
-  { kind: 'link', label: 'Suggest a Feature',       icon: 'lightbulb', url: 'https://github.com/getditto/quickstart/issues/new' },
-  { kind: 'link', label: 'Report a Bug',            icon: 'bug',       url: 'https://github.com/getditto/quickstart/issues/new' },
+  // GitHub issue-form templates so the user lands directly in the
+  // right form. The `template=` query string param is matched against
+  // the filenames in .github/ISSUE_TEMPLATE/ on the repo. If a
+  // template is renamed or removed, the link still works — GitHub
+  // falls back to the issue chooser page.
+  { kind: 'link', label: 'Suggest a Feature',       icon: 'lightbulb', url: 'https://github.com/getditto/vsc-esc/issues/new?template=feature_request.yml' },
+  { kind: 'link', label: 'Report a Bug',            icon: 'bug',       url: 'https://github.com/getditto/vsc-esc/issues/new?template=bug_report.yml' },
   // In-extension action — re-enables every dismissable tip the user
   // has hidden. Sits with the help links because that's where users
   // look when they want to "make this thing show up again."

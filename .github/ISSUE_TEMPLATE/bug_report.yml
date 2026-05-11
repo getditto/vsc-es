@@ -1,0 +1,118 @@
+name: Bug Report
+description: Report something that isn't working in Ditto Edge Studio.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report — concrete details
+        save us a round trip and get fixes out faster.
+
+        **Before you submit**, please check that the bug isn't already
+        reported in the
+        [open issues](https://github.com/getditto/vsc-esc/issues).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, concise description of the bug.
+      placeholder: "When I do X, Y happens instead of Z."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: How can someone else trigger this?
+      placeholder: |
+        1. Open the Query Editor on connection "Local"
+        2. Run `SELECT * FROM users`
+        3. Click Export
+        4. Observe …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      placeholder: "I expected …"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      placeholder: "Instead, …"
+    validations:
+      required: true
+
+  - type: input
+    id: extension-version
+    attributes:
+      label: Ditto Edge Studio version
+      description: Find this on the extension's tile in the Extensions sidebar.
+      placeholder: "e.g. 0.0.1"
+    validations:
+      required: true
+
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code version
+      description: "Help → About (or Code → About on macOS)."
+      placeholder: "e.g. 1.97.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: How often does it happen?
+      options:
+        - Every time
+        - Often
+        - Sometimes
+        - Once
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: |
+        Extension logs are in the Output panel under the **Ditto** channel.
+        For a richer bundle, run **`Ditto: Export Logs for Bug Report…`** from
+        the command palette and attach the file here.
+
+        Drag-and-drop screenshots or GIFs directly into this field.
+      placeholder: "Paste log excerpts, drop images, or attach files."
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround
+      description: Did you find a way to work around the bug? (Optional)
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else worth mentioning — related issues, environment quirks, etc. (Optional)

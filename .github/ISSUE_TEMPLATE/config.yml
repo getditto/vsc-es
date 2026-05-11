@@ -1,0 +1,19 @@
+# Disables the "Open a blank issue" link on the issue-chooser page so
+# every report goes through one of our two forms. Users who really want
+# to ignore the templates can still file via API, which is fine — the
+# goal here is to make the obvious path the high-signal one.
+blank_issues_enabled: false
+
+# Extra rows shown alongside the form choices on the chooser page.
+# Keeps off-topic questions out of the issue tracker.
+contact_links:
+  - name: Ditto Documentation
+    url: https://docs.ditto.live
+    about: |
+      Looking for how-to guides, the DQL reference, or SDK docs?
+      The Ditto documentation site covers most usage questions.
+  - name: Ditto Community
+    url: https://portal.ditto.live
+    about: |
+      Questions about the Ditto product, Portal, or your account —
+      head to the Ditto Portal rather than filing an extension issue.
