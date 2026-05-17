@@ -9,7 +9,6 @@ scripts/**
 src/**
 webview-ui/**
 docs/**
-node_modules/**
 **/*.map
 **/*.ts
 tsconfig.json

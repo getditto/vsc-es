@@ -299,7 +299,7 @@
     "watch": "node esbuild.config.mjs --watch",
     "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/**/*.test.ts'",
     "vscode:prepublish": "npm run build",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package --target ${TARGET:?TARGET env var must be set, e.g. darwin-arm64}"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
