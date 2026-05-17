@@ -7,7 +7,7 @@
 3. Copy `.env.example` to `.env` and fill in your Ditto Cloud credentials:
    - `DITTO_DATABASE_ID` — your Database ID from https://portal.ditto.live
    - `DITTO_DEVELOPMENT_TOKEN` — Development Token
-   - `DITTO_URL` — auth endpoint URL
+   - `DITTO_URL` — your Ditto app URL from https://portal.ditto.live
    - `DITTO_WEBSOCKET_URL` — websocket endpoint URL
 4. Run `npm install`.
 5. Run `npm run build` (or `npm run watch` for auto-rebuild).
@@ -65,7 +65,7 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 **Steps:**
 1. Press `F5`.
 2. Click `＋` in the Connections view title bar.
-3. With Server selected, fill in `Name` = "test-cloud", `Database ID` = your real Ditto Database ID, `Token` = your Development Token, `URL` = your URL, `Websocket URL` = your websocket URL.
+3. With Server selected, fill in `Name` = "test-cloud", `Database ID` = your real Ditto Database ID, `Token` = your Development Token, `URL` = your app URL from the Portal, `Websocket URL` = your websocket URL.
 4. Click Save.
 
 **Expected:**

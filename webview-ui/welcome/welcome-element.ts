@@ -366,8 +366,8 @@ export class WelcomeElement extends LitElement {
               <p class="step-title">Sign up for the Ditto Portal</p>
               <p class="step-text">
                 The Portal is where you create Ditto apps and generate the
-                credentials this extension needs (a database ID, an auth
-                URL, and an offline-license token).
+                credentials this extension needs (a Database ID, a URL, and
+                a Development Token).
               </p>
               <a
                 class="step-link"
