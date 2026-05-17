@@ -45,6 +45,23 @@ const webviewCtx = await esbuild.context({
   logLevel: 'info'
 });
 
+const integrationCtx = await esbuild.context({
+  entryPoints: [
+    'src/test/integration/runTests.ts',
+    'src/test/integration/index.ts',
+    'src/test/integration/activation.test.ts',
+    'src/test/integration/e2e.test.ts',
+  ],
+  bundle: true,
+  outdir: 'dist/test/integration',
+  platform: 'node',
+  target: 'node22',
+  format: 'cjs',
+  external: ['vscode', 'mocha', '@vscode/test-electron', '@dittolive/ditto'],
+  sourcemap: true,
+  logLevel: 'info',
+});
+
 // Mark dist/ as CJS so Node's ESM loader doesn't reject the bundle
 // (root package.json is "type": "module", but the extension bundle is CJS).
 const distDir = path.join(__dirname, 'dist');
@@ -59,10 +76,10 @@ fs.copyFileSync(path.join(codiconSrc, 'codicon.css'), path.join(webviewUiDir, 'c
 fs.copyFileSync(path.join(codiconSrc, 'codicon.ttf'), path.join(webviewUiDir, 'codicon.ttf'));
 
 if (watch) {
-  await Promise.all([extensionCtx.watch(), webviewCtx.watch()]);
+  await Promise.all([extensionCtx.watch(), webviewCtx.watch(), integrationCtx.watch()]);
   console.log('[esbuild] watching…');
 } else {
-  await Promise.all([extensionCtx.rebuild(), webviewCtx.rebuild()]);
-  await Promise.all([extensionCtx.dispose(), webviewCtx.dispose()]);
+  await Promise.all([extensionCtx.rebuild(), webviewCtx.rebuild(), integrationCtx.rebuild()]);
+  await Promise.all([extensionCtx.dispose(), webviewCtx.dispose(), integrationCtx.dispose()]);
   console.log('[esbuild] build finished.');
 }
