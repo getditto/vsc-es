@@ -34,6 +34,8 @@ import { QueryFavoritesStore } from './storage/QueryFavoritesStore.js';
 import { QueryMetricsStore } from './storage/QueryMetricsStore.js';
 import { TreeExpansionStore } from './storage/TreeExpansionStore.js';
 import { MetricsPreferencesStore } from './storage/MetricsPreferencesStore.js';
+import type { TestApi } from './test-api/index.js';
+import { makeTestApi } from './test-api/index.js';
 
 let logger: Logger;
 
@@ -111,7 +113,7 @@ async function pickLogLevel(current: LogLevel, title: string): Promise<LogLevel 
   return picked?.label as LogLevel | undefined;
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext): TestApi | undefined {
   // Channel ownership: Logger.dispose() calls channelSink.dispose() which calls
   // channel.dispose(). Don't also push to context.subscriptions or it double-disposes.
   const channel = vscode.window.createOutputChannel('Ditto Edge Studio', { log: true });
@@ -624,6 +626,11 @@ export function activate(context: vscode.ExtensionContext) {
   process.on('unhandledRejection', (reason) => {
     log.error('UNHANDLED REJECTION', { reason: reason instanceof Error ? reason.stack : String(reason) });
   });
+
+  if (process.env.DITTO_CI_MODE === '1') {
+    return makeTestApi({ configStore, secretStore, manager });
+  }
+  return undefined;
 }
 
 export function deactivate() {
