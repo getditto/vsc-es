@@ -25,7 +25,7 @@
 - `src/test/integration/e2e.test.ts` — e2e-tier assertions
 - `src/test/test-api.test.ts` — unit tests for the test API factory
 - `docs/releases/TEMPLATE.md` — release notes copy-paste starter
-- `docs/releases/v0.1.0.md` — first release's notes
+- `docs/releases/v0.5.0.md` — first release's notes
 
 **Modified files:**
 - `package.json` — deps reclassification, scripts, engines, types
@@ -217,14 +217,14 @@ Expected: only `ditto.darwin-arm64.node`.
 - [ ] **Step 2: Build and package**
 
 Run: `npm run build && TARGET=darwin-arm64 npm run package`
-Expected: `ditto-vsce-darwin-arm64-0.0.1.vsix` is produced in repo root.
+Expected: `ditto-vsce-darwin-arm64-0.5.0.vsix` is produced in repo root.
 
 - [ ] **Step 3: Sanity-check the VSIX contents**
 
 Run:
 
 ```bash
-unzip -l ditto-vsce-darwin-arm64-0.0.1.vsix | grep "extension/node_modules/@dittolive/ditto/node/" | grep "\.node"
+unzip -l ditto-vsce-darwin-arm64-0.5.0.vsix | grep "extension/node_modules/@dittolive/ditto/node/" | grep "\.node"
 ```
 
 Expected: exactly **one** line, containing `ditto.darwin-arm64.node`. No other `.node` binaries.
@@ -1232,10 +1232,10 @@ git commit -m "docs(readme): add Installation guide for VS Code, Cursor, and Ant
 
 ## Phase 8 — First release
 
-### Task 20: Author the v0.1.0 release notes
+### Task 20: Author the v0.5.0 release notes
 
 **Files:**
-- Create: `docs/releases/v0.1.0.md`
+- Create: `docs/releases/v0.5.0.md`
 
 - [ ] **Step 1: Create the file**
 
@@ -1263,13 +1263,13 @@ Edit the **Changes** section to reflect the actual scope of work shipping in thi
 - [ ] **Step 2: Commit**
 
 ```bash
-git add docs/releases/v0.1.0.md
-git commit -m "docs(releases): add v0.1.0 release notes"
+git add docs/releases/v0.5.0.md
+git commit -m "docs(releases): add v0.5.0 release notes"
 ```
 
 ---
 
-### Task 21: Merge the branch to main and bump version to 0.1.0
+### Task 21: Merge the branch to main and confirm version is 0.5.0
 
 **Files:**
 - Modify: `package.json` (version field only)
@@ -1284,38 +1284,35 @@ gh pr create --title "feat: cross-platform build, validation, and release CI" \
 
 Review the PR, run the validate workflow at `depth=e2e` against the PR branch one final time, and merge to `main`.
 
-- [ ] **Step 2: After merge, on main, bump the version**
+- [ ] **Step 2: Confirm version is 0.5.0 on main**
 
 ```bash
 git checkout main
 git pull
+node -p "require('./package.json').version"
 ```
 
-Edit `package.json`:
+Expected: `0.5.0` (already bumped as part of Task 2's deps commit on the feature branch, carried in through the merge).
 
-```json
-"version": "0.1.0",
-```
-
-- [ ] **Step 3: Commit the version bump**
+If for some reason it isn't, edit `package.json` to set `"version": "0.5.0",` and commit:
 
 ```bash
-git add package.json package-lock.json
-git commit -m "chore(release): 0.1.0"
+git add package.json
+git commit -m "chore(release): 0.5.0"
 git push
 ```
 
 ---
 
-### Task 22: Tag v0.1.0 and observe the release flow
+### Task 22: Tag v0.5.0 and observe the release flow
 
 **Files:** none modified.
 
 - [ ] **Step 1: Tag and push**
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 - [ ] **Step 2: Watch the release workflow**
@@ -1328,10 +1325,10 @@ Expected: `verify` job passes; `matrix` runs all 4 platforms at `e2e` depth and 
 
 - [ ] **Step 3: Verify the release exists**
 
-Open <https://github.com/getditto/vsc-es/releases/tag/v0.1.0>. Expected:
-- Title: `v0.1.0`
-- Body: contents of `docs/releases/v0.1.0.md`
-- Assets: 4 `.vsix` files named `ditto-vsce-<target>-0.1.0.vsix`
+Open <https://github.com/getditto/vsc-es/releases/tag/v0.5.0>. Expected:
+- Title: `v0.5.0`
+- Body: contents of `docs/releases/v0.5.0.md`
+- Assets: 4 `.vsix` files named `ditto-vsce-<target>-0.5.0.vsix`
 - Not marked as pre-release
 
 - [ ] **Step 4: Install one VSIX in your local VS Code as a final smoke test**
@@ -1339,7 +1336,7 @@ Open <https://github.com/getditto/vsc-es/releases/tag/v0.1.0>. Expected:
 Download the `darwin-arm64` (or matching local platform) asset from the release page, then:
 
 ```bash
-code --install-extension ~/Downloads/ditto-vsce-darwin-arm64-0.1.0.vsix
+code --install-extension ~/Downloads/ditto-vsce-darwin-arm64-0.5.0.vsix
 ```
 
 Reload VS Code. Expected: the Ditto icon appears in the activity bar, the Welcome view renders, and you can register a connection against your dev app (separate from the CI one).
@@ -1353,11 +1350,11 @@ Reload VS Code. Expected: the Ditto icon appears in the activity bar, the Welcom
 **Release workflow's `verify` job fails (version mismatch or missing notes):**
 
 ```bash
-git tag -d v0.1.0
-git push --delete origin v0.1.0
+git tag -d v0.5.0
+git push --delete origin v0.5.0
 # fix the issue (bump package.json or create the notes file), commit, then re-tag
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 **Release workflow's `matrix` job fails on one platform:**
