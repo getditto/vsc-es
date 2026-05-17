@@ -107,7 +107,7 @@ export class DatabaseEditor extends LitElement {
 
       ${c.mode === 'server' ? html`
         <h2>Ditto Server (BigPeer) Information</h2>
-        <label>Auth URL</label>
+        <label>URL</label>
         <input type="text" .value=${c.authUrl} @input=${(e: Event) => this.update_('authUrl', (e.target as HTMLInputElement).value)} />
         <label>Websocket URL</label>
         <input type="text" .value=${c.websocketUrl} @input=${(e: Event) => this.update_('websocketUrl', (e.target as HTMLInputElement).value)} />
