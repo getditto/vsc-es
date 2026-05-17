@@ -27,6 +27,9 @@ This spec defines:
 - A **terminology rename pass** to bring user-facing strings, env-file keys,
   and docs in line with the Portal's current vocabulary
   (App ID → Database ID, Playground Token → Development Token, Auth URL → URL).
+- A **README installation guide** with step-by-step instructions for
+  installing the released `.vsix` in VS Code, Cursor, and Google Antigravity
+  — the three VS Code-family editors developers commonly use.
 
 ### 1.1 References
 
@@ -236,7 +239,7 @@ The factory reads env vars by their CI names
 (`DITTO_CI_DATABASE_ID`, `DITTO_CI_DEVELOPMENT_TOKEN`, `DITTO_CI_URL`,
 `DITTO_CI_WEBSOCKET_URL`) and synthesizes a `StoredDittoConfig` whose
 `authUrl` field is populated from `DITTO_CI_URL`. (Internal field name
-stays `authUrl` per decision D in section 8.)
+stays `authUrl` per decision D in section 9.)
 
 ## 5. Workflows
 
@@ -389,12 +392,14 @@ A one-time `docs/releases/TEMPLATE.md` is committed with the structure:
 - …
 
 ## Install
-Download the `.vsix` for your platform from Assets below, then in VS Code:
-Code → Settings → Extensions → "…" menu → Install from VSIX…
+See the [Installation guide](https://github.com/getditto/vsc-es#installation)
+in the README for step-by-step instructions covering VS Code, Cursor, and
+Google Antigravity. Asset files are attached below.
 ```
 
 The template is not used at workflow time — it's a copy-paste starter for
-humans.
+humans. The brief pointer-to-README pattern keeps install instructions in
+a single source of truth instead of duplicating them per release.
 
 ## 7. Secrets
 
@@ -417,7 +422,97 @@ message before any SDK call if any of the four are empty when
 Rotation: regenerate in Portal → `gh secret set <NAME> --repo
 getditto/vsc-es` → next workflow run picks up the new value.
 
-## 8. Terminology rename
+## 8. README installation guide
+
+The README gets a new top-level **Installation** section with a complete,
+self-contained walkthrough for installing the released `.vsix` in the
+three major VS Code-family editors developers actually use.
+
+### 8.1 Section structure
+
+1. **Pick your platform** — link to the latest GitHub Release with a table
+   mapping platform → asset filename.
+2. **Install in your editor** — three sub-sections (VS Code, Cursor,
+   Google Antigravity), each with both a UI path and a CLI path.
+3. **Reload and verify** — Command Palette → "Developer: Reload Window",
+   then confirm the Ditto icon appears in the activity bar.
+4. **Not supported** — explicit callout for `darwin-x64` (Intel Mac) and
+   `win32-arm64` (Windows on ARM) since the SDK doesn't ship binaries for
+   them.
+
+### 8.2 Content
+
+The README section reads roughly as:
+
+````markdown
+## Installation
+
+Download the `.vsix` for your platform from the latest GitHub Release:
+**<https://github.com/getditto/vsc-es/releases/latest>**
+
+| Platform              | Asset filename                        |
+| --------------------- | ------------------------------------- |
+| macOS (Apple silicon) | `ditto-vsce-darwin-arm64-<ver>.vsix`  |
+| Linux (x86_64)        | `ditto-vsce-linux-x64-<ver>.vsix`     |
+| Linux (ARM64)         | `ditto-vsce-linux-arm64-<ver>.vsix`   |
+| Windows (x86_64)      | `ditto-vsce-win32-x64-<ver>.vsix`     |
+
+Then install in your editor. All three editors share VS Code's extension
+format, so the steps are nearly identical — only the CLI binary name
+differs.
+
+### VS Code
+
+- **UI**: Extensions sidebar → `…` (More Actions) menu → **Install from
+  VSIX…** → pick the downloaded file.
+- **CLI**: `code --install-extension /path/to/ditto-vsce-<target>-<ver>.vsix`
+
+### Cursor
+
+- **UI**: Extensions sidebar → `…` (More Actions) menu → **Install from
+  VSIX…** → pick the downloaded file.
+- **CLI**: `cursor --install-extension /path/to/ditto-vsce-<target>-<ver>.vsix`
+
+### Google Antigravity
+
+- **UI**: Extensions sidebar → `…` (More Actions) menu → **Install from
+  VSIX…** → pick the downloaded file.
+- **CLI**: `antigravity --install-extension /path/to/ditto-vsce-<target>-<ver>.vsix`
+  *(verify exact binary name in your Antigravity install — older builds
+  may use a different CLI command)*
+
+### Reload and verify
+
+After installing, open the Command Palette (`Cmd+Shift+P` /
+`Ctrl+Shift+P`) and run **Developer: Reload Window**. The Ditto icon
+should appear in the activity bar.
+
+### Not supported
+
+- **Intel Mac (`darwin-x64`)** — the `@dittolive/ditto` SDK does not ship
+  a binary for this target.
+- **Windows on ARM (`win32-arm64`)** — same reason.
+````
+
+### 8.3 Verification during implementation
+
+The implementation plan includes a manual verification step on each
+editor (where available locally) confirming the **Install from VSIX…**
+menu path and CLI command are accurate at the time of v0.1.0. The
+Antigravity CLI binary name in particular should be confirmed against
+its current docs before the README ships — it's the youngest of the
+three editors and naming conventions may still be evolving.
+
+### 8.4 Cross-references
+
+- `README.md` — the new **Installation** section.
+- `docs/releases/TEMPLATE.md` — the brief Install snippet points back to
+  this section (section 6 of this spec).
+- The existing terminology rename pass (section 9) does NOT need to
+  touch the new Installation section — it's net-new content and uses
+  current vocabulary.
+
+## 9. Terminology rename
 
 The Ditto Portal renamed three concepts. Repo state as of this spec:
 
@@ -439,7 +534,7 @@ The Ditto Portal renamed three concepts. Repo state as of this spec:
 Out of scope: SDK call sites that already use the SDK's own `url` property
 name (`{ mode: 'server', url: config.authUrl }`) — that's the SDK's API.
 
-## 9. Acceptance criteria
+## 10. Acceptance criteria
 
 The plan is complete when:
 
@@ -465,8 +560,14 @@ The plan is complete when:
    the workflow at the verify step. No release is created.
 7. All four secrets remain unreferenced in any log output, regardless of
    workflow depth.
+8. The README contains an **Installation** section with UI + CLI
+   instructions for VS Code, Cursor, and Google Antigravity, a platform →
+   asset-filename table, a reload-and-verify step, and an explicit
+   "Not supported" callout for Intel Mac and Windows on ARM. A reviewer
+   following only the README can install the released `.vsix` in their
+   editor of choice without consulting other docs.
 
-## 10. Open follow-ups (out of scope for this spec)
+## 11. Open follow-ups (out of scope for this spec)
 
 - Pre-release tag pattern support (`v*-rc*`, `v*-beta*`).
 - Auto-generated "what's changed" addendum to release notes.
