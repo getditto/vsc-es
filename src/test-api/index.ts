@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import type { StoredDittoConfig, SecretSet } from '../models/DittoConfig.js';
 import { newConfig } from '../models/DittoConfig.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
@@ -71,16 +72,20 @@ export function makeTestApi(deps: {
     },
     async waitForPeerOrSyncStatus(timeoutMs) {
       return new Promise<void>((resolve, reject) => {
-        let sub: { dispose(): void } | undefined;
-        const timer = setTimeout(() => {
-          sub?.dispose();
-          reject(new Error(`No presence event within ${timeoutMs}ms`));
-        }, timeoutMs);
-        sub = deps.manager.onPresence(() => {
+        let presenceSub: vscode.Disposable | undefined;
+        let syncSub: vscode.Disposable | undefined;
+        const cleanup = () => {
           clearTimeout(timer);
-          sub?.dispose();
-          resolve();
-        });
+          presenceSub?.dispose();
+          syncSub?.dispose();
+        };
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`No presence or sync-status event within ${timeoutMs}ms`));
+        }, timeoutMs);
+        const settle = () => { cleanup(); resolve(); };
+        presenceSub = deps.manager.onPresence(settle);
+        syncSub = deps.manager.onSyncChange(settle);
       });
     },
   };

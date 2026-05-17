@@ -46,3 +46,15 @@ test('buildConfigFromEnv: throws when WEBSOCKET_URL missing', () => {
     /DITTO_CI_WEBSOCKET_URL/,
   );
 });
+
+test('buildConfigFromEnv: throws when DATABASE_ID is whitespace-only', () => {
+  assert.throws(
+    () => buildConfigFromEnv({
+      DITTO_CI_DATABASE_ID: '   ',
+      DITTO_CI_DEVELOPMENT_TOKEN: 't',
+      DITTO_CI_URL: 'u',
+      DITTO_CI_WEBSOCKET_URL: 'w',
+    }),
+    /DITTO_CI_DATABASE_ID/,
+  );
+});
