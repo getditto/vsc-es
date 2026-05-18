@@ -12,12 +12,6 @@ on:
       DITTO_CI_URL:                { required: false }
       DITTO_CI_WEBSOCKET_URL:      { required: false }
 
-# Opt JS-based actions (checkout, setup-node, upload/download-artifact) into
-# their Node 24 runtime ahead of GitHub's June 2026 forced cutover. Avoids
-# the Node 20 deprecation warning and matches our Node 22 LTS runtime stance.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   build:
     strategy:
@@ -34,9 +28,9 @@ jobs:
             runner: windows-2022
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -72,7 +66,7 @@ jobs:
           fi
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ditto-vsce-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ./*.vsix
