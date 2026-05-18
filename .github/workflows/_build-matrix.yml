@@ -1,0 +1,116 @@
+name: _build-matrix
+on:
+  workflow_call:
+    inputs:
+      depth:
+        description: 'Validation depth: package | load | e2e'
+        type: string
+        default: package
+    secrets:
+      DITTO_CI_DATABASE_ID:        { required: false }
+      DITTO_CI_DEVELOPMENT_TOKEN:  { required: false }
+      DITTO_CI_URL:                { required: false }
+      DITTO_CI_WEBSOCKET_URL:      { required: false }
+
+# Opt JS-based actions (checkout, setup-node, upload/download-artifact) into
+# their Node 24 runtime ahead of GitHub's June 2026 forced cutover. Avoids
+# the Node 20 deprecation warning and matches our Node 22 LTS runtime stance.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: win32-x64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Prune wrong-arch native binaries
+        shell: bash
+        run: |
+          cd node_modules/@dittolive/ditto/node
+          for f in ditto.*.node; do
+            [ "$f" = "ditto.${{ matrix.target }}.node" ] || rm -f "$f"
+          done
+          ls
+
+      - name: Package VSIX
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: npm run package
+
+      - name: Sanity-check VSIX contains exactly one native binary
+        shell: bash
+        run: |
+          COUNT=$(unzip -l ./*.vsix \
+            | awk '/extension\/node_modules\/@dittolive\/ditto\/node\/ditto\..*\.node$/{c++} END{print c+0}')
+          if [ "$COUNT" != "1" ]; then
+            echo "Expected 1 native binary in VSIX, got $COUNT"
+            unzip -l ./*.vsix | grep "\.node$" || true
+            exit 1
+          fi
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ditto-vsce-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ./*.vsix
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Install xvfb (Linux only)
+        if: runner.os == 'Linux' && (inputs.depth == 'load' || inputs.depth == 'e2e')
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Run load tests
+        if: inputs.depth == 'load' || inputs.depth == 'e2e'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run test:integration:load
+          else
+            npm run test:integration:load
+          fi
+
+      - name: Run e2e tests
+        if: inputs.depth == 'e2e'
+        shell: bash
+        env:
+          DITTO_CI_DATABASE_ID:        ${{ secrets.DITTO_CI_DATABASE_ID }}
+          DITTO_CI_DEVELOPMENT_TOKEN:  ${{ secrets.DITTO_CI_DEVELOPMENT_TOKEN }}
+          DITTO_CI_URL:                ${{ secrets.DITTO_CI_URL }}
+          DITTO_CI_WEBSOCKET_URL:      ${{ secrets.DITTO_CI_WEBSOCKET_URL }}
+          DITTO_CI_SITE_NAME: ci-${{ github.run_id }}-${{ matrix.target }}
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run test:integration:e2e
+          else
+            npm run test:integration:e2e
+          fi
+
+      - name: Append summary
+        if: always()
+        shell: bash
+        run: |
+          echo "- **${{ matrix.target }}** — depth: \`${{ inputs.depth }}\` — status: \`${{ job.status }}\` — artifact: \`ditto-vsce-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}\`" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,22 @@
+name: build-and-validate
+on:
+  workflow_dispatch:
+    inputs:
+      depth:
+        description: 'Validation depth'
+        type: choice
+        options: [package, load, e2e]
+        default: e2e
+
+# Opt JS actions into Node 24 ahead of GitHub's June 2026 forced cutover.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  matrix:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_build-matrix.yml
+    with:
+      depth: ${{ inputs.depth }}
+    secrets: inherit
