@@ -76,8 +76,8 @@ activity bar.
 ```sh
 npm install
 npm run build
-npm run package    # produces ditto-vsce-<version>.vsix
-code --install-extension ditto-vsce-<version>.vsix
+TARGET=darwin-arm64 npm run package    # produces ditto-vsce-darwin-arm64-<version>.vsix; substitute your platform (darwin-arm64, darwin-x64, linux-x64, linux-arm64, win32-x64)
+code --install-extension ditto-vsce-darwin-arm64-<version>.vsix
 ```
 
 ## Usage
