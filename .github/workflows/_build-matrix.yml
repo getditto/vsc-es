@@ -68,7 +68,7 @@ jobs:
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ditto-vsce-${{ matrix.target }}-${{ github.run_id }}
+          name: ditto-vsce-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ./*.vsix
           if-no-files-found: error
           retention-days: 30
@@ -107,4 +107,4 @@ jobs:
         if: always()
         shell: bash
         run: |
-          echo "| ${{ matrix.target }} | ${{ inputs.depth }} | ${{ job.status }} | ditto-vsce-${{ matrix.target }}-${{ github.run_id }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **${{ matrix.target }}** — depth: \`${{ inputs.depth }}\` — status: \`${{ job.status }}\` — artifact: \`ditto-vsce-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}\`" >> "$GITHUB_STEP_SUMMARY"
