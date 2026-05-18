@@ -20,7 +20,6 @@ const REQUIRED_ENV_KEYS = [
   'DITTO_CI_DATABASE_ID',
   'DITTO_CI_DEVELOPMENT_TOKEN',
   'DITTO_CI_URL',
-  'DITTO_CI_WEBSOCKET_URL',
 ] as const;
 
 type EnvShape = Partial<Record<string, string | undefined>>;
@@ -41,7 +40,6 @@ export function buildConfigFromEnv(env: EnvShape): {
     name: env.DITTO_CI_SITE_NAME ?? id,
     databaseId: env.DITTO_CI_DATABASE_ID!,
     authUrl: env.DITTO_CI_URL!,
-    websocketUrl: env.DITTO_CI_WEBSOCKET_URL!,
     mode: 'server',
   };
   return { config: cfg, secrets: { token: env.DITTO_CI_DEVELOPMENT_TOKEN! } };

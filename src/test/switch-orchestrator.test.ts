@@ -14,7 +14,6 @@ function makeConfig(id: string, name: string): StoredDittoConfig {
     databaseId: id,
     mode: 'server',
     authUrl: '',
-    websocketUrl: '',
     httpApiUrl: '',
     allowUntrustedCerts: false,
     logLevel: 'info',

@@ -19,7 +19,7 @@ without leaving VS Code.
   driven by `ditto.presence.observe` and the `__sync_status` system collection.
 - **Query Editor** — run ad-hoc DQL against the active database. Results in
   table or JSON view, with column union across heterogeneous documents.
-- **Two auth modes** — Server (Big Peer with URL / websocket URL) and
+- **Two auth modes** — Server (Big Peer with URL) and
   Small Peers Only (offline token + optional shared-secret key).
 
 ## Requirements

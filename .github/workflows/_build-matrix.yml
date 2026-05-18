@@ -10,7 +10,6 @@ on:
       DITTO_CI_DATABASE_ID:        { required: false }
       DITTO_CI_DEVELOPMENT_TOKEN:  { required: false }
       DITTO_CI_URL:                { required: false }
-      DITTO_CI_WEBSOCKET_URL:      { required: false }
 
 jobs:
   build:
@@ -94,7 +93,6 @@ jobs:
           DITTO_CI_DATABASE_ID:        ${{ secrets.DITTO_CI_DATABASE_ID }}
           DITTO_CI_DEVELOPMENT_TOKEN:  ${{ secrets.DITTO_CI_DEVELOPMENT_TOKEN }}
           DITTO_CI_URL:                ${{ secrets.DITTO_CI_URL }}
-          DITTO_CI_WEBSOCKET_URL:      ${{ secrets.DITTO_CI_WEBSOCKET_URL }}
           DITTO_CI_SITE_NAME: ci-${{ github.run_id }}-${{ matrix.target }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then

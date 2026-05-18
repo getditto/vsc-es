@@ -18,7 +18,6 @@ async function main() {
         DITTO_CI_DATABASE_ID: process.env.DITTO_CI_DATABASE_ID ?? '',
         DITTO_CI_DEVELOPMENT_TOKEN: process.env.DITTO_CI_DEVELOPMENT_TOKEN ?? '',
         DITTO_CI_URL: process.env.DITTO_CI_URL ?? '',
-        DITTO_CI_WEBSOCKET_URL: process.env.DITTO_CI_WEBSOCKET_URL ?? '',
         DITTO_CI_SITE_NAME: process.env.DITTO_CI_SITE_NAME ?? '',
         DITTO_CI_DEPTH: process.env.DITTO_CI_DEPTH ?? 'load',
       },

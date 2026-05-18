@@ -8,7 +8,7 @@ interface StoredDittoConfig {
   databaseId: string;
   mode: 'server' | 'smallPeersOnly';
   authUrl: string;
-  websocketUrl: string;
+  websocketUrl?: string;
   httpApiUrl: string;
   allowUntrustedCerts: boolean;
   logLevel: 'error' | 'warning' | 'info' | 'debug' | 'verbose';
@@ -109,8 +109,6 @@ export class DatabaseEditor extends LitElement {
         <h2>Ditto Server (BigPeer) Information</h2>
         <label>URL</label>
         <input type="text" .value=${c.authUrl} @input=${(e: Event) => this.update_('authUrl', (e.target as HTMLInputElement).value)} />
-        <label>Websocket URL</label>
-        <input type="text" .value=${c.websocketUrl} @input=${(e: Event) => this.update_('websocketUrl', (e.target as HTMLInputElement).value)} />
 
         <h2>Ditto Server — HTTP API (Optional)</h2>
         <label>HTTP API URL</label>

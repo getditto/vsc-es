@@ -382,8 +382,7 @@ export class WelcomeElement extends LitElement {
               <p class="step-text">
                 From the Portal, create an app. Its details page lists every
                 value you'll paste into the Register dialog: the Database ID,
-                the URL, the Websocket URL, the Development Token, and the
-                optional HTTP API key.
+                the URL, the Development Token, and the optional HTTP API key.
               </p>
               <a
                 class="step-link"

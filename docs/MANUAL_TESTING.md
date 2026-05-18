@@ -8,7 +8,6 @@
    - `DITTO_DATABASE_ID` — your Database ID from https://portal.ditto.live
    - `DITTO_DEVELOPMENT_TOKEN` — Development Token
    - `DITTO_URL` — your Ditto app URL from https://portal.ditto.live
-   - `DITTO_WEBSOCKET_URL` — websocket endpoint URL
 4. Run `npm install`.
 5. Run `npm run build` (or `npm run watch` for auto-rebuild).
 
@@ -65,7 +64,7 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 **Steps:**
 1. Press `F5`.
 2. Click `＋` in the Connections view title bar.
-3. With Server selected, fill in `Name` = "test-cloud", `Database ID` = your real Ditto Database ID, `Token` = your Development Token, `URL` = your app URL from the Portal, `Websocket URL` = your websocket URL.
+3. With Server selected, fill in `Name` = "test-cloud", `Database ID` = your real Ditto Database ID, `Token` = your Development Token, `URL` = your app URL from the Portal.
 4. Click Save.
 
 **Expected:**
@@ -82,7 +81,7 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 9. The row disappears.
 
 **Small Peers Only mode:**
-10. Repeat with Small Peers Only — confirm only the Optional Shared Secret Key section is visible (no Auth/Websocket URL fields).
+10. Repeat with Small Peers Only — confirm only the Optional Shared Secret Key section is visible (no URL field).
 
 ### T5 · Connect & disconnect
 
@@ -381,7 +380,7 @@ The `@dittolive/ditto` native binary couldn't load. Check:
 
 Open the Output panel. The error log shows the failing call. Common causes:
 - Invalid token (expired or wrong) — re-issue from https://portal.ditto.live.
-- Wrong URL or Websocket URL.
+- Wrong URL.
 - No network connectivity.
 
 ### Peer Listing shows "No sync status available"

@@ -15,7 +15,14 @@ export interface StoredDittoConfig {
   databaseId: string;
   mode: AuthMode;
   authUrl: string;
-  websocketUrl: string;
+  /**
+   * Legacy: Ditto Portal historically exposed an explicit Websocket URL,
+   * which we collected here. The Portal no longer provides it and the SDK
+   * derives sync endpoints from `authUrl`, so this field is unused for new
+   * connections. Kept optional so previously-stored configs read back
+   * cleanly without migration.
+   */
+  websocketUrl?: string;
   httpApiUrl: string;
   allowUntrustedCerts: boolean;
   logLevel: SdkLogLevel;
@@ -49,7 +56,6 @@ export function newConfig(): StoredDittoConfig {
     databaseId: '',
     mode: 'server',
     authUrl: '',
-    websocketUrl: '',
     httpApiUrl: '',
     allowUntrustedCerts: false,
     logLevel: 'info',
