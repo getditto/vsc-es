@@ -8,6 +8,10 @@ on:
         options: [package, load, e2e]
         default: e2e
 
+# Opt JS actions into Node 24 ahead of GitHub's June 2026 forced cutover.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   matrix:
     permissions:
