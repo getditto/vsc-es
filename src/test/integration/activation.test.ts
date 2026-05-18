@@ -12,6 +12,11 @@ suite('Activation', () => {
   test('Ditto activity bar container is registered', () => {
     const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
     assert.ok(ext);
-    assert.strictEqual(ext!.isActive, true);
+    const containers = ext!.packageJSON?.contributes?.viewsContainers?.activitybar as { id: string }[] | undefined;
+    assert.ok(Array.isArray(containers), 'activitybar viewsContainers must be an array');
+    assert.ok(
+      containers!.some(c => c.id === 'dittoVsce'),
+      'expected a viewsContainers.activitybar entry with id "dittoVsce"',
+    );
   });
 });

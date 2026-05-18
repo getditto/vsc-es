@@ -9,9 +9,9 @@ suite('E2E sync', function () {
 
   suiteSetup(async function () {
     if (process.env.DITTO_CI_MODE !== '1') { this.skip(); }
-    const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
+    const ext = vscode.extensions.getExtension<TestApi | undefined>('ditto.ditto-vsce');
     assert.ok(ext);
-    api = await ext!.activate() as TestApi | undefined;
+    api = await ext.activate();
     assert.ok(api, 'extension did not return TestApi when DITTO_CI_MODE=1');
   });
 
@@ -21,7 +21,7 @@ suite('E2E sync', function () {
     }
   });
 
-  test('connects to CI app and observes presence within 30s', async () => {
+  test('connects to CI app and observes presence or sync activity within 30s', async () => {
     assert.ok(api);
     const id = await api!.registerFromEnv();
     await api!.connect(id);
