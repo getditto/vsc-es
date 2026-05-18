@@ -114,7 +114,7 @@ function validate(config: StoredDittoConfig, secrets: SecretSet): string | null 
   if (!config.name.trim()) { return 'Name is required.'; }
   if (!config.databaseId.trim()) { return 'Database ID is required.'; }
   if (!secrets.token.trim()) { return 'Token is required.'; }
-  if (config.mode === 'server' && !config.authUrl.trim()) { return 'Auth URL is required for Server mode.'; }
+  if (config.mode === 'server' && !config.authUrl.trim()) { return 'URL is required for Server mode.'; }
   if (config.mode === 'server' && !config.websocketUrl.trim()) { return 'Websocket URL is required for Server mode.'; }
   return null;
 }

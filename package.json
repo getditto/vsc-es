@@ -2,11 +2,15 @@
   "name": "ditto-vsce",
   "displayName": "Ditto Edge Studio",
   "description": "Debug and inspect Ditto databases from VS Code.",
-  "version": "0.0.1",
+  "version": "0.5.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/getditto/vsc-es.git"
+  },
   "engines": {
     "vscode": "^1.95.0",
-    "node": ">=20"
+    "node": ">=22"
   },
   "type": "module",
   "main": "./dist/extension.js",
@@ -296,28 +300,35 @@
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "build:integration": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/**/*.test.ts'",
+    "test:integration:load": "DITTO_CI_DEPTH=load node dist/test/integration/runTests.js",
+    "test:integration:e2e": "DITTO_CI_DEPTH=e2e DITTO_CI_MODE=1 node dist/test/integration/runTests.js",
     "vscode:prepublish": "npm run build",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package --target ${TARGET:?TARGET env var must be set, e.g. darwin-arm64}"
   },
   "devDependencies": {
-    "@types/node": "^20.14.10",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.42.1",
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
     "@types/vscode": "^1.95.0",
     "@vscode/codicons": "^0.0.45",
+    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.1",
+    "codemirror": "^6.0.2",
     "esbuild": "^0.23.0",
+    "glob": "^13.0.6",
+    "lit": "^3.3.2",
     "markdown-it": "^14.1.1",
+    "mocha": "^11.7.5",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3"
   },
   "dependencies": {
-    "@codemirror/lang-json": "^6.0.2",
-    "@codemirror/state": "^6.6.0",
-    "@codemirror/view": "^6.42.1",
-    "@dittolive/ditto": "^5.0.0",
-    "codemirror": "^6.0.2",
-    "dotenv": "^16.6.1",
-    "lit": "^3.3.2"
+    "@dittolive/ditto": "^5.0.0"
   }
 }

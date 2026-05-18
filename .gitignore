@@ -5,3 +5,4 @@ dist/
 .DS_Store
 *.vsix
 docs/superpowers/
+.vscode-test/

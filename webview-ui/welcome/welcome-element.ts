@@ -366,8 +366,8 @@ export class WelcomeElement extends LitElement {
               <p class="step-title">Sign up for the Ditto Portal</p>
               <p class="step-text">
                 The Portal is where you create Ditto apps and generate the
-                credentials this extension needs (a database ID, an auth
-                URL, and an offline-license token).
+                credentials this extension needs (a Database ID, a URL, and
+                a Development Token).
               </p>
               <a
                 class="step-link"
@@ -381,9 +381,9 @@ export class WelcomeElement extends LitElement {
               <p class="step-title">Create a new app</p>
               <p class="step-text">
                 From the Portal, create an app. Its details page lists every
-                value you'll paste into the Register dialog: the App ID
-                (used as the Database ID), the Auth URL, the Websocket URL,
-                the playground token, and the optional HTTP API key.
+                value you'll paste into the Register dialog: the Database ID,
+                the URL, the Websocket URL, the Development Token, and the
+                optional HTTP API key.
               </p>
               <a
                 class="step-link"

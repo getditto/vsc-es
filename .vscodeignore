@@ -3,13 +3,14 @@
 .git/**
 .github/**
 .vscode/**
+.vscode-test/**
 .claude/**
 prompts/**
 scripts/**
 src/**
 webview-ui/**
 docs/**
-node_modules/**
+dist/test/**
 **/*.map
 **/*.ts
 tsconfig.json

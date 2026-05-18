@@ -5,9 +5,9 @@
 1. Install Node ≥ 20 and VS Code ≥ 1.95.
 2. Clone or open this repo at `/Users/labeaaa/Developer/ditto-vsc-es`.
 3. Copy `.env.example` to `.env` and fill in your Ditto Cloud credentials:
-   - `DITTO_APP_ID` — your app ID from https://portal.ditto.live
-   - `DITTO_PLAYGROUND_TOKEN` — playground token
-   - `DITTO_AUTH_URL` — auth endpoint URL
+   - `DITTO_DATABASE_ID` — your Database ID from https://portal.ditto.live
+   - `DITTO_DEVELOPMENT_TOKEN` — Development Token
+   - `DITTO_URL` — your Ditto app URL from https://portal.ditto.live
    - `DITTO_WEBSOCKET_URL` — websocket endpoint URL
 4. Run `npm install`.
 5. Run `npm run build` (or `npm run watch` for auto-rebuild).
@@ -65,7 +65,7 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 **Steps:**
 1. Press `F5`.
 2. Click `＋` in the Connections view title bar.
-3. With Server selected, fill in `Name` = "test-cloud", `Database ID` = your real Ditto app ID, `Token` = your playground token, `Auth URL` = your auth URL, `Websocket URL` = your websocket URL.
+3. With Server selected, fill in `Name` = "test-cloud", `Database ID` = your real Ditto Database ID, `Token` = your Development Token, `URL` = your app URL from the Portal, `Websocket URL` = your websocket URL.
 4. Click Save.
 
 **Expected:**
@@ -381,7 +381,7 @@ The `@dittolive/ditto` native binary couldn't load. Check:
 
 Open the Output panel. The error log shows the failing call. Common causes:
 - Invalid token (expired or wrong) — re-issue from https://portal.ditto.live.
-- Wrong Auth URL or Websocket URL.
+- Wrong URL or Websocket URL.
 - No network connectivity.
 
 ### Peer Listing shows "No sync status available"
