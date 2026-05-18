@@ -1,0 +1,70 @@
+name: release
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG"
+            exit 1
+          fi
+
+      - name: Verify release notes file exists
+        shell: bash
+        run: |
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "Release notes missing: $NOTES"
+            echo "Create the file (see docs/releases/TEMPLATE.md) and re-tag."
+            exit 1
+          fi
+
+  matrix:
+    needs: verify
+    uses: ./.github/workflows/_build-matrix.yml
+    with:
+      depth: e2e
+    secrets: inherit
+
+  release:
+    needs: matrix
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all VSIX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ditto-vsce-*
+          path: artifacts
+
+      - name: Flatten artifacts into a single dir
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find artifacts -name '*.vsix' -exec mv {} release-assets/ \;
+          ls release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: docs/releases/${{ github.ref_name }}.md
+          files: release-assets/*.vsix
+          fail_on_unmatched_files: true
+          prerelease: false
