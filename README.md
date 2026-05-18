@@ -29,7 +29,49 @@ without leaving VS Code.
 - A Ditto account at [portal.ditto.live](https://portal.ditto.live) for
   credentials
 
-## Install (from VSIX)
+## Installation
+
+Download the `.vsix` for your platform from the latest GitHub Release:
+**<https://github.com/getditto/vsc-es/releases/latest>**
+
+| Platform              | Asset filename                        |
+| --------------------- | ------------------------------------- |
+| macOS (Apple silicon) | `ditto-vsce-darwin-arm64-<ver>.vsix`  |
+| Linux (x86_64)        | `ditto-vsce-linux-x64-<ver>.vsix`     |
+| Linux (ARM64)         | `ditto-vsce-linux-arm64-<ver>.vsix`   |
+| Windows (x86_64)      | `ditto-vsce-win32-x64-<ver>.vsix`     |
+
+All three editors share VS Code's extension format, so the steps are nearly
+identical — only the CLI binary name differs.
+
+### VS Code
+
+- **UI**: Extensions sidebar → `…` (More Actions) menu → **Install from VSIX…** → pick the downloaded file.
+- **CLI**: `code --install-extension /path/to/ditto-vsce-<target>-<ver>.vsix`
+
+### Cursor
+
+- **UI**: Extensions sidebar → `…` (More Actions) menu → **Install from VSIX…** → pick the downloaded file.
+- **CLI**: `cursor --install-extension /path/to/ditto-vsce-<target>-<ver>.vsix`
+
+### Google Antigravity
+
+- **UI**: Extensions sidebar → `…` (More Actions) menu → **Install from VSIX…** → pick the downloaded file.
+- **CLI**: `agy --install-extension /path/to/ditto-vsce-<target>-<ver>.vsix`
+  *(verify exact binary name against your Antigravity install — some Linux builds install as `antigravity` instead; see the [Antigravity docs](https://antigravity.google/docs/command) for the latest)*
+
+### Reload and verify
+
+After installing, open the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+and run **Developer: Reload Window**. The Ditto icon should appear in the
+activity bar.
+
+### Not supported
+
+- **Intel Mac (`darwin-x64`)** — the `@dittolive/ditto` SDK does not ship a binary for this target.
+- **Windows on ARM (`win32-arm64`)** — same reason.
+
+## Build from source
 
 ```sh
 npm install
