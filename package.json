@@ -138,6 +138,11 @@
         "icon": "$(question)"
       },
       {
+        "command": "dittoVsce.getQuickstarts",
+        "title": "Ditto: Get Quickstarts…",
+        "category": "Ditto"
+      },
+      {
         "command": "dittoVsce.setApplicationLogLevel",
         "title": "Ditto: Set Application Log Level"
       },

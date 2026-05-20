@@ -36,6 +36,9 @@ import { TreeExpansionStore } from './storage/TreeExpansionStore.js';
 import { MetricsPreferencesStore } from './storage/MetricsPreferencesStore.js';
 import type { TestApi } from './test-api/index.js';
 import { makeTestApi } from './test-api/index.js';
+import { QuickstartService, createNodeGitRunner } from './quickstart/QuickstartService.js';
+import type { EnvValues, CloneMode } from './quickstart/QuickstartService.js';
+import { QUICKSTART_FOLDER_NAME } from './quickstart/quickstart-projects.js';
 
 let logger: Logger;
 
@@ -502,6 +505,140 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     }),
     vscode.commands.registerCommand('dittoVsce.openWelcome', () => {
       WelcomePanel.show(context, configStore, logger);
+    }),
+    vscode.commands.registerCommand('dittoVsce.getQuickstarts', async () => {
+      const qsLog = logger.withTag('ext:quickstart');
+      const service = new QuickstartService(qsLog, createNodeGitRunner());
+
+      // The Logger interface has no show() method; surface the output channel
+      // via the existing dittoVsce.openOutputChannel command instead.
+      const showLog = () => vscode.commands.executeCommand('dittoVsce.openOutputChannel');
+
+      // 1. Pre-flight: git on PATH?
+      if (!(await service.isGitAvailable())) {
+        const pick = await vscode.window.showErrorMessage(
+          'Git is required for Get Quickstarts. Install git and try again.',
+          'Open install docs',
+        );
+        if (pick === 'Open install docs') {
+          vscode.env.openExternal(vscode.Uri.parse('https://git-scm.com/downloads'));
+        }
+        return;
+      }
+
+      // 2. Snapshot active connection values (or null for code-only).
+      const activeId = manager.getActiveConfigId();
+      let values: EnvValues | null = null;
+      if (activeId) {
+        const cfg = configStore.get(activeId);
+        const sec = await secretStore.read(activeId);
+        if (cfg) {
+          values = {
+            databaseId: cfg.databaseId,
+            token: sec.token,
+            authUrl: cfg.authUrl,
+            websocketUrl: cfg.websocketUrl ?? '',
+          };
+        }
+      }
+      if (!values) {
+        const pick = await vscode.window.showWarningMessage(
+          'No active connection — .env files will not be configured. Continue with code-only download?',
+          { modal: true },
+          'Continue',
+        );
+        if (pick !== 'Continue') { return; }
+      }
+
+      // 3. Parent folder picker.
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        openLabel: 'Select parent folder for quickstart',
+      });
+      if (!picked || picked.length === 0) { return; }
+      const parentDir = picked[0].fsPath;
+      const targetDir = path.join(parentDir, QUICKSTART_FOLDER_NAME);
+
+      // 4. Inspect target, prompt if needed.
+      const inspection = await service.inspectTarget(targetDir);
+      let mode: CloneMode = 'fresh-clone';
+      if (inspection.kind === 'git-checkout') {
+        const pick = await vscode.window.showInformationMessage(
+          `A quickstart checkout already exists at ${targetDir}.`,
+          { modal: true },
+          'Pull latest', 'Replace',
+        );
+        if (pick === 'Pull latest') { mode = 'pull-existing'; }
+        else if (pick === 'Replace') { mode = 'replace-and-clone'; }
+        else { return; }
+      } else if (inspection.kind === 'non-git-folder') {
+        const pick = await vscode.window.showWarningMessage(
+          `A non-git folder named 'quickstart' exists at ${targetDir}. Replace it?`,
+          { modal: true },
+          'Replace',
+        );
+        if (pick !== 'Replace') { return; }
+        mode = 'replace-and-clone';
+      }
+
+      // 5. Progress notification + the actual work.
+      try {
+        const result = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'Setting up Quickstarts', cancellable: true },
+          async (progress, token) => {
+            const ac = new AbortController();
+            token.onCancellationRequested(() => ac.abort());
+
+            progress.report({ message: mode === 'pull-existing' ? 'Updating clone…' : 'Cloning…' });
+            const { repoRoot } = await service.cloneOrPull(
+              parentDir,
+              mode,
+              (m) => progress.report({ message: m }),
+              ac.signal,
+            );
+
+            if (values) {
+              progress.report({ message: 'Writing .env files…' });
+              const envResults = service.writeEnvFiles(repoRoot, values);
+              progress.report({ message: 'Writing edge-server config…' });
+              const yamlResult = service.writeEdgeServerYaml(repoRoot, {
+                databaseId: values.databaseId,
+                token: values.token,
+                authUrl: values.authUrl,
+              });
+              return { repoRoot, envResults, yamlResult };
+            }
+            return { repoRoot, envResults: [], yamlResult: null };
+          },
+        );
+
+        // 6. Success notification with summary.
+        const writtenCount = result.envResults.filter((r) => r.outcome === 'written').length
+          + (result.yamlResult?.outcome === 'written' ? 1 : 0);
+        const msg = values
+          ? `Quickstarts ready at ${result.repoRoot}. Configured ${writtenCount} config file(s).`
+          : `Quickstarts cloned at ${result.repoRoot}. Open a connection and re-run to configure .env files.`;
+        const pick = await vscode.window.showInformationMessage(msg, 'Open Folder', 'Show Log');
+        if (pick === 'Open Folder') {
+          await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(result.repoRoot));
+        } else if (pick === 'Show Log') {
+          await showLog();
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        qsLog.error('Get Quickstarts failed', { err: errMsg });
+        // Clean up partial fresh/replace clone on failure (best effort).
+        if (mode !== 'pull-existing') {
+          try {
+            const { rmSync } = await import('node:fs');
+            rmSync(targetDir, { recursive: true, force: true });
+          } catch { /* ignore cleanup failures */ }
+        }
+        const pickErr = await vscode.window.showErrorMessage(`Get Quickstarts failed: ${errMsg}`, 'Show Log');
+        if (pickErr === 'Show Log') { await showLog(); }
+      }
     }),
     vscode.commands.registerCommand('dittoVsce.openImportData', (databaseIdOrNode: any) => {
       // Two call sites converge here:
