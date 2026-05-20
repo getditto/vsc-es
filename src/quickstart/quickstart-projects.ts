@@ -33,7 +33,7 @@ export const ENV_DESTINATIONS: readonly string[] = [
 export const EDGE_SERVER_RELATIVE_DIR = 'edge-server';
 export const EDGE_SERVER_YAML_NAME = 'quickstart_config.yaml';
 
-/** Hard-coded project list, sorted by displayName for deterministic UI. */
+/** Hard-coded project list, sorted by directoryName for deterministic UI. */
 export const QUICKSTART_PROJECTS: readonly QuickstartProject[] = [
   { directoryName: 'android-java',          displayName: 'Android Java' },
   { directoryName: 'android-kotlin',        displayName: 'Android Kotlin' },
