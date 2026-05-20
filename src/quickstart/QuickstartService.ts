@@ -274,17 +274,24 @@ export function createNodeGitRunner(): GitRunner {
     },
     run(args, cwd, onStderr, signal): Promise<number> {
       return new Promise((resolve, reject) => {
-        const child = spawn('git', args, {
-          cwd: cwd ?? undefined,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          signal,
-        });
-        child.stderr?.on('data', (b) => onStderr(b.toString('utf-8')));
-        child.on('error', (err) => {
-          // AbortError surfaces here when the signal is fired.
+        try {
+          const child = spawn('git', args, {
+            cwd: cwd ?? undefined,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            signal,
+          });
+          child.stderr?.on('data', (b) => onStderr(b.toString('utf-8')));
+          child.on('error', (err) => {
+            // AbortError surfaces here when the signal is fired.
+            reject(err);
+          });
+          child.on('close', (code) => resolve(code ?? -1));
+        } catch (err) {
+          // spawn() itself can throw synchronously on invalid args (bad cwd,
+          // malformed signal, etc.). Without this guard the Promise would
+          // leak pending forever.
           reject(err);
-        });
-        child.on('close', (code) => resolve(code ?? -1));
+        }
       });
     },
   };
