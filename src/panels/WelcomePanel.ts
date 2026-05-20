@@ -138,6 +138,11 @@ export class WelcomePanel {
         // responsible for actually opening the editor.
         await vscode.commands.executeCommand('dittoVsce.registerDatabase');
         return;
+      case 'welcome.getQuickstarts':
+        // Fan out to the quickstarts command — keeps the entry point
+        // single-sourced with the Help-menu tree entry.
+        await vscode.commands.executeCommand('dittoVsce.getQuickstarts');
+        return;
       case 'welcome.close':
         this.panel.dispose();
         return;
