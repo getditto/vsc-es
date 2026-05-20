@@ -1,7 +1,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Logger } from '../logging/types.js';
-import { ENV_DESTINATIONS, EDGE_SERVER_RELATIVE_DIR, EDGE_SERVER_YAML_NAME } from './quickstart-projects.js';
+import {
+  ENV_DESTINATIONS,
+  EDGE_SERVER_RELATIVE_DIR,
+  EDGE_SERVER_YAML_NAME,
+  QUICKSTART_REPO_URL,
+  QUICKSTART_FOLDER_NAME,
+} from './quickstart-projects.js';
 
 /** Values written to each .env file. */
 export interface EnvValues {
@@ -129,6 +135,58 @@ export class QuickstartService {
       });
       return false;
     }
+  }
+
+  async cloneOrPull(
+    parentDir: string,
+    mode: CloneMode,
+    onProgress: (message: string) => void,
+    signal: AbortSignal,
+  ): Promise<{ repoRoot: string }> {
+    const repoRoot = path.join(parentDir, QUICKSTART_FOLDER_NAME);
+    const onStderr = (chunk: string) => {
+      // Git progress arrives on stderr (e.g. "Receiving objects: 12% …").
+      // Forward the last non-empty line as a status string.
+      const last = chunk.split(/\r?\n/).filter((l) => l.trim().length > 0).pop();
+      if (last) { onProgress(last.trim()); }
+    };
+
+    if (mode === 'fresh-clone') {
+      const exit = await this.git.run(
+        ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME],
+        parentDir,
+        onStderr,
+        signal,
+      );
+      if (exit !== 0) { throw new Error(`git clone failed with exit ${exit}`); }
+      return { repoRoot };
+    }
+
+    if (mode === 'pull-existing') {
+      const exit = await this.git.run(['pull', '--ff-only'], repoRoot, onStderr, signal);
+      if (exit !== 0) {
+        throw new Error(
+          `git pull failed with exit ${exit}. The local checkout may be dirty or diverged — ` +
+          `choose Replace from the prompt next time to reset.`,
+        );
+      }
+      return { repoRoot };
+    }
+
+    if (mode === 'replace-and-clone') {
+      onProgress('Removing existing folder…');
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+      const exit = await this.git.run(
+        ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME],
+        parentDir,
+        onStderr,
+        signal,
+      );
+      if (exit !== 0) { throw new Error(`git clone failed with exit ${exit}`); }
+      return { repoRoot };
+    }
+
+    throw new Error(`cloneOrPull mode not implemented: ${String(mode)}`);
   }
 
   private writeOne(repoRoot: string, relativePath: string, content: string): WriteResult {

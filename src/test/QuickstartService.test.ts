@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { QuickstartService } from '../quickstart/QuickstartService.js';
 import type { GitRunner } from '../quickstart/QuickstartService.js';
+import { QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME } from '../quickstart/quickstart-projects.js';
 import type { Logger, LogLevel } from '../logging/types.js';
 
 function makeStubLogger(): Logger {
@@ -223,4 +224,92 @@ test('isGitAvailable — returns false when GitRunner.version throws', async () 
   };
   const svc = new QuickstartService(makeStubLogger(), gitStub);
   assert.equal(await svc.isGitAvailable(), false);
+});
+
+interface RecordedCall {
+  args: string[];
+  cwd: string | null;
+}
+
+function recordingGit(exitCode = 0): { git: GitRunner; calls: RecordedCall[] } {
+  const calls: RecordedCall[] = [];
+  const git: GitRunner = {
+    version: async () => 'git version 2.45.0',
+    run: async (args, cwd) => {
+      calls.push({ args, cwd });
+      return exitCode;
+    },
+  };
+  return { git, calls };
+}
+
+test('cloneOrPull fresh-clone runs `git clone` into the parent dir', async () => {
+  const parent = tmpdir('qs-clone-');
+  try {
+    const { git, calls } = recordingGit(0);
+    const svc = new QuickstartService(makeStubLogger(), git);
+    const ac = new AbortController();
+    const result = await svc.cloneOrPull(parent, 'fresh-clone', () => {}, ac.signal);
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args, ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME]);
+    assert.equal(calls[0].cwd, parent);
+    assert.equal(result.repoRoot, path.join(parent, QUICKSTART_FOLDER_NAME));
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('cloneOrPull pull-existing runs `git pull` inside the existing checkout', async () => {
+  const parent = tmpdir('qs-pull-');
+  try {
+    fs.mkdirSync(path.join(parent, QUICKSTART_FOLDER_NAME, '.git'), { recursive: true });
+    const { git, calls } = recordingGit(0);
+    const svc = new QuickstartService(makeStubLogger(), git);
+    const ac = new AbortController();
+    const result = await svc.cloneOrPull(parent, 'pull-existing', () => {}, ac.signal);
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args, ['pull', '--ff-only']);
+    assert.equal(calls[0].cwd, path.join(parent, QUICKSTART_FOLDER_NAME));
+    assert.equal(result.repoRoot, path.join(parent, QUICKSTART_FOLDER_NAME));
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('cloneOrPull replace-and-clone removes existing folder then clones', async () => {
+  const parent = tmpdir('qs-replace-');
+  try {
+    const target = path.join(parent, QUICKSTART_FOLDER_NAME);
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, 'stale.txt'), 'stale');
+
+    const { git, calls } = recordingGit(0);
+    const svc = new QuickstartService(makeStubLogger(), git);
+    const ac = new AbortController();
+    const result = await svc.cloneOrPull(parent, 'replace-and-clone', () => {}, ac.signal);
+
+    // Stale file gone before clone ran
+    assert.equal(fs.existsSync(path.join(target, 'stale.txt')), false);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args, ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME]);
+    assert.equal(result.repoRoot, target);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('cloneOrPull throws on non-zero git exit', async () => {
+  const parent = tmpdir('qs-clone-fail-');
+  try {
+    const { git } = recordingGit(128);
+    const svc = new QuickstartService(makeStubLogger(), git);
+    await assert.rejects(
+      () => svc.cloneOrPull(parent, 'fresh-clone', () => {}, new AbortController().signal),
+      /git clone failed with exit 128/,
+    );
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });
