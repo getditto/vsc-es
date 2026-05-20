@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { QuickstartService } from '../quickstart/QuickstartService.js';
+import type { GitRunner } from '../quickstart/QuickstartService.js';
 import type { Logger, LogLevel } from '../logging/types.js';
 
 function makeStubLogger(): Logger {
@@ -142,6 +143,52 @@ test('writeEdgeServerYaml skips when edge-server/ is absent', () => {
     });
     assert.equal(result.outcome, 'skipped-no-parent');
     assert.equal(fs.existsSync(path.join(root, 'edge-server', 'quickstart_config.yaml')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('inspectTarget — absent', async () => {
+  const root = tmpdir('qs-inspect-');
+  try {
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    const result = await svc.inspectTarget(path.join(root, 'quickstart'));
+    assert.equal(result.kind, 'absent');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('inspectTarget — non-git folder', async () => {
+  const root = tmpdir('qs-inspect-nongit-');
+  try {
+    fs.mkdirSync(path.join(root, 'quickstart'));
+    fs.writeFileSync(path.join(root, 'quickstart', 'README.md'), 'mine');
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    const result = await svc.inspectTarget(path.join(root, 'quickstart'));
+    assert.equal(result.kind, 'non-git-folder');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('inspectTarget — git checkout reports head sha', async () => {
+  const root = tmpdir('qs-inspect-git-');
+  try {
+    const target = path.join(root, 'quickstart');
+    fs.mkdirSync(path.join(target, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(target, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    const gitStub: GitRunner = {
+      version: async () => 'git version 2.45.0',
+      run: async (args, cwd) => {
+        assert.deepEqual(args, ['rev-parse', 'HEAD']);
+        assert.equal(cwd, target);
+        return 0;
+      },
+    };
+    const svc = new QuickstartService(makeStubLogger(), gitStub);
+    const result = await svc.inspectTarget(target);
+    assert.equal(result.kind, 'git-checkout');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

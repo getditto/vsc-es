@@ -88,6 +88,37 @@ export class QuickstartService {
     }
   }
 
+  /**
+   * Classify a would-be clone target. We detect a `.git` directory inline
+   * (no git invocation needed) and only mark the directory as "git-checkout"
+   * when that marker exists. Returns 'non-git-folder' for anything else —
+   * the flow controller treats this as the dangerous case and prompts.
+   */
+  async inspectTarget(targetDir: string): Promise<TargetInspection> {
+    if (!fs.existsSync(targetDir)) {
+      return { kind: 'absent' };
+    }
+    const stat = fs.statSync(targetDir);
+    if (!stat.isDirectory()) {
+      return { kind: 'non-git-folder' };
+    }
+    const dotGit = path.join(targetDir, '.git');
+    if (!fs.existsSync(dotGit)) {
+      return { kind: 'non-git-folder' };
+    }
+    // Best-effort head sha — useful for the dialog text. Failure isn't fatal.
+    let head = 'unknown';
+    try {
+      const headFile = path.join(dotGit, 'HEAD');
+      if (fs.existsSync(headFile)) {
+        head = fs.readFileSync(headFile, 'utf-8').trim();
+      }
+    } catch {
+      /* leave as 'unknown' */
+    }
+    return { kind: 'git-checkout', head };
+  }
+
   private writeOne(repoRoot: string, relativePath: string, content: string): WriteResult {
     const fullPath = path.join(repoRoot, relativePath);
     const parent = path.dirname(fullPath);
