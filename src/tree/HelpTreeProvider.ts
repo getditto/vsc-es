@@ -19,7 +19,8 @@ const ITEMS: HelpNode[] = [
   // per-screen help that the Inspector renders is the extension's
   // documentation, so there's no separate "Extension Documentation"
   // row — Welcome is it.
-  { kind: 'action', label: 'Welcome to Ditto',      icon: 'rocket',    command: 'dittoVsce.openWelcome' },
+  { kind: 'action', label: 'Welcome to Ditto',      icon: 'rocket',         command: 'dittoVsce.openWelcome' },
+  { kind: 'action', label: 'Get Quickstarts',       icon: 'cloud-download', command: 'dittoVsce.getQuickstarts' },
   { kind: 'link', label: "What's New",              icon: 'star',      url: 'https://docs.ditto.live/release-notes' },
   { kind: 'link', label: 'Ditto Documentation',     icon: 'book',      url: 'https://docs.ditto.live' },
   { kind: 'link', label: 'Ditto Portal',            icon: 'cloud',     url: 'https://portal.ditto.live' },
