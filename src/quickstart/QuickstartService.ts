@@ -119,6 +119,18 @@ export class QuickstartService {
     return { kind: 'git-checkout', head };
   }
 
+  async isGitAvailable(): Promise<boolean> {
+    try {
+      const v = await this.git.version();
+      return v !== null && v.length > 0;
+    } catch (err) {
+      this.log.warn('Quickstart: git version probe failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
   private writeOne(repoRoot: string, relativePath: string, content: string): WriteResult {
     const fullPath = path.join(repoRoot, relativePath);
     const parent = path.dirname(fullPath);

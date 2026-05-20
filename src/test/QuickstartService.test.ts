@@ -197,3 +197,30 @@ test('inspectTarget — git checkout reports head sha', async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('isGitAvailable — returns true when GitRunner.version resolves to a string', async () => {
+  const gitStub: GitRunner = {
+    version: async () => 'git version 2.45.0',
+    run: async () => 0,
+  };
+  const svc = new QuickstartService(makeStubLogger(), gitStub);
+  assert.equal(await svc.isGitAvailable(), true);
+});
+
+test('isGitAvailable — returns false when GitRunner.version resolves to null', async () => {
+  const gitStub: GitRunner = {
+    version: async () => null,
+    run: async () => 0,
+  };
+  const svc = new QuickstartService(makeStubLogger(), gitStub);
+  assert.equal(await svc.isGitAvailable(), false);
+});
+
+test('isGitAvailable — returns false when GitRunner.version throws', async () => {
+  const gitStub: GitRunner = {
+    version: async () => { throw new Error('ENOENT'); },
+    run: async () => 0,
+  };
+  const svc = new QuickstartService(makeStubLogger(), gitStub);
+  assert.equal(await svc.isGitAvailable(), false);
+});
