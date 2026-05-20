@@ -397,3 +397,42 @@ gitignored under `docs/superpowers/`):
 | What gets persisted | `storage/`, `models/DittoConfig.ts` |
 | Build / asset pipeline | `esbuild.config.mjs` |
 | Test infrastructure | `scripts/register-vscode-stub.mjs`, `package.json` test script |
+
+---
+
+## 11. Get Quickstarts feature
+
+The implementation lives in `src/quickstart/`:
+
+- `quickstart-projects.ts` is the single source of truth for what we know
+  about the upstream `getditto/quickstart` repo: the project list, the three
+  hard-coded `.env` destinations (root, `flutter_app/`, `go-tui/`), and the
+  edge-server YAML path. Update this file when upstream restructures or
+  adds a new per-project `.env` destination. Mirrors SwiftUI Edge Studio's
+  `QuickstartDownloadService.swift` — keep the two lists in sync.
+
+- `QuickstartService.ts` does git ops via an injected `GitRunner`. The
+  default `createNodeGitRunner()` is backed by `child_process.spawn` using
+  the argument-array form (no shell). Tests inject a stub `GitRunner` so
+  the suite never spawns a real subprocess.
+
+- The flow controller is the `dittoVsce.getQuickstarts` registration in
+  `src/extension.ts`. It owns the dialog tree and the `withProgress`
+  notification; the service stays UI-free.
+
+### 11.1 Why we emit `DITTO_APP_ID` and `DITTO_PLAYGROUND_TOKEN`
+
+The upstream quickstart code still reads the old env-var names even after
+Edge Studio's UI rename to "Database ID" / "Development Token". A file
+using the new names would not be loaded by any quickstart project. When
+upstream renames, update the template in `QuickstartService.ts:renderEnvContent`
+and bump the comment.
+
+### 11.2 Future iteration: auto-discovery
+
+If the hard-coded list of `.env` destinations stops scaling (e.g. upstream
+adds many new per-project envs at once), switch the resolution to scan for
+every `.env.sample` in the cloned tree and write a sibling `.env` next to
+each one. The single `renderEnvContent` template plus the destination
+list are the only things that need to change — the rest of the service
+keeps the same shape.

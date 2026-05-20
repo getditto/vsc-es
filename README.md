@@ -21,6 +21,16 @@ without leaving VS Code.
   table or JSON view, with column union across heterogeneous documents.
 - **Two auth modes** — Server (Big Peer with URL) and
   Small Peers Only (offline token + optional shared-secret key).
+- **Get Quickstarts** — one click clones the official
+  [Ditto quickstart repo](https://github.com/getditto/quickstart) into a
+  folder you choose and pre-fills `.env` files for every quickstart project
+  (plus the Edge Server YAML) using the Database ID, Development Token, and
+  URLs from your currently active connection. If no connection is active,
+  the command offers a code-only download — open a connection and re-run to
+  configure the `.env` files later. Available from the **Help** tree → **Get
+  Quickstarts**, the **Welcome** view → **Get Quickstarts** card, and the
+  Command Palette → **Ditto: Get Quickstarts…**. Requires `git` on your
+  PATH.
 
 ## Requirements
 
