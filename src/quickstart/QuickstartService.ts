@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 import type { Logger } from '../logging/types.js';
 import {
   ENV_DESTINATIONS,
@@ -249,4 +250,42 @@ function renderEdgeServerYaml(v: EdgeServerValues): string {
     '        base_path: my_server',
     '        http_api: true',
   ].join('\n');
+}
+
+/**
+ * Default {@link GitRunner} backed by Node's child_process.spawn. Uses the
+ * argument-array form with no shell — injection-safe by construction.
+ * Wires an AbortSignal to kill the subprocess on cancellation.
+ */
+export function createNodeGitRunner(): GitRunner {
+  return {
+    async version(): Promise<string | null> {
+      return new Promise((resolve) => {
+        try {
+          const child = spawn('git', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+          let out = '';
+          child.stdout?.on('data', (b) => { out += b.toString('utf-8'); });
+          child.on('error', () => resolve(null));
+          child.on('close', (code) => resolve(code === 0 ? out.trim() : null));
+        } catch {
+          resolve(null);
+        }
+      });
+    },
+    run(args, cwd, onStderr, signal): Promise<number> {
+      return new Promise((resolve, reject) => {
+        const child = spawn('git', args, {
+          cwd: cwd ?? undefined,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          signal,
+        });
+        child.stderr?.on('data', (b) => onStderr(b.toString('utf-8')));
+        child.on('error', (err) => {
+          // AbortError surfaces here when the signal is fired.
+          reject(err);
+        });
+        child.on('close', (code) => resolve(code ?? -1));
+      });
+    },
+  };
 }
