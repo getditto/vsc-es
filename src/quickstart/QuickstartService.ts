@@ -1,0 +1,102 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { Logger } from '../logging/types.js';
+import { ENV_DESTINATIONS } from './quickstart-projects.js';
+
+/** Values written to each .env file. */
+export interface EnvValues {
+  databaseId: string;
+  token: string;
+  authUrl: string;
+  /** May be empty for newer Portal configs — written as the empty string. */
+  websocketUrl: string;
+}
+
+/** Values written to the edge-server YAML — same minus websocketUrl. */
+export type EdgeServerValues = Omit<EnvValues, 'websocketUrl'>;
+
+export type WriteResult =
+  | { path: string; outcome: 'written' }
+  | { path: string; outcome: 'skipped-no-parent' }
+  | { path: string; outcome: 'failed'; error: string };
+
+export type TargetInspection =
+  | { kind: 'absent' }
+  | { kind: 'git-checkout'; head: string }
+  | { kind: 'non-git-folder' };
+
+export type CloneMode = 'fresh-clone' | 'pull-existing' | 'replace-and-clone';
+
+/**
+ * Abstraction over git invocation. Default implementation uses Node's
+ * `child_process.spawn` with argument-array form (no shell). Tests inject
+ * a stub.
+ */
+export interface GitRunner {
+  /** Returns the trimmed `git --version` output, or null if git is missing. */
+  version(): Promise<string | null>;
+
+  /**
+   * Runs `git <args>` with optional cwd. `onStderr` receives each chunk
+   * decoded as UTF-8 (git emits progress on stderr). The promise resolves
+   * to the exit code. Reject only on inability to spawn at all.
+   */
+  run(
+    args: string[],
+    cwd: string | null,
+    onStderr: (chunk: string) => void,
+    signal: AbortSignal,
+  ): Promise<number>;
+}
+
+export class QuickstartService {
+  constructor(
+    private readonly log: Logger,
+    private readonly git: GitRunner,
+  ) {}
+
+  /**
+   * Writes `.env` to every destination in ENV_DESTINATIONS, skipping any
+   * whose parent directory does not exist. File bytes match SwiftUI's
+   * `QuickstartDownloadService.configureEnvFiles` exactly — see design doc.
+   */
+  writeEnvFiles(repoRoot: string, values: EnvValues): WriteResult[] {
+    const content = renderEnvContent(values);
+    return ENV_DESTINATIONS.map((rel) => this.writeOne(repoRoot, rel, content));
+  }
+
+  private writeOne(repoRoot: string, relativePath: string, content: string): WriteResult {
+    const fullPath = path.join(repoRoot, relativePath);
+    const parent = path.dirname(fullPath);
+    if (!fs.existsSync(parent)) {
+      this.log.info('Quickstart: skipping .env, parent missing', { path: fullPath });
+      return { path: fullPath, outcome: 'skipped-no-parent' };
+    }
+    try {
+      fs.writeFileSync(fullPath, content, { encoding: 'utf-8' });
+      this.log.info('Quickstart: wrote .env', { path: fullPath });
+      return { path: fullPath, outcome: 'written' };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.log.warn('Quickstart: .env write failed', { path: fullPath, error });
+      return { path: fullPath, outcome: 'failed', error };
+    }
+  }
+}
+
+/**
+ * Byte-exact reproduction of SwiftUI's envContent — no trailing newline,
+ * single comment line credited to "Edge Studio" (the product name shared
+ * by SwiftUI and VS Code editions).
+ */
+function renderEnvContent(v: EnvValues): string {
+  return [
+    '#!/usr/bin/env bash',
+    '',
+    '# Auto-configured by Edge Studio',
+    `DITTO_APP_ID="${v.databaseId}"`,
+    `DITTO_PLAYGROUND_TOKEN="${v.token}"`,
+    `DITTO_AUTH_URL="${v.authUrl}"`,
+    `DITTO_WEBSOCKET_URL="${v.websocketUrl}"`,
+  ].join('\n');
+}
