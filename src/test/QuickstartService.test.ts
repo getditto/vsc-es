@@ -94,3 +94,55 @@ test('writeEnvFiles reports failed outcome and continues on write error', () => 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+const EXPECTED_YAML =
+  'resources:\n' +
+  '  my_ditto_db:\n' +
+  '    resource_type: DittoDatabase\n' +
+  '    db_id: "abc-123"\n' +
+  '    device_name: "edge-studio-quickstart"\n' +
+  '    subscriptions:\n' +
+  '      - "SELECT * FROM tasks"\n' +
+  '    auth:\n' +
+  '      server:\n' +
+  '        access_token: "tok-456"\n' +
+  '        auth_url: "https://auth.example"\n' +
+  '        provider: "__playgroundProvider"\n' +
+  '  my_http_server:\n' +
+  '    resource_type: HttpServer\n' +
+  '    listen_addr: "0.0.0.0:8080"\n' +
+  '    databases:\n' +
+  '      my_db:\n' +
+  '        db_id: "abc-123"\n' +
+  '        base_path: my_server\n' +
+  '        http_api: true';
+
+test('writeEdgeServerYaml writes config when edge-server/ exists', () => {
+  const root = tmpdir('qs-yaml-');
+  try {
+    fs.mkdirSync(path.join(root, 'edge-server'));
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    const result = svc.writeEdgeServerYaml(root, {
+      databaseId: 'abc-123', token: 'tok-456', authUrl: 'https://auth.example',
+    });
+    assert.equal(result.outcome, 'written');
+    const written = fs.readFileSync(path.join(root, 'edge-server', 'quickstart_config.yaml'), 'utf-8');
+    assert.equal(written, EXPECTED_YAML);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('writeEdgeServerYaml skips when edge-server/ is absent', () => {
+  const root = tmpdir('qs-yaml-absent-');
+  try {
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    const result = svc.writeEdgeServerYaml(root, {
+      databaseId: 'a', token: 'b', authUrl: 'c',
+    });
+    assert.equal(result.outcome, 'skipped-no-parent');
+    assert.equal(fs.existsSync(path.join(root, 'edge-server', 'quickstart_config.yaml')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Logger } from '../logging/types.js';
-import { ENV_DESTINATIONS } from './quickstart-projects.js';
+import { ENV_DESTINATIONS, EDGE_SERVER_RELATIVE_DIR, EDGE_SERVER_YAML_NAME } from './quickstart-projects.js';
 
 /** Values written to each .env file. */
 export interface EnvValues {
@@ -65,6 +65,29 @@ export class QuickstartService {
     return ENV_DESTINATIONS.map((rel) => this.writeOne(repoRoot, rel, content));
   }
 
+  /**
+   * Writes `edge-server/quickstart_config.yaml` when the edge-server
+   * directory exists in the cloned repo. Content matches SwiftUI's
+   * QuickstartDownloadService.configureEdgeServerYaml exactly.
+   */
+  writeEdgeServerYaml(repoRoot: string, values: EdgeServerValues): WriteResult {
+    const dir = path.join(repoRoot, EDGE_SERVER_RELATIVE_DIR);
+    const fullPath = path.join(dir, EDGE_SERVER_YAML_NAME);
+    if (!fs.existsSync(dir)) {
+      this.log.info('Quickstart: skipping edge-server YAML, dir missing', { dir });
+      return { path: fullPath, outcome: 'skipped-no-parent' };
+    }
+    try {
+      fs.writeFileSync(fullPath, renderEdgeServerYaml(values), { encoding: 'utf-8' });
+      this.log.info('Quickstart: wrote edge-server YAML', { path: fullPath });
+      return { path: fullPath, outcome: 'written' };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.log.warn('Quickstart: edge-server YAML write failed', { path: fullPath, error });
+      return { path: fullPath, outcome: 'failed', error };
+    }
+  }
+
   private writeOne(repoRoot: string, relativePath: string, content: string): WriteResult {
     const fullPath = path.join(repoRoot, relativePath);
     const parent = path.dirname(fullPath);
@@ -98,5 +121,30 @@ function renderEnvContent(v: EnvValues): string {
     `DITTO_PLAYGROUND_TOKEN="${v.token}"`,
     `DITTO_AUTH_URL="${v.authUrl}"`,
     `DITTO_WEBSOCKET_URL="${v.websocketUrl}"`,
+  ].join('\n');
+}
+
+function renderEdgeServerYaml(v: EdgeServerValues): string {
+  return [
+    'resources:',
+    '  my_ditto_db:',
+    '    resource_type: DittoDatabase',
+    `    db_id: "${v.databaseId}"`,
+    '    device_name: "edge-studio-quickstart"',
+    '    subscriptions:',
+    '      - "SELECT * FROM tasks"',
+    '    auth:',
+    '      server:',
+    `        access_token: "${v.token}"`,
+    `        auth_url: "${v.authUrl}"`,
+    '        provider: "__playgroundProvider"',
+    '  my_http_server:',
+    '    resource_type: HttpServer',
+    '    listen_addr: "0.0.0.0:8080"',
+    '    databases:',
+    '      my_db:',
+    `        db_id: "${v.databaseId}"`,
+    '        base_path: my_server',
+    '        http_api: true',
   ].join('\n');
 }
