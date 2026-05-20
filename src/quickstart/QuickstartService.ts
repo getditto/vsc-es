@@ -151,7 +151,7 @@ export class QuickstartService {
       if (last) { onProgress(last.trim()); }
     };
 
-    if (mode === 'fresh-clone') {
+    const runClone = async (): Promise<void> => {
       const exit = await this.git.run(
         ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME],
         parentDir,
@@ -159,15 +159,21 @@ export class QuickstartService {
         signal,
       );
       if (exit !== 0) { throw new Error(`git clone failed with exit ${exit}`); }
+    };
+
+    if (mode === 'fresh-clone') {
+      await runClone();
       return { repoRoot };
     }
 
     if (mode === 'pull-existing') {
       const exit = await this.git.run(['pull', '--ff-only'], repoRoot, onStderr, signal);
       if (exit !== 0) {
+        // Keep the error UI-agnostic — the flow controller composes the
+        // user-facing remediation (e.g. "choose Replace"). Service-level
+        // errors describe the technical condition only.
         throw new Error(
-          `git pull failed with exit ${exit}. The local checkout may be dirty or diverged — ` +
-          `choose Replace from the prompt next time to reset.`,
+          `git pull failed with exit ${exit} (fast-forward refused; checkout may be dirty or diverged)`,
         );
       }
       return { repoRoot };
@@ -175,14 +181,9 @@ export class QuickstartService {
 
     if (mode === 'replace-and-clone') {
       onProgress('Removing existing folder…');
+      this.log.info('Quickstart: removing existing folder for replace-and-clone', { repoRoot });
       fs.rmSync(repoRoot, { recursive: true, force: true });
-      const exit = await this.git.run(
-        ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME],
-        parentDir,
-        onStderr,
-        signal,
-      );
-      if (exit !== 0) { throw new Error(`git clone failed with exit ${exit}`); }
+      await runClone();
       return { repoRoot };
     }
 
