@@ -189,6 +189,10 @@ test('inspectTarget — git checkout reports head sha', async () => {
     const svc = new QuickstartService(makeStubLogger(), gitStub);
     const result = await svc.inspectTarget(target);
     assert.equal(result.kind, 'git-checkout');
+    // Narrowing the discriminated union — only here do we get `.head`.
+    if (result.kind === 'git-checkout') {
+      assert.equal(result.head, 'ref: refs/heads/main');
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
