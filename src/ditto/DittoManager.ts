@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import {
   Ditto,
   DittoConfig,
+  DittoError,
   Authenticator,
   Logger as DittoLogger,
   type PresenceGraph,
@@ -134,6 +135,11 @@ export class DittoManager {
     }
     if (this.session) { await this.disconnect(); }
     this.setStatus('activating', config.id);
+    // Hoisted outside try so the catch can release the SDK's working-directory
+    // file lock if open() succeeded but a later step (activation, sync.start,
+    // …) threw. Without this, the orphaned instance keeps __ditto_lock_file
+    // and the next connect retries with "File already locked".
+    let openedDitto: Ditto | null = null;
     try {
       const persistenceDir = path.join(this.context.globalStorageUri.fsPath, 'dittoData', config.id);
       fs.mkdirSync(persistenceDir, { recursive: true });
@@ -142,7 +148,12 @@ export class DittoManager {
         config.databaseId,
         config.mode === 'server'
           ? { mode: 'server', url: config.authUrl }
-          : { mode: 'smallPeersOnly' as const },
+          : {
+              mode: 'smallPeersOnly' as const,
+              // Shared secret for peer-to-peer encryption. SDK accepts
+              // string | null; treat empty/undefined as "no shared key".
+              privateKey: secrets.secretKey || null,
+            },
         persistenceDir
       );
 
@@ -156,7 +167,36 @@ export class DittoManager {
       (DittoLogger as any).minimumLogLevel = sdkLevelMap[config.logLevel] ?? 'Info';
       this.log.info('Applied per-DB SDK log level', { configId: config.id, level: config.logLevel });
 
-      const ditto = await Ditto.open(dittoCfg);
+      let ditto: Ditto;
+      try {
+        ditto = await Ditto.open(dittoCfg);
+      } catch (openErr) {
+        // The SDK uses an OS-level advisory lock on `__ditto_lock_file` inside
+        // the working directory; the file itself is an empty placeholder. When
+        // open() reports this condition, another live process holds the kernel
+        // lock — typically another VS Code window pointing at the same
+        // persistence directory, or (pre-fix) an orphaned in-process instance
+        // from a prior failed connect. Translate the SDK's terse error into
+        // something actionable.
+        //
+        // Prefer the structured DittoError code (FFI `LockedDittoWorkingDirectory`
+        // → `store/persistence-directory-locked`); fall back to the substring
+        // match so a future native-side rephrasing of the message still hits
+        // the same translation path.
+        const lockedByCode =
+          openErr instanceof DittoError && openErr.code === 'store/persistence-directory-locked';
+        const lockedByMessage =
+          openErr instanceof Error && /File already locked/i.test(openErr.message);
+        if (lockedByCode || lockedByMessage) {
+          throw new Error(
+            `Cannot open the Ditto working directory because it is locked by another process: ${persistenceDir}\n` +
+            `Another VS Code window may have this connection open, or a previous instance is still shutting down. ` +
+            `Close other VS Code windows using this connection, or restart VS Code, then try again.`,
+          );
+        }
+        throw openErr;
+      }
+      openedDitto = ditto;
 
       // Per-DB transport prefs gated by the runtime's OS support matrix.
       // The OS gate is defense-in-depth: even if a synced/replicated config
@@ -185,6 +225,13 @@ export class DittoManager {
         if ((result as any).error) { throw new Error(`Login failed: ${(result as any).error}`); }
       }
 
+      // Small-peers-only mode is internally an OfflinePlayground identity and
+      // refuses sync.start() until activated via setOfflineOnlyLicenseToken.
+      // Mirrors SwiftUI Edge Studio's DittoManager.hydrateDittoSelectedDatabase.
+      if (config.mode === 'smallPeersOnly' && secrets.token) {
+        ditto.setOfflineOnlyLicenseToken(secrets.token);
+      }
+
       await ditto.store.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 12');
       this.log.info('Set mesh_chooser_max_wlan_clients to 12 to improve amount of peers connectivity.');
       ditto.sync.start();
@@ -194,6 +241,8 @@ export class DittoManager {
         ditto,
         subscriptionHandles: new Map(),
       };
+      // Ownership transferred to the session; disconnect() owns close() now.
+      openedDitto = null;
 
       this.attachPresenceObserver(ditto);
       this.attachSyncStatusObserver(ditto);
@@ -216,6 +265,23 @@ export class DittoManager {
       this.log.info('Connected', { name: config.name, configId: config.id, mode: config.mode });
     } catch (err) {
       this.log.error('Connect failed', { configId: config.id, err: err instanceof Error ? err.stack : String(err) });
+      // Release the working-directory file lock left by a partially-opened
+      // Ditto instance. Bounded at 10s like disconnect() — the SDK can hang
+      // here when network teardown blocks, and we'd rather discard than wait.
+      if (openedDitto) {
+        try {
+          await Promise.race([
+            openedDitto.close(),
+            new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error('Ditto.close() timed out after 10s')), 10_000),
+            ),
+          ]);
+        } catch (closeErr) {
+          this.log.warn('Ditto.close() during connect cleanup failed — discarding instance', {
+            err: closeErr instanceof Error ? closeErr.message : String(closeErr),
+          });
+        }
+      }
       this.setStatus('error', config.id);
       this.dispatch({ type: 'connectFail', message: err instanceof Error ? err.message : String(err) });
       throw err;
