@@ -91,12 +91,22 @@ export class DatabaseEditorPanel {
       return;
     }
     if (msg.type === 'editor.save') {
-      const err = validate(msg.config, msg.secrets);
+      const err = validate(msg.config, msg.secrets, this.configs.list());
       if (err) {
         this.post({ type: 'editor.validationError', message: err });
         return;
       }
-      await this.configs.save(msg.config);
+      try {
+        await this.configs.save(msg.config);
+      } catch (saveErr) {
+        // Surface store-level invariant failures (e.g. duplicate databaseId
+        // racing in via parallel writes) the same way as form validation.
+        this.post({
+          type: 'editor.validationError',
+          message: saveErr instanceof Error ? saveErr.message : String(saveErr),
+        });
+        return;
+      }
       await this.secrets.write(msg.config.id, msg.secrets);
       vscode.window.showInformationMessage(`Saved connection "${msg.config.name}".`);
       this.panel.dispose();
@@ -110,9 +120,21 @@ export class DatabaseEditorPanel {
   }
 }
 
-function validate(config: StoredDittoConfig, secrets: SecretSet): string | null {
+function validate(
+  config: StoredDittoConfig,
+  secrets: SecretSet,
+  existingConfigs: StoredDittoConfig[],
+): string | null {
   if (!config.name.trim()) { return 'Name is required.'; }
-  if (!config.databaseId.trim()) { return 'Database ID is required.'; }
+  const dbId = config.databaseId.trim();
+  if (!dbId) { return 'Database ID is required.'; }
+  // Block duplicate databaseIds before they reach the store. Two connections
+  // pointing at the same Ditto database can race for the working-directory
+  // lock and confuse users about which local store they're looking at.
+  const conflict = existingConfigs.find(c => c.id !== config.id && c.databaseId.trim() === dbId);
+  if (conflict) {
+    return `Database ID "${dbId}" is already used by connection "${conflict.name}". Each connection must use a unique Database ID.`;
+  }
   if (!secrets.token.trim()) { return 'Token is required.'; }
   if (config.mode === 'server' && !config.authUrl.trim()) { return 'URL is required for Server mode.'; }
   return null;

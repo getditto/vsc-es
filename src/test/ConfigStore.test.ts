@@ -53,6 +53,33 @@ test('delete(id) removes the config', async () => {
   assert.deepEqual(store.list(), []);
 });
 
+test('save() rejects a different config with a duplicate databaseId', async () => {
+  const store = new ConfigStore(new FakeMemento() as any);
+  await store.save(makeConfig({ name: 'A', databaseId: 'shared-db' }));
+  const dup = makeConfig({ name: 'B', databaseId: 'shared-db' });
+  await assert.rejects(() => store.save(dup), /already exists.*"A"/);
+  // The rejected config should not have been persisted.
+  assert.equal(store.list().length, 1);
+  assert.equal(store.list()[0].name, 'A');
+});
+
+test('save() allows updating the same config with its own databaseId', async () => {
+  const store = new ConfigStore(new FakeMemento() as any);
+  const cfg = makeConfig({ name: 'A', databaseId: 'shared-db' });
+  await store.save(cfg);
+  // Re-saving the same record (same id, same databaseId) must not self-conflict.
+  await store.save({ ...cfg, name: 'A renamed' });
+  assert.equal(store.list().length, 1);
+  assert.equal(store.list()[0].name, 'A renamed');
+});
+
+test('save() treats whitespace-only databaseId differences as duplicates', async () => {
+  const store = new ConfigStore(new FakeMemento() as any);
+  await store.save(makeConfig({ name: 'A', databaseId: 'db-A' }));
+  const dup = makeConfig({ name: 'B', databaseId: '  db-A  ' });
+  await assert.rejects(() => store.save(dup), /already exists/);
+});
+
 test('listeners fire on save and delete', async () => {
   const store = new ConfigStore(new FakeMemento() as any);
   const events: string[] = [];
