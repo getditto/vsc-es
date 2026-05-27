@@ -314,7 +314,12 @@ export class QueryEditorPanel {
       // Metrics panel can replay any past query's EXPLAIN. The
       // metadata already carries the location, dql, durationMs,
       // resultCount, explain, and timestamp the panel needs.
-      this.metrics.capture(this.databaseId, metadata);
+      // Gated on the collectMetrics setting — if metrics collection
+      // is disabled, both the EXPLAIN side-trip in DittoManager AND
+      // the ring-buffer capture here are skipped.
+      if (readCollectMetrics()) {
+        this.metrics.capture(this.databaseId, metadata);
+      }
     } catch (err) {
       this.post({ type: 'query.error', message: err instanceof Error ? err.message : String(err) });
     }
@@ -331,7 +336,10 @@ export class QueryEditorPanel {
     if (this.manager.getActiveConfigId() !== this.databaseId) {
       throw new Error('No active database. Connect first.');
     }
-    const result = await this.manager.executeQuery(query);
+    const result = await this.manager.executeQuery(query, {
+      collectProfiling: readCollectProfiling(),
+      collectMetrics: readCollectMetrics(),
+    });
     // Stamp the run-location here rather than threading another arg
     // through DittoManager — the manager only ever runs `local`, so
     // the stamp is correct by construction.
@@ -728,4 +736,18 @@ function randomTabId(): string {
   const bytes = new Uint8Array(8);
   globalThis.crypto.getRandomValues(bytes);
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Read the current `dittoVsce.collectProfiling` workspace setting.
+ *  Defaults to `true` so a fresh install gets the feature on. The
+ *  panel reads this fresh on each query run, so toggling the setting
+ *  takes effect on the next Run click (no panel reload needed). */
+export function readCollectProfiling(): boolean {
+  return vscode.workspace.getConfiguration('dittoVsce').get<boolean>('collectProfiling', true);
+}
+
+/** Read the current `dittoVsce.collectMetrics` workspace setting.
+ *  Same default + same fresh-read semantics as `readCollectProfiling`. */
+export function readCollectMetrics(): boolean {
+  return vscode.workspace.getConfiguration('dittoVsce').get<boolean>('collectMetrics', true);
 }

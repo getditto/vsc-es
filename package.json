@@ -316,6 +316,21 @@
           "group": "3_import@1"
         }
       ]
+    },
+    "configuration": {
+      "title": "Ditto",
+      "properties": {
+        "dittoVsce.collectProfiling": {
+          "type": "boolean",
+          "default": true,
+          "description": "Capture PROFILE execution-plan envelopes for local SELECT queries. When off, the Profile view tab is hidden and SELECTs run without the PROFILE prefix (no profile overhead)."
+        },
+        "dittoVsce.collectMetrics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Capture EXPLAIN plans and duration metrics for queries. When off, the Metrics tab in the Inspector and the Query Metrics panel are hidden, and queries run without the EXPLAIN side-trip (no metrics overhead)."
+        }
+      }
     }
   },
   "scripts": {

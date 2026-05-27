@@ -473,28 +473,36 @@ export class DittoManager {
 
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
    *
-   *  PROFILE injection is **always-on** for every SELECT statement that the
-   *  user hasn't already prefixed with `PROFILE`. The injected envelope is
-   *  popped from the user-visible rows and parsed into `metadata.profile`.
-   *  There is no user-facing kill switch in v1 — if profiling overhead is
-   *  ever reported as a regression the gate goes here.
+   *  Two independent gates control collection of expensive metadata:
+   *   - `collectProfiling` (default true): when true, SELECT statements
+   *     are rewritten as `PROFILE <query>` and the trailing
+   *     `~request_profile` envelope is popped and parsed into
+   *     `metadata.profile`. When false, queries run unmodified and
+   *     `metadata.profile` is undefined.
+   *   - `collectMetrics` (default true): when true, a second SDK call
+   *     issues `EXPLAIN <query>` and stores the result in
+   *     `metadata.explain`. When false, the side-trip is skipped and
+   *     `metadata.explain` is the empty string.
    *
-   *  Non-SELECT statements and user-typed PROFILE prefixes run unmodified.
-   *  When the parser doesn't recognise the trailing item as an envelope
-   *  (forward-incompatible SDK output, or a degenerate row that happens to
-   *  pop the same shape), the whole result set is returned as-is and
-   *  `metadata.profile` is undefined.
-   *
-   *  EXPLAIN runs as a separate non-fatal side-trip against the ORIGINAL
-   *  (non-PROFILE-prefixed) query, so `metadata.explain` keeps populating
-   *  even when PROFILE fires. The two queries are intentional duplicate cost
-   *  for now — the Profile view in the panel reads `metadata.profile`; the
-   *  Metrics panel reads `metadata.explain`. Consolidation is a follow-up.
+   *  Both gates exist so a developer can opt out of either feature's
+   *  per-query overhead via the workspace setting (the Query Editor's
+   *  cog menu writes these settings). User-typed `PROFILE` prefixes,
+   *  non-SELECT statements, and forward-incompatible SDK output all
+   *  degrade gracefully: query runs as-is and the relevant metadata
+   *  field is omitted.
    */
-  async executeQuery(query: string): Promise<{ rows: Record<string, unknown>[]; durationMs: number; metadata: QueryResultMetadata }> {
+  async executeQuery(
+    query: string,
+    options?: { collectProfiling?: boolean; collectMetrics?: boolean },
+  ): Promise<{ rows: Record<string, unknown>[]; durationMs: number; metadata: QueryResultMetadata }> {
     if (!this.session) { throw new Error('No active database.'); }
 
-    const shouldProfile = isSelectStatement(query) && !alreadyHasProfilePrefix(query);
+    const collectProfiling = options?.collectProfiling ?? true;
+    const collectMetrics = options?.collectMetrics ?? true;
+
+    const shouldProfile = collectProfiling
+      && isSelectStatement(query)
+      && !alreadyHasProfilePrefix(query);
     const effectiveQuery = shouldProfile ? `PROFILE ${query}` : query;
 
     const start = performance.now();
@@ -514,10 +522,10 @@ export class DittoManager {
       }
     }
 
-    // Capture the EXPLAIN plan as a separate, non-fatal call. We pass the
-    // ORIGINAL (non-PROFILE-prefixed) query so EXPLAIN runs against what
-    // the user typed.
-    const explain = await this.runExplain(query);
+    // Capture the EXPLAIN plan as a non-fatal side-trip, gated on the
+    // metrics setting. We pass the ORIGINAL (non-PROFILE-prefixed)
+    // query so EXPLAIN runs against what the user typed.
+    const explain = collectMetrics ? await this.runExplain(query) : '';
 
     const metadata: QueryResultMetadata = {
       dql: query,
