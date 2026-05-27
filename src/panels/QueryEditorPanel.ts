@@ -297,7 +297,14 @@ export class QueryEditorPanel {
         ? await this.runViaHttp(msg.query)
         : await this.runViaLocal(msg.query);
       const columns = computeColumns(rows);
-      this.post({ type: 'query.result', rows, columns, durationMs, metadata });
+      this.post({
+        type: 'query.result',
+        rows,
+        columns,
+        durationMs,
+        metadata,
+        profile: metadata.profile,
+      });
       this.lastMetadata = metadata;
       this.lastSelectedRowJson = null;
       this.inspector.setLastResultMetadata(metadata);

@@ -200,7 +200,18 @@ export type QueryIn =
   | { type: 'query.exportRows'; json: string; rowCount: number };
 
 export type QueryOut =
-  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: QueryResultMetadata }
+  | {
+      type: 'query.result';
+      rows: Record<string, unknown>[];
+      columns: string[];
+      durationMs: number;
+      metadata?: QueryResultMetadata;
+      /** Same value as `metadata.profile`, hoisted for convenience so
+       *  the webview can render it without unpacking the metadata bag.
+       *  Undefined for HTTP-mode runs (PROFILE is local-only for v1)
+       *  and non-SELECT statements. */
+      profile?: import('../ditto/QueryProfile.js').QueryProfile;
+    }
   | { type: 'query.error'; message: string }
   // Available run-locations for this connection. `['local']` when the
   // connection has no HTTP creds; `['local','http']` when both
