@@ -15,11 +15,14 @@ export type QueryResultMetadata = {
    *  20 ms vs 200 ms difference reads as "different transport" rather
    *  than "the same query somehow got slower". */
   location?: 'local' | 'http';
-  /** Parsed execution-plan profile, captured when the local SDK path
-   *  prefixed the query with `PROFILE`. Undefined for HTTP runs,
-   *  non-SELECT statements, queries the user already prefixed with
-   *  PROFILE, and any case where Ditto didn't emit a parseable
-   *  envelope (forward-compatible degrade). */
+  /** Parsed execution-plan profile, captured when Ditto's response
+   *  carried a `~request_profile` envelope. The host strips the
+   *  envelope row from `rows` and parses it into this field whenever
+   *  profiling is enabled AND the statement is a SELECT (including
+   *  the `PROFILE SELECT …` form the user may have typed themselves
+   *  — see `isProfilableSelect`). Undefined for HTTP runs, non-SELECT
+   *  statements, profiling-disabled runs, and any case where Ditto
+   *  didn't emit a parseable envelope (forward-compatible degrade). */
   profile?: QueryProfile;
 };
 

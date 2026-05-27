@@ -33,6 +33,24 @@ export function alreadyHasProfilePrefix(query: string): boolean {
   return /\s/.test(next);
 }
 
+/** Returns true iff the statement is a SELECT *or* a PROFILE-wrapped
+ *  SELECT — i.e. anything that would produce a `~request_profile`
+ *  envelope in the result when profiling is enabled. Used as the
+ *  envelope-strip gate in `DittoManager.executeQuery`: even when the
+ *  user typed `PROFILE` themselves (so we don't re-prefix), the
+ *  envelope still lands in the response and the row needs stripping.
+ *
+ *  `isSelectStatement` alone misses the user-typed-PROFILE case
+ *  because the leading word is `PROFILE`, not `SELECT`. */
+export function isProfilableSelect(query: string): boolean {
+  if (isSelectStatement(query)) { return true; }
+  if (!alreadyHasProfilePrefix(query)) { return false; }
+  // Strip the leading PROFILE keyword (and its trailing whitespace)
+  // and re-check whether what's left starts with SELECT.
+  const inner = query.trim().replace(/^PROFILE\s+/i, '');
+  return isSelectStatement(inner);
+}
+
 /** Profile envelope key Ditto emits as the trailing item. Exported
  *  so the host's "did we get a profile back?" check uses the same
  *  literal as the parser. */

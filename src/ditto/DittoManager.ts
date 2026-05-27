@@ -32,7 +32,7 @@ import {
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
-import { isSelectStatement, alreadyHasProfilePrefix, parseProfileItem } from './QueryProfileParser.js';
+import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, parseProfileItem } from './QueryProfileParser.js';
 import type { QueryProfile } from './QueryProfile.js';
 
 export interface TransportPrefs {
@@ -502,18 +502,18 @@ export class DittoManager {
 
     // Two related gates:
     //   - `shouldPrefixProfile`: do WE need to inject the keyword? Only
-    //     when profiling is on, it's a SELECT, and the user didn't
-    //     already type PROFILE themselves (double-prefix would be a
-    //     syntax error).
+    //     when profiling is on, the bare statement is a SELECT, and the
+    //     user didn't already type PROFILE themselves (double-prefix
+    //     would be a syntax error).
     //   - `expectsEnvelope`: will Ditto's response carry a profile
-    //     envelope as the trailing item? True whenever profiling is
-    //     on AND it's a SELECT, regardless of who added the prefix.
-    //     The user-typed-PROFILE case lands here too — without this,
-    //     the envelope row would stay visible in the result table.
+    //     envelope as the trailing item? True whenever profiling is on
+    //     AND the statement is a SELECT — *including* the case where
+    //     the user typed `PROFILE SELECT…` themselves. `isProfilableSelect`
+    //     handles that by stripping any leading PROFILE before checking.
     const shouldPrefixProfile = collectProfiling
       && isSelectStatement(query)
       && !alreadyHasProfilePrefix(query);
-    const expectsEnvelope = collectProfiling && isSelectStatement(query);
+    const expectsEnvelope = collectProfiling && isProfilableSelect(query);
     const effectiveQuery = shouldPrefixProfile ? `PROFILE ${query}` : query;
 
     const start = performance.now();
