@@ -18,10 +18,20 @@ without leaving VS Code.
   dominant connection type, sync status, SDK info, and animated insert/remove
   driven by `ditto.presence.observe` and the `__sync_status` system collection.
 - **Query Editor** — run ad-hoc DQL against the active database. Results in
-  table or JSON view, with column union across heterogeneous documents.
+  JSON, Table, or Profile view, with column union across heterogeneous
+  documents.
 - **Query profiling** — visualize Ditto's `PROFILE` execution plan as nested
   cards or a top-down tree, with per-operator timing, doc throughput, and
-  bottleneck highlighting.
+  bottleneck highlighting. Captured automatically on local SELECTs when
+  enabled.
+- **Profiling + metrics gates** — a settings cog (⚙) in the Query Editor
+  toolbar toggles profiling and metrics collection on or off. When off, the
+  matching tabs disappear and the per-query SDK overhead is skipped. Bound
+  to user-scope settings, so the choice travels across workspaces.
+- **Right-click index management** — add an index via the **Add Index…**
+  context-menu (or inline `＋`), and remove one via right-click → **Delete
+  Index** (or inline trash icon) on any index row. Both flows confirm
+  before mutating.
 - **Two auth modes** — Server (Big Peer with URL) and
   Small Peers Only (offline token + optional shared-secret key).
 - **Get Quickstarts** — one click clones the official

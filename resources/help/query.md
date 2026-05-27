@@ -77,10 +77,34 @@ API.
 
 ---
 
+## Settings cog (profiling + metrics gates)
+
+The **⚙** button in the toolbar — to the right of `★ Favorite` —
+opens a popover with two checkboxes:
+
+| Toggle | What turns off when unchecked |
+|--------|-------------------------------|
+| **Capture profiling data** | The Profile tab in the Query Editor disappears, and SELECT queries run without the `PROFILE` prefix (no per-query profile overhead). |
+| **Capture query metrics** | The Metrics tab in the Inspector disappears, the **Query Metrics** row under each database in the Connections tree disappears, and the `EXPLAIN` side-trip that normally fires after each query is skipped (no per-query metrics overhead). |
+
+The checkboxes are bound to your **user-scope** VS Code settings
+(`dittoVsce.collectProfiling` and `dittoVsce.collectMetrics`), so the
+choice travels across workspaces. Toggling either is reflected
+**instantly** in every open Query Editor, the Inspector, and the
+Connections tree — no reload needed.
+
+You can also flip the settings directly via VS Code's Settings UI
+(`Cmd+,` / `Ctrl+,`, search for "Ditto") or by editing your
+`settings.json`. Changes from any source propagate the same way.
+
+---
+
 ## Query results
 
-Results show below the editor in either of two views, switched with
-the JSON / Table tabs above the results pane.
+Results show below the editor in one of three views, switched with
+the **JSON / Table / Profile** tabs above the results pane. The
+Profile tab only appears when profiling is enabled (see *Settings cog*
+below).
 
 ### JSON view
 
@@ -93,6 +117,33 @@ top-level document to select that row.
 A flat tabular projection — one column per top-level field across all
 result rows. Long values are truncated with the full value in a
 hover tooltip. Click a row to select it.
+
+### Profile view
+
+Shows Ditto's `PROFILE` execution plan for the last SELECT you ran on
+the **Local** path. When profiling is enabled, every local SELECT is
+transparently rewritten as `PROFILE <query>`; the resulting envelope
+is popped from the rows and visualised here.
+
+The view has four parts:
+
+- **Header card** — the query you typed (the `PROFILE` prefix is
+  stripped for display) and a "captured at" local timestamp.
+- **Summary strip** — six metric cells: `Elapsed`, `Parse`, `Plan`,
+  `Result Count`, `FeatureFlags`, `QueryType`. Times auto-scale: a
+  209 ns parse renders as `209 ns`, a 432 ms elapsed as `432.43 ms`.
+- **Execution plan** — a `Card` / `Plan` sub-toggle:
+  - **Card** mode lists each operator as a card with coloured
+    `in / out / exec / recv / send` badges.
+  - **Plan** mode draws the operators as a top-down boxes-and-lines
+    tree. Any operator that consumes **≥ 50 %** of plan CPU work is
+    flagged with an orange-dashed border — a non-colour cue that
+    survives red-green colour blindness.
+- **Legend** — explains the badge colours and the bottleneck border.
+
+Profile capture is **local-only** today; queries run on the HTTP path
+show a "Profiling runs on Local only" message instead. Non-SELECT
+statements (INSERT, UPDATE, DELETE, EVICT) have no profile.
 
 ### Pagination
 
@@ -170,7 +221,7 @@ Editor has focus the toolbar exposes five tabs:
 | **History** | Every query you've run on this connection. Click to reload, right-click to favorite or delete. |
 | **Favorites** | Queries you starred via the ★ Favorite button. |
 | **JSON** | The full JSON of the currently-selected row, with attachment detection (see below). |
-| **Metrics** | Last query's execution time, row count, run location, and EXPLAIN plan. |
+| **Metrics** | Last query's execution time, row count, run location, and EXPLAIN plan. *Hidden when metrics collection is off in the settings cog.* |
 | **Help** | This page. |
 
 History and Favorites are persisted per-database and survive disconnect/
@@ -218,6 +269,11 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status)
 ```sql
 DROP INDEX IF EXISTS idx_tasks_status ON tasks
 ```
+
+Or — easier — right-click any index in the Connections tree (or click
+the inline trash icon that appears on hover) and choose **Delete
+Index**. A modal confirms before the drop runs, and the tree
+re-hydrates so the index disappears immediately.
 
 ### Multi-index query optimization
 
