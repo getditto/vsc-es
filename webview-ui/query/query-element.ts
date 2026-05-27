@@ -2,11 +2,13 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
 import '../shared/json-viewer.js';
+import type { QueryProfile } from '../../src/ditto/QueryProfile.js';
+import './profile-viewer.js';
 
 type QueryMode = 'local' | 'http';
 
 type In =
-  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: unknown }
+  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: unknown; profile?: QueryProfile }
   | { type: 'query.error'; message: string }
   | { type: 'query.setText'; text: string }
   | { type: 'query.modeInit'; availableModes: QueryMode[] }
@@ -14,7 +16,7 @@ type In =
   | { type: 'query.exportCancelled' }
   | { type: 'query.exportError'; message: string };
 
-type View = 'table' | 'json';
+type View = 'table' | 'json' | 'profile';
 type RunState = 'idle' | 'running' | 'success' | 'error';
 
 const TRUNCATE_AT = 120;
@@ -68,6 +70,14 @@ export class QueryEditor extends LitElement {
   // showing "Exporting…" between the click and the host's
   // `query.exportDone`/`exportCancelled`/`exportError` response.
   @state() private isExporting = false;
+  // Profile envelope from the last `query.result` (null when the host
+  // didn't include one, e.g. non-SELECT or profiling disabled).
+  @state() private profile: QueryProfile | null = null;
+  // Snapshot of the query text at the moment `run()` was invoked.
+  // The Profile viewer's empty-state branches use this to show the
+  // statement that was actually executed (which may differ from the
+  // current editor contents if the user has since typed more).
+  @state() private lastQueryRun = '';
 
   static styles = css`
     :host {
@@ -391,6 +401,7 @@ export class QueryEditor extends LitElement {
         this.rows = msg.rows;
         this.columns = msg.columns;
         this.durationMs = msg.durationMs;
+        this.profile = msg.profile ?? null;
         this.errorMessage = null;
         this.state = 'success';
         this.selectedRowIndex = null;
@@ -441,6 +452,7 @@ export class QueryEditor extends LitElement {
     this.state = 'running';
     this.errorMessage = null;
     this.selectedRowIndex = null;
+    this.lastQueryRun = this.query;
     postToHost({ type: 'query.run', query: this.query, mode: this.mode });
   }
 
@@ -660,6 +672,7 @@ export class QueryEditor extends LitElement {
           <div class="view-toggle">
             <button class=${this.view === 'json' ? 'active' : ''} @click=${() => this.view = 'json'}>JSON</button>
             <button class=${this.view === 'table' ? 'active' : ''} @click=${() => this.view = 'table'}>Table</button>
+            <button class=${this.view === 'profile' ? 'active' : ''} @click=${() => this.view = 'profile'}>Profile</button>
           </div>
         </div>
       ` : nothing}
@@ -668,6 +681,13 @@ export class QueryEditor extends LitElement {
         ${this.state === 'idle' ? html`<div class="empty">Run a query to see results.</div>` : nothing}
         ${(this.state === 'success' || this.state === 'running') && this.view === 'table' ? this.renderTable() : nothing}
         ${(this.state === 'success' || this.state === 'running') && this.view === 'json' ? this.renderJson() : nothing}
+        ${(this.state === 'success' || this.state === 'running') && this.view === 'profile' ? html`
+          <ditto-profile-viewer
+            .profile=${this.profile ?? undefined}
+            .mode=${this.mode}
+            .lastQueryText=${this.lastQueryRun}
+          ></ditto-profile-viewer>
+        ` : nothing}
       </div>
       ${this.renderPagination()}
       ${this.renderContextMenu()}
