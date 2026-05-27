@@ -740,11 +740,11 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       );
       if (confirm !== 'Delete') { return; }
       try {
-        await collectionsRepo.dropIndex(indexName);
+        await collectionsRepo.dropIndex(indexName, node.collectionName);
         vscode.window.showInformationMessage(`Deleted index "${indexName}".`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.withTag('ext:deleteIndex').error('Drop index failed', { indexName, err: message });
+        logger.withTag('ext:deleteIndex').error('Drop index failed', { indexName, collection: node.collectionName, err: message });
         vscode.window.showErrorMessage(`Delete index failed: ${message}`);
       }
     }),

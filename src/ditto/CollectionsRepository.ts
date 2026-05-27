@@ -61,14 +61,15 @@ export class CollectionsRepository {
     await this.hydrate('createIndex');
   }
 
-  /** Drops an index by its bare name (the `displayName` form of
-   *  `DittoIndex` — i.e. the `id` with the `<collection>.` prefix
-   *  stripped). DQL's `DROP INDEX` takes that bare form, matching the
-   *  name produced by `CREATE INDEX`. Re-hydrates afterwards so the
-   *  tree updates immediately. */
-  async dropIndex(indexName: string): Promise<void> {
-    const query = `DROP INDEX ${indexName}`;
-    this.log.info('Dropping index', { indexName });
+  /** Drops an index by its bare name + collection. DQL requires the
+   *  collection because the bare name isn't globally unique — two
+   *  collections can each have an `idx_done` index. We use the
+   *  `<name> ON <collection>` form (matches the CREATE INDEX shape);
+   *  the equivalent `<collection>.<name>` form would also work.
+   *  Re-hydrates so the tree updates immediately. */
+  async dropIndex(indexName: string, collection: string): Promise<void> {
+    const query = `DROP INDEX IF EXISTS ${indexName} ON ${collection}`;
+    this.log.info('Dropping index', { indexName, collection });
     await this.manager.executeRaw(query);
     await this.hydrate('dropIndex');
   }
