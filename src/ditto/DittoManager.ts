@@ -500,10 +500,21 @@ export class DittoManager {
     const collectProfiling = options?.collectProfiling ?? true;
     const collectMetrics = options?.collectMetrics ?? true;
 
-    const shouldProfile = collectProfiling
+    // Two related gates:
+    //   - `shouldPrefixProfile`: do WE need to inject the keyword? Only
+    //     when profiling is on, it's a SELECT, and the user didn't
+    //     already type PROFILE themselves (double-prefix would be a
+    //     syntax error).
+    //   - `expectsEnvelope`: will Ditto's response carry a profile
+    //     envelope as the trailing item? True whenever profiling is
+    //     on AND it's a SELECT, regardless of who added the prefix.
+    //     The user-typed-PROFILE case lands here too — without this,
+    //     the envelope row would stay visible in the result table.
+    const shouldPrefixProfile = collectProfiling
       && isSelectStatement(query)
       && !alreadyHasProfilePrefix(query);
-    const effectiveQuery = shouldProfile ? `PROFILE ${query}` : query;
+    const expectsEnvelope = collectProfiling && isSelectStatement(query);
+    const effectiveQuery = shouldPrefixProfile ? `PROFILE ${query}` : query;
 
     const start = performance.now();
     const result = await this.session.ditto.store.execute(effectiveQuery);
@@ -513,7 +524,7 @@ export class DittoManager {
     // rows, so the result table never shows the profile envelope as a row.
     let rows = (result.items as any[]).map((i: any) => i.value as Record<string, unknown>);
     let profile: QueryProfile | undefined;
-    if (shouldProfile && rows.length > 0) {
+    if (expectsEnvelope && rows.length > 0) {
       const last = rows[rows.length - 1];
       const parsed = parseProfileItem(last);
       if (parsed) {
