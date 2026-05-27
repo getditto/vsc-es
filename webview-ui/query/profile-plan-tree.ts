@@ -33,28 +33,24 @@ interface LaidOutNode {
   children: LaidOutNode[];
 }
 
-function layout(node: QueryProfileOperator, y: number): LaidOutNode {
+export function layout(node: QueryProfileOperator, y: number): LaidOutNode {
   if (node.children.length === 0) {
     return { node, subtreeWidth: BOX_WIDTH, centerX: BOX_WIDTH / 2, y, children: [] };
   }
+  // Each child's centerX stays in its own subtree-local frame.
+  // `flatten()` and `renderConnectors()` reconstruct absolute positions
+  // by composing a walking `childLeftEdge` with each child's local
+  // centerX, so positioning here would double-count.
   const laidOutChildren = node.children.map(c => layout(c, y + BOX_HEIGHT_EST + ROW_GAP_Y));
-  // Total width = sum of child subtree widths + gaps between them.
   const totalChildWidth =
     laidOutChildren.reduce((a, b) => a + b.subtreeWidth, 0)
     + Math.max(0, laidOutChildren.length - 1) * BOX_GAP_X;
   const subtreeWidth = Math.max(BOX_WIDTH, totalChildWidth);
-  // Position children left-to-right with their natural widths.
-  let xCursor = (subtreeWidth - totalChildWidth) / 2;
-  const positionedChildren: LaidOutNode[] = laidOutChildren.map(c => {
-    const placed: LaidOutNode = { ...c, centerX: xCursor + c.centerX };
-    xCursor += c.subtreeWidth + BOX_GAP_X;
-    return placed;
-  });
   const centerX = subtreeWidth / 2;
-  return { node, subtreeWidth, centerX, y, children: positionedChildren };
+  return { node, subtreeWidth, centerX, y, children: laidOutChildren };
 }
 
-function flatten(n: LaidOutNode, offsetX = 0): Array<LaidOutNode & { absX: number }> {
+export function flatten(n: LaidOutNode, offsetX = 0): Array<LaidOutNode & { absX: number }> {
   const here = { ...n, absX: offsetX + n.centerX };
   // For children, shift by their offset within this subtree. The
   // child's centerX is already relative to its subtree's left edge;
