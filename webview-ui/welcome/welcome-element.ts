@@ -280,6 +280,10 @@ export class WelcomeElement extends LitElement {
     postToHost({ type: 'welcome.registerDatabase' });
   };
 
+  private onGetQuickstarts = (): void => {
+    postToHost({ type: 'welcome.getQuickstarts' });
+  };
+
   private close = (): void => {
     postToHost({ type: 'welcome.close' });
   };
@@ -290,6 +294,7 @@ export class WelcomeElement extends LitElement {
       ${this.renderWhatIsDitto()}
       ${this.renderFeatures()}
       ${this.renderGetStarted()}
+      ${this.renderQuickstarts()}
       ${this.renderLearnMore()}
     `;
   }
@@ -411,6 +416,31 @@ export class WelcomeElement extends LitElement {
             </div>
           </li>
         </ol>
+      </section>
+    `;
+  }
+
+  private renderQuickstarts(): TemplateResult {
+    return html`
+      <section>
+        <h2>Try a quickstart in your favorite language</h2>
+        <div class="quote">
+          Edge Studio can clone Ditto's official quickstart projects (Swift,
+          Kotlin, Flutter, Rust, .NET, JavaScript, and 11 more) onto your
+          machine and pre-fill the .env files using whichever connection is
+          currently active. New to Ditto? This is the fastest way to see
+          sync working end-to-end.
+        </div>
+        <div class="cta">
+          <button class="primary" @click=${this.onGetQuickstarts}>
+            Get Quickstarts
+          </button>
+          <a
+            class="step-link"
+            href="https://github.com/getditto/quickstart"
+            target="_blank" rel="noopener"
+          >Browse on GitHub</a>
+        </div>
       </section>
     `;
   }

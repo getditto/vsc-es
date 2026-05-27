@@ -19,6 +19,7 @@ import type { ImportableSubscription } from '../ditto/import-subscription-parser
  *  a soft "Close" that disposes the panel. */
 export type WelcomeIn =
   | { type: 'welcome.registerDatabase' }
+  | { type: 'welcome.getQuickstarts' }
   | { type: 'welcome.close' };
 
 /** Host → webview. The init payload tells the panel whether at least
