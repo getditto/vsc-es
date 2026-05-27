@@ -32,6 +32,8 @@ import {
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
+import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, parseProfileItem } from './QueryProfileParser.js';
+import type { QueryProfile } from './QueryProfile.js';
 
 export interface TransportPrefs {
   isLanEnabled: boolean;
@@ -389,7 +391,7 @@ export class DittoManager {
     const result = args === undefined
       ? await this.session.ditto.store.execute(query)
       : await this.session.ditto.store.execute(query, args as any);
-    return (result.items as any[]).map(i => i.value as Record<string, unknown>);
+    return result.items.map(i => i.value as Record<string, unknown>);
   }
 
   /**
@@ -408,7 +410,7 @@ export class DittoManager {
     const result = await this.session.ditto.store.execute(`SELECT * FROM ${collectionExpr}`);
     let totalBytes = 0;
     let documentCount = 0;
-    for (const item of result.items as any[]) {
+    for (const item of result.items) {
       try {
         const bytes: Uint8Array = item.cborData();
         totalBytes += bytes.byteLength;
@@ -471,21 +473,70 @@ export class DittoManager {
 
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
    *
-   *  Mirrors the SwiftUI `QueryService.executeSelectedAppQuery` pattern: run the
-   *  user's query as-is for real result rows, then issue a SECOND `EXPLAIN <query>`
-   *  call to harvest plan metadata. Running EXPLAIN inline (prefixed) returns the
-   *  plan rows in place of the actual results, which is not what callers want.
+   *  Two independent gates control collection of expensive metadata:
+   *   - `collectProfiling` (default true): when true, SELECT statements
+   *     are rewritten as `PROFILE <query>` and the trailing
+   *     `~request_profile` envelope is popped and parsed into
+   *     `metadata.profile`. When false, queries run unmodified and
+   *     `metadata.profile` is undefined.
+   *   - `collectMetrics` (default true): when true, a second SDK call
+   *     issues `EXPLAIN <query>` and stores the result in
+   *     `metadata.explain`. When false, the side-trip is skipped and
+   *     `metadata.explain` is the empty string.
+   *
+   *  Both gates exist so a developer can opt out of either feature's
+   *  per-query overhead via the workspace setting (the Query Editor's
+   *  cog menu writes these settings). User-typed `PROFILE` prefixes,
+   *  non-SELECT statements, and forward-incompatible SDK output all
+   *  degrade gracefully: query runs as-is and the relevant metadata
+   *  field is omitted.
    */
-  async executeQuery(query: string): Promise<{ rows: Record<string, unknown>[]; durationMs: number; metadata: QueryResultMetadata }> {
+  async executeQuery(
+    query: string,
+    options?: { collectProfiling?: boolean; collectMetrics?: boolean },
+  ): Promise<{ rows: Record<string, unknown>[]; durationMs: number; metadata: QueryResultMetadata }> {
     if (!this.session) { throw new Error('No active database.'); }
-    const start = performance.now();
-    const result = await this.session.ditto.store.execute(query);
-    const durationMs = Math.round(performance.now() - start);
-    const rows = (result.items as any[]).map((i: any) => i.value as Record<string, unknown>);
 
-    // Capture the EXPLAIN plan as a separate, non-fatal call. If the user
-    // already prefixed EXPLAIN themselves, skip the recursive lookup.
-    const explain = await this.runExplain(query);
+    const collectProfiling = options?.collectProfiling ?? true;
+    const collectMetrics = options?.collectMetrics ?? true;
+
+    // Two related gates:
+    //   - `shouldPrefixProfile`: do WE need to inject the keyword? Only
+    //     when profiling is on, the bare statement is a SELECT, and the
+    //     user didn't already type PROFILE themselves (double-prefix
+    //     would be a syntax error).
+    //   - `expectsEnvelope`: will Ditto's response carry a profile
+    //     envelope as the trailing item? True whenever profiling is on
+    //     AND the statement is a SELECT — *including* the case where
+    //     the user typed `PROFILE SELECT…` themselves. `isProfilableSelect`
+    //     handles that by stripping any leading PROFILE before checking.
+    const shouldPrefixProfile = collectProfiling
+      && isSelectStatement(query)
+      && !alreadyHasProfilePrefix(query);
+    const expectsEnvelope = collectProfiling && isProfilableSelect(query);
+    const effectiveQuery = shouldPrefixProfile ? `PROFILE ${query}` : query;
+
+    const start = performance.now();
+    const result = await this.session.ditto.store.execute(effectiveQuery);
+    const durationMs = Math.round(performance.now() - start);
+
+    // Pop the trailing ~request_profile item before we project the user's
+    // rows, so the result table never shows the profile envelope as a row.
+    let rows = result.items.map(i => i.value as Record<string, unknown>);
+    let profile: QueryProfile | undefined;
+    if (expectsEnvelope && rows.length > 0) {
+      const last = rows[rows.length - 1];
+      const parsed = parseProfileItem(last);
+      if (parsed) {
+        profile = parsed;
+        rows = rows.slice(0, rows.length - 1);
+      }
+    }
+
+    // Capture the EXPLAIN plan as a non-fatal side-trip, gated on the
+    // metrics setting. We pass the ORIGINAL (non-PROFILE-prefixed)
+    // query so EXPLAIN runs against what the user typed.
+    const explain = collectMetrics ? await this.runExplain(query) : '';
 
     const metadata: QueryResultMetadata = {
       dql: query,
@@ -493,6 +544,7 @@ export class DittoManager {
       resultCount: rows.length,
       explain,
       timestamp: Date.now(),
+      profile,
     };
     return { rows, durationMs, metadata };
   }
@@ -505,7 +557,7 @@ export class DittoManager {
     if (query.trimStart().toUpperCase().startsWith('EXPLAIN')) { return ''; }
     try {
       const result = await this.session.ditto.store.execute(`EXPLAIN ${query}`);
-      const first = (result.items as any[])[0]?.value;
+      const first = result.items[0]?.value;
       if (!first) { return ''; }
       return JSON.stringify(first, null, 2);
     } catch (err) {

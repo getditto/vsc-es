@@ -187,6 +187,11 @@ export type QueryIn =
   | { type: 'query.rowActivated'; rowJson: string }
   | { type: 'query.starCurrent'; query: string }
   | { type: 'query.textChanged'; text: string }
+  // Cog menu in the Query Editor — toggles the two workspace settings
+  // (`dittoVsce.collectProfiling`, `dittoVsce.collectMetrics`). The host
+  // writes the value to the user's global config and broadcasts the new
+  // settings back to every open Query Editor + the Inspector.
+  | { type: 'query.setSetting'; key: 'collectProfiling' | 'collectMetrics'; value: boolean }
   // Right-click menu items on a results row. The webview emits the
   // raw row JSON; the host derives the collection from the last-run
   // DQL and walks the user through the attachment dialog.
@@ -200,7 +205,17 @@ export type QueryIn =
   | { type: 'query.exportRows'; json: string; rowCount: number };
 
 export type QueryOut =
-  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: QueryResultMetadata }
+  | {
+      type: 'query.result';
+      rows: Record<string, unknown>[];
+      columns: string[];
+      durationMs: number;
+      /** Result metadata. Always populated by the host (never
+       *  undefined on the wire). Includes `profile` when a profile
+       *  was captured — webview consumers read `metadata.profile`
+       *  rather than a hoisted field to keep one source of truth. */
+      metadata: QueryResultMetadata;
+    }
   | { type: 'query.error'; message: string }
   // Available run-locations for this connection. `['local']` when the
   // connection has no HTTP creds; `['local','http']` when both
@@ -208,6 +223,12 @@ export type QueryOut =
   // dropdown entirely when only one mode is available.
   | { type: 'query.modeInit'; availableModes: QueryMode[] }
   | { type: 'query.setText'; text: string }
+  // Current workspace settings the Query Editor cog menu surfaces.
+  // Pushed on panel resolve and whenever the config changes (regardless
+  // of source: the cog menu itself, VS Code's settings UI, or a
+  // settings.json edit). The webview uses these to hide the Profile
+  // toggle button when `collectProfiling === false`.
+  | { type: 'query.settings'; collectProfiling: boolean; collectMetrics: boolean }
   // Acknowledgements for `query.exportRows`. The webview uses these to
   // clear its "Exporting…" indicator and (on error) surface the
   // message inline rather than via a modal.
@@ -286,7 +307,11 @@ export type InspectorOut =
   // Per-installation Inspector preferences (currently just the
   // dismiss flag for the LIMIT hint). Pushed once on resolve and
   // again whenever the user toggles a preference.
-  | { type: 'inspector.preferences'; hideLimitHint: boolean };
+  | { type: 'inspector.preferences'; hideLimitHint: boolean }
+  // Workspace settings the Inspector cares about. Today: whether
+  // metrics collection is enabled (controls visibility of the Metrics
+  // tab). Pushed on resolve and whenever the user toggles the setting.
+  | { type: 'inspector.settings'; collectMetrics: boolean };
 
 // ─── Logging (any panel webview → host, host → any webview) ──────
 /** Webview → host: emit a log line. */

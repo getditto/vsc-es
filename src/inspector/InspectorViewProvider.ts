@@ -43,6 +43,17 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     this.post({ type: 'inspector.preferences', hideLimitHint: p.hideLimitHint });
   }
 
+  /** Re-push the workspace settings the Inspector cares about
+   *  (currently just `collectMetrics`). Called on resolve and from the
+   *  extension's `onDidChangeConfiguration` listener so the Inspector
+   *  reactively hides / shows the Metrics tab. */
+  pushSettings(): void {
+    const collectMetrics = vscode.workspace
+      .getConfiguration('dittoVsce')
+      .get<boolean>('collectMetrics', true);
+    this.post({ type: 'inspector.settings', collectMetrics });
+  }
+
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     view.webview.options = {
@@ -113,6 +124,10 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     // as the help URIs, since the webview's first render needs to
     // know whether to suppress the LIMIT tip.
     this.pushPreferences();
+
+    // Push the workspace settings (collectMetrics gate) so the webview
+    // knows whether to render the Metrics tab on first paint.
+    this.pushSettings();
 
     // Push initial state.
     this.post({ type: 'inspector.contentChanged', content: this.controller.getContent() });

@@ -1,20 +1,15 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { assertNever } from '../shared/assert-never.js';
 import '../shared/json-viewer.js';
+import type { QueryProfile } from '../../src/ditto/QueryProfile.js';
+import type { QueryOut, QueryMode } from '../../src/ipc/messages.js';
+// Note: <ditto-profile-viewer> is registered by webview-ui/query/main.ts's
+// side-import, not here — keeping component registration in one place
+// (the entrypoint) avoids accidental double-imports.
 
-type QueryMode = 'local' | 'http';
-
-type In =
-  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: unknown }
-  | { type: 'query.error'; message: string }
-  | { type: 'query.setText'; text: string }
-  | { type: 'query.modeInit'; availableModes: QueryMode[] }
-  | { type: 'query.exportDone'; rowCount: number; path: string }
-  | { type: 'query.exportCancelled' }
-  | { type: 'query.exportError'; message: string };
-
-type View = 'table' | 'json';
+type View = 'table' | 'json' | 'profile';
 type RunState = 'idle' | 'running' | 'success' | 'error';
 
 const TRUNCATE_AT = 120;
@@ -68,6 +63,25 @@ export class QueryEditor extends LitElement {
   // showing "Exporting…" between the click and the host's
   // `query.exportDone`/`exportCancelled`/`exportError` response.
   @state() private isExporting = false;
+  // Profile envelope from the last `query.result` (null when the host
+  // didn't include one, e.g. non-SELECT or profiling disabled).
+  @state() private profile: QueryProfile | null = null;
+  // Snapshot of the query text at the moment `run()` was invoked.
+  // The Profile viewer's empty-state branches use this to show the
+  // statement that was actually executed (which may differ from the
+  // current editor contents if the user has since typed more).
+  @state() private lastQueryRun = '';
+  // Workspace settings pushed by the host. `collectProfiling` gates
+  // the Profile toggle button; `collectMetrics` is forwarded to the
+  // host on every Run (it doesn't directly affect this webview's UI
+  // — the Inspector handles its own Metrics tab gating). Defaults
+  // optimistic so the toggle is offered until the host's first push
+  // lands (the actual setting still applies to query.run-time
+  // behavior via the host's fresh read).
+  @state() private settings = { collectProfiling: true, collectMetrics: true };
+  // Cog popover open/closed state. Anchored to the cog button; clicks
+  // outside the popover close it (handled at document level).
+  @state() private settingsMenuOpen = false;
 
   static styles = css`
     :host {
@@ -139,6 +153,65 @@ export class QueryEditor extends LitElement {
       cursor: pointer;
     }
     button.star[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+    /* Cog button + popover for the profiling/metrics gate menu.
+     * The button sits in the toolbar after Favorite. The popover is
+     * anchored below the button via a wrapper with position: relative. */
+    .settings-wrap { position: relative; display: inline-block; }
+    button.settings-cog {
+      /* Match Favorite's overall button height (padding 6px 12px around
+       * the 13px "★ Favorite" text → ~28px tall) while showing a single
+       * larger glyph. The lower vertical padding + larger font-size +
+       * pinned line-height keep the height aligned without adding a
+       * text label. */
+      padding: 3px 10px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 2px;
+      font: inherit;
+      font-size: 18px;
+      line-height: 1.2;
+      cursor: pointer;
+    }
+    button.settings-cog.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    .settings-popover {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      z-index: 1000;
+      min-width: 240px;
+      padding: 10px;
+      background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .settings-popover .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .settings-popover .row input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: var(--vscode-button-background);
+    }
+    .settings-popover .row .label { flex: 1; color: var(--vscode-foreground); }
+    .settings-popover .hint {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      padding-top: 4px;
+      border-top: 1px solid var(--vscode-panel-border);
+    }
 
     .results-header {
       display: flex;
@@ -386,46 +459,72 @@ export class QueryEditor extends LitElement {
     // removed in disconnectedCallback to avoid leaks across reloads.
     document.addEventListener('click', this.closeContextMenu);
     document.addEventListener('contextmenu', this.closeContextMenu);
-    onHostMessage<In>(msg => {
-      if (msg.type === 'query.result') {
-        this.rows = msg.rows;
-        this.columns = msg.columns;
-        this.durationMs = msg.durationMs;
-        this.errorMessage = null;
-        this.state = 'success';
-        this.selectedRowIndex = null;
-        // New result → snap pagination to page 1, and clamp pageSize
-        // to a value that's valid for this size.
-        this.currentPage = 1;
-        const sizes = this.pageSizes;
-        if (!sizes.includes(this.pageSize)) { this.pageSize = sizes[0]; }
-      } else if (msg.type === 'query.error') {
-        this.errorMessage = msg.message;
-        this.rows = [];
-        this.columns = [];
-        this.state = 'error';
-        this.selectedRowIndex = null;
-      } else if (msg.type === 'query.setText') {
-        this.query = msg.text;
-        // Sync the host immediately so the tab title matches the loaded query
-        // (no debounce needed — this is a deliberate user action).
-        postToHost({ type: 'query.textChanged', text: this.query });
-      } else if (msg.type === 'query.modeInit') {
-        this.availableModes = msg.availableModes.length > 0 ? msg.availableModes : ['local'];
-        // Pin the current selection to a still-valid mode (e.g. host
-        // re-pushes after a config change that removed HTTP creds).
-        if (!this.availableModes.includes(this.mode)) {
-          this.mode = this.availableModes[0];
-        }
-      } else if (
-        msg.type === 'query.exportDone'
-        || msg.type === 'query.exportCancelled'
-        || msg.type === 'query.exportError'
-      ) {
-        // Three flavours of "export over" — clear the busy flag in all
-        // three. The success/error toasts are owned by the host so the
-        // webview doesn't render its own banner.
-        this.isExporting = false;
+    // Same click-away pattern for the settings cog popover.
+    document.addEventListener('click', this.onDocumentClick);
+    onHostMessage<QueryOut>(msg => {
+      switch (msg.type) {
+        case 'query.result':
+          this.rows = msg.rows;
+          this.columns = msg.columns;
+          this.durationMs = msg.durationMs;
+          this.profile = msg.metadata.profile ?? null;
+          this.errorMessage = null;
+          this.state = 'success';
+          this.selectedRowIndex = null;
+          // New result → snap pagination to page 1, and clamp pageSize
+          // to a value that's valid for this size.
+          this.currentPage = 1;
+          {
+            const sizes = this.pageSizes;
+            if (!sizes.includes(this.pageSize)) { this.pageSize = sizes[0]; }
+          }
+          break;
+        case 'query.error':
+          this.errorMessage = msg.message;
+          this.rows = [];
+          this.columns = [];
+          this.state = 'error';
+          this.selectedRowIndex = null;
+          break;
+        case 'query.setText':
+          this.query = msg.text;
+          // Sync the host immediately so the tab title matches the loaded query
+          // (no debounce needed — this is a deliberate user action).
+          postToHost({ type: 'query.textChanged', text: this.query });
+          break;
+        case 'query.modeInit':
+          this.availableModes = msg.availableModes.length > 0 ? msg.availableModes : ['local'];
+          // Pin the current selection to a still-valid mode (e.g. host
+          // re-pushes after a config change that removed HTTP creds).
+          if (!this.availableModes.includes(this.mode)) {
+            this.mode = this.availableModes[0];
+          }
+          break;
+        case 'query.settings':
+          this.settings = {
+            collectProfiling: !!msg.collectProfiling,
+            collectMetrics: !!msg.collectMetrics,
+          };
+          // If profiling just turned off while the user was on the
+          // Profile view, fall back to JSON so they're not stuck on a
+          // toggle button that's about to disappear.
+          if (!this.settings.collectProfiling && this.view === 'profile') {
+            this.view = 'json';
+          }
+          break;
+        case 'query.exportDone':
+        case 'query.exportCancelled':
+        case 'query.exportError':
+          // Three flavours of "export over" — clear the busy flag in all
+          // three. The success/error toasts are owned by the host so the
+          // webview doesn't render its own banner.
+          this.isExporting = false;
+          break;
+        default:
+          // Compile-time exhaustiveness check — if QueryOut grows a
+          // new variant and we forget to handle it here, the
+          // assertNever call will fail typechecking.
+          assertNever(msg);
       }
     });
   }
@@ -433,6 +532,7 @@ export class QueryEditor extends LitElement {
   disconnectedCallback(): void {
     document.removeEventListener('click', this.closeContextMenu);
     document.removeEventListener('contextmenu', this.closeContextMenu);
+    document.removeEventListener('click', this.onDocumentClick);
     super.disconnectedCallback();
   }
 
@@ -441,6 +541,7 @@ export class QueryEditor extends LitElement {
     this.state = 'running';
     this.errorMessage = null;
     this.selectedRowIndex = null;
+    this.lastQueryRun = this.query;
     postToHost({ type: 'query.run', query: this.query, mode: this.mode });
   }
 
@@ -565,6 +666,75 @@ export class QueryEditor extends LitElement {
     postToHost({ type: 'query.starCurrent', query: this.query });
   }
 
+  /** Render the cog button + (when open) the popover with the two
+   *  toggles. Clicking the cog opens; clicking outside the popover
+   *  closes (handled by the document-level listener below). */
+  private renderSettingsCog() {
+    return html`
+      <span class="settings-wrap">
+        <button
+          class=${'settings-cog' + (this.settingsMenuOpen ? ' active' : '')}
+          title="Profiling and metrics settings"
+          aria-label="Profiling and metrics settings"
+          aria-expanded=${this.settingsMenuOpen ? 'true' : 'false'}
+          @click=${(e: MouseEvent) => {
+            e.stopPropagation();
+            this.settingsMenuOpen = !this.settingsMenuOpen;
+          }}
+        >⚙</button>
+        ${this.settingsMenuOpen ? html`
+          <div class="settings-popover" @click=${(e: Event) => e.stopPropagation()}>
+            <label class="row">
+              <input
+                type="checkbox"
+                .checked=${this.settings.collectProfiling}
+                @change=${(e: Event) => this.toggleSetting('collectProfiling', (e.target as HTMLInputElement).checked)}
+              />
+              <span class="label">Capture profiling data</span>
+            </label>
+            <label class="row">
+              <input
+                type="checkbox"
+                .checked=${this.settings.collectMetrics}
+                @change=${(e: Event) => this.toggleSetting('collectMetrics', (e.target as HTMLInputElement).checked)}
+              />
+              <span class="label">Capture query metrics</span>
+            </label>
+            <div class="hint">
+              Off-toggles hide the matching tabs and skip the per-query
+              SDK overhead. Changes are saved to your user settings.
+            </div>
+          </div>
+        ` : nothing}
+      </span>
+    `;
+  }
+
+  private toggleSetting(key: 'collectProfiling' | 'collectMetrics', value: boolean) {
+    // Optimistically update local state so the checkbox reflects
+    // immediately; the host echoes back a `query.settings` after the
+    // config write completes which will overwrite (and reconcile if
+    // the write somehow failed).
+    this.settings = { ...this.settings, [key]: value };
+    postToHost({ type: 'query.setSetting', key, value });
+  }
+
+  /** Close the cog popover when the user clicks outside it. Hooked at
+   *  the document level so any click in the webview body works. */
+  private readonly onDocumentClick = (e: MouseEvent): void => {
+    if (!this.settingsMenuOpen) { return; }
+    const path = e.composedPath();
+    // Walk the event path; if it includes one of our own settings nodes,
+    // ignore (those handlers already e.stopPropagation()'d, but defend
+    // against bubbling weirdness across shadow boundaries).
+    const fromUs = path.some(t => {
+      if (!(t instanceof Element)) { return false; }
+      return t.classList?.contains('settings-popover')
+          || t.classList?.contains('settings-cog');
+    });
+    if (!fromUs) { this.settingsMenuOpen = false; }
+  };
+
   /**
    * Serialise the ENTIRE in-memory result set (not just `pagedRows`) as
    * a JSON array and ship it to the host. We pretty-print with 2-space
@@ -634,6 +804,7 @@ export class QueryEditor extends LitElement {
           <button class="star" ?disabled=${!this.query.trim()} title="Save current query to favorites" @click=${this.starCurrent}>
             ★ Favorite
           </button>
+          ${this.renderSettingsCog()}
         </div>
         <textarea
           .value=${this.query}
@@ -660,6 +831,9 @@ export class QueryEditor extends LitElement {
           <div class="view-toggle">
             <button class=${this.view === 'json' ? 'active' : ''} @click=${() => this.view = 'json'}>JSON</button>
             <button class=${this.view === 'table' ? 'active' : ''} @click=${() => this.view = 'table'}>Table</button>
+            ${this.settings.collectProfiling ? html`
+              <button class=${this.view === 'profile' ? 'active' : ''} @click=${() => this.view = 'profile'}>Profile</button>
+            ` : nothing}
           </div>
         </div>
       ` : nothing}
@@ -668,6 +842,13 @@ export class QueryEditor extends LitElement {
         ${this.state === 'idle' ? html`<div class="empty">Run a query to see results.</div>` : nothing}
         ${(this.state === 'success' || this.state === 'running') && this.view === 'table' ? this.renderTable() : nothing}
         ${(this.state === 'success' || this.state === 'running') && this.view === 'json' ? this.renderJson() : nothing}
+        ${(this.state === 'success' || this.state === 'running') && this.view === 'profile' ? html`
+          <ditto-profile-viewer
+            .profile=${this.profile ?? undefined}
+            .mode=${this.mode}
+            .lastQueryText=${this.lastQueryRun}
+          ></ditto-profile-viewer>
+        ` : nothing}
       </div>
       ${this.renderPagination()}
       ${this.renderContextMenu()}

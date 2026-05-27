@@ -1,4 +1,5 @@
 import './query-element.js';
+import './profile-viewer.js';
 import { _setMirroredLevel } from '../shared/logger.js';
 
 window.addEventListener('message', (e) => {

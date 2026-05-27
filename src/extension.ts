@@ -221,6 +221,29 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
 
+  // ─── Settings reactivity ─────────────────────────────────────
+  // When the user toggles dittoVsce.collectProfiling or
+  // dittoVsce.collectMetrics (either via the Query Editor's cog menu,
+  // VS Code's settings UI, or editing settings.json directly), refresh
+  // the tree (so the Query Metrics row shows/hides) and re-push the
+  // settings to the Inspector webview (so the Metrics tab shows/hides).
+  // The Query Editor reads the settings fresh on every Run, so it
+  // doesn't need an event hook.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('dittoVsce.collectMetrics')) {
+        treeProvider.refresh();
+        inspectorView.pushSettings();
+      }
+      if (e.affectsConfiguration('dittoVsce.collectProfiling')) {
+        // No tree gate yet for profiling (Query Editor reads the
+        // setting on each Run), but re-push to the Inspector in case
+        // we add a profile-specific tab there later.
+        inspectorView.pushSettings();
+      }
+    }),
+  );
+
   // ─── Tree expansion persistence ──────────────────────────────
   // VS Code's TreeView API doesn't expose "is X expanded?" — we
   // maintain our own model by listening to expand/collapse events.
@@ -719,6 +742,34 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         ? String(node.collection.name)
         : undefined;
       AddIndexPanel.show(context, collectionsRepo, logger, preselected);
+    }),
+    vscode.commands.registerCommand('dittoVsce.deleteIndex', async (node?: any) => {
+      // Context-menu only — the menu's `when` clause restricts to
+      // `viewItem == index`, so a missing node here means the command
+      // was invoked from the palette without a tree selection.
+      if (node?.kind !== 'index') {
+        vscode.window.showWarningMessage('Right-click an index in the tree to delete it.');
+        return;
+      }
+      if (manager.getActiveConfigId() !== node.databaseId) {
+        vscode.window.showWarningMessage('Connect to this database first.');
+        return;
+      }
+      const indexName = node.index.displayName;
+      const confirm = await vscode.window.showWarningMessage(
+        `Delete index "${indexName}" on collection "${node.collectionName}"?`,
+        { modal: true, detail: 'This removes the index from the SDK store. The data in the collection is not affected, but queries that relied on the index may run slower until you add it back.' },
+        'Delete',
+      );
+      if (confirm !== 'Delete') { return; }
+      try {
+        await collectionsRepo.dropIndex(indexName, node.collectionName);
+        vscode.window.showInformationMessage(`Deleted index "${indexName}".`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.withTag('ext:deleteIndex').error('Drop index failed', { indexName, collection: node.collectionName, err: message });
+        vscode.window.showErrorMessage(`Delete index failed: ${message}`);
+      }
     }),
     vscode.commands.registerCommand('dittoVsce.queryAllInCollection', (databaseIdOrNode: any, collectionName?: string) => {
       // Tree single-click invocation passes (databaseId, collectionName) via `arguments`.

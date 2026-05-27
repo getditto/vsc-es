@@ -85,6 +85,14 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         databaseId: dbId,
         collection: c,
       }));
+      // The Query Metrics row is gated on the `dittoVsce.collectMetrics`
+      // workspace setting — when the developer has opted out of metrics
+      // collection there's no data to show, so the row is hidden.
+      // Extension wires `onDidChangeConfiguration` → `treeChanged.fire(undefined)`
+      // so toggling the setting refreshes the tree immediately.
+      const collectMetrics = vscode.workspace
+        .getConfiguration('dittoVsce')
+        .get<boolean>('collectMetrics', true);
       return [
         { kind: 'subscriptionsParent', databaseId: dbId },
         ...collectionRows,
@@ -93,7 +101,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         { kind: 'sectionHeader', databaseId: dbId, id: 'features', label: 'Features' },
         { kind: 'peerListing', databaseId: dbId },
         { kind: 'queryEditor', databaseId: dbId },
-        { kind: 'queryMetrics', databaseId: dbId },
+        ...(collectMetrics ? [{ kind: 'queryMetrics' as const, databaseId: dbId }] : []),
         { kind: 'databaseMetrics', databaseId: dbId },
         // Second thin divider so Import Data reads as a distinct
         // bulk-action group rather than another "feature shortcut".

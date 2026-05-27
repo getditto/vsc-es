@@ -2,7 +2,7 @@
   "name": "ditto-vsce",
   "displayName": "Ditto Edge Studio",
   "description": "Debug and inspect Ditto databases from VS Code.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -185,6 +185,11 @@
         "command": "dittoVsce.addIndex",
         "title": "Add Index…",
         "icon": "$(add)"
+      },
+      {
+        "command": "dittoVsce.deleteIndex",
+        "title": "Delete Index",
+        "icon": "$(trash)"
       }
     ],
     "keybindings": [
@@ -296,11 +301,36 @@
           "group": "inline"
         },
         {
+          "command": "dittoVsce.deleteIndex",
+          "when": "view == dittoDatabases && viewItem == index",
+          "group": "9_destructive@1"
+        },
+        {
+          "command": "dittoVsce.deleteIndex",
+          "when": "view == dittoDatabases && viewItem == index",
+          "group": "inline"
+        },
+        {
           "command": "dittoVsce.openImportData",
           "when": "view == dittoDatabases && viewItem == collection",
           "group": "3_import@1"
         }
       ]
+    },
+    "configuration": {
+      "title": "Ditto",
+      "properties": {
+        "dittoVsce.collectProfiling": {
+          "type": "boolean",
+          "default": true,
+          "description": "Capture PROFILE execution-plan envelopes for local SELECT queries. When off, the Profile view tab is hidden and SELECTs run without the PROFILE prefix (no profile overhead)."
+        },
+        "dittoVsce.collectMetrics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Capture EXPLAIN plans and duration metrics for queries. When off, the Metrics tab in the Inspector and the Query Metrics panel are hidden, and queries run without the EXPLAIN side-trip (no metrics overhead)."
+        }
+      }
     }
   },
   "scripts": {

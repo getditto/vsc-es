@@ -436,3 +436,17 @@ every `.env.sample` in the cloned tree and write a sibling `.env` next to
 each one. The single `renderEnvContent` template plus the destination
 list are the only things that need to change — the rest of the service
 keeps the same shape.
+
+---
+
+## 12. Query Profile (PROFILE)
+
+The Query Editor's "Profile" view tab captures Ditto's `PROFILE` execution-plan envelope for SELECT statements on the **Local** run path.
+
+- Triggered automatically: when the user runs a SELECT on Local that doesn't already start with `PROFILE`, `DittoManager.executeQuery` prefixes `PROFILE ` and pops the trailing `~request_profile` item before projecting rows.
+- HTTP mode never profiles (PROFILE is local-only for v1).
+- Envelope parsing lives in `src/ditto/QueryProfileParser.ts`. Parser is forgiving: missing fields default to zero/empty so the viewer renders something for partial envelopes.
+- Time formatting (`ms`/`µs`/`ns` auto-scale) lives in `src/util/profileTimeFormatter.ts`.
+- The Profile tab has two sub-modes: **Card** (recursive nested operator cards) and **Plan** (top-down boxes-and-lines tree). Both consume the same parsed `QueryProfile`.
+- Hotspot tint threshold: an operator's box turns orange when its `execNs` share of the plan-total exec exceeds 50% (see `HOTSPOT_THRESHOLD` in `webview-ui/query/profile-plan-tree.ts`).
+- See `docs/profile-card.png` and `docs/profile-plan.png` for the expected visual layout.
