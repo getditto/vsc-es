@@ -1,4 +1,4 @@
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import type { QueryProfileOperator, QueryProfileStats } from '../../src/ditto/QueryProfile.js';
 import { formatNs } from '../../src/util/profileTimeFormatter.js';
@@ -50,7 +50,7 @@ export class DittoProfileCardList extends LitElement {
     return this.renderNode(this.root);
   }
 
-  private renderNode(node: QueryProfileOperator): unknown {
+  private renderNode(node: QueryProfileOperator): TemplateResult {
     return html`
       <div>
         <div class="card">
@@ -76,7 +76,7 @@ export class DittoProfileCardList extends LitElement {
     `;
   }
 
-  private renderBadges(stats: QueryProfileStats | undefined): unknown {
+  private renderBadges(stats: QueryProfileStats | undefined): TemplateResult | typeof nothing {
     if (!stats) { return nothing; }
     return html`
       ${stats.documentsIn !== undefined ? html`<ditto-pill label="in" .value=${formatDocs(stats.documentsIn)} color="blue"></ditto-pill>` : nothing}

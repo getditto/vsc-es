@@ -1,4 +1,4 @@
-import { LitElement, html, css, svg } from 'lit';
+import { LitElement, html, css, svg, type SVGTemplateResult, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import type { QueryProfileOperator } from '../../src/ditto/QueryProfile.js';
 import { formatNs, percentOfTotal } from '../../src/util/profileTimeFormatter.js';
@@ -88,21 +88,23 @@ export class DittoProfilePlanTree extends LitElement {
     `;
   }
 
-  private renderConnectors(n: LaidOutNode, offsetX: number): unknown {
-    if (n.children.length === 0) { return null; }
+  private renderConnectors(n: LaidOutNode, offsetX: number): SVGTemplateResult[] {
+    if (n.children.length === 0) { return []; }
     const parentX = offsetX + n.centerX;
     const parentBottomY = n.y + BOX_HEIGHT_EST;
     const railY = parentBottomY + ROW_GAP_Y / 2;
     let childLeftEdge = offsetX + (n.subtreeWidth - flattenChildrenWidth(n)) / 2;
-    const lines: unknown[] = [];
+    const lines: SVGTemplateResult[] = [];
     const childCenters: number[] = [];
     for (const c of n.children) {
       const cx = childLeftEdge + c.centerX;
       childCenters.push(cx);
       // Stem from rail down into child box top.
       lines.push(svg`<line x1=${cx} y1=${railY} x2=${cx} y2=${c.y} />`);
-      // Recurse into the child's own subtree.
-      lines.push(this.renderConnectors(c, childLeftEdge));
+      // Recurse into the child's own subtree — flatten the result into
+      // `lines` so we keep a single-level SVGTemplateResult[] type that
+      // Lit can interpolate cleanly.
+      lines.push(...this.renderConnectors(c, childLeftEdge));
       childLeftEdge += c.subtreeWidth + BOX_GAP_X;
     }
     // Vertical drop from parent to rail.
@@ -116,14 +118,14 @@ export class DittoProfilePlanTree extends LitElement {
     return lines;
   }
 
-  private renderBox(f: LaidOutNode & { absX: number }, totalExec: number): unknown {
+  private renderBox(f: LaidOutNode & { absX: number }, totalExec: number): TemplateResult {
     const node = f.node;
     const execNs = node.stats?.execNs;
     const share = execNs !== undefined && totalExec > 0 ? execNs / totalExec : 0;
     const hotspot = share >= HOTSPOT_THRESHOLD;
     const keyAttr = pickKeyAttribute(node);
-    const timeLabel = execNs === undefined
-      ? null
+    const timeLabel: string | undefined = execNs === undefined
+      ? undefined
       : (() => {
           const pct = percentOfTotal(execNs, totalExec, 0);
           return pct ? `${formatNs(execNs)}  (${pct})` : formatNs(execNs);
@@ -143,21 +145,21 @@ export class DittoProfilePlanTree extends LitElement {
   }
 }
 
-function pickKeyAttribute(node: QueryProfileOperator): string | null {
+function pickKeyAttribute(node: QueryProfileOperator): string | undefined {
   const preferred = ['collection', 'alias', 'limit', 'field', 'table'];
   for (const key of preferred) {
     const found = node.attributes.find(a => a.key === key);
     if (found) { return found.value; }
   }
-  return null;
+  return undefined;
 }
 
-function formatIo(stats: QueryProfileOperator['stats']): string | null {
-  if (!stats) { return null; }
+function formatIo(stats: QueryProfileOperator['stats']): string | undefined {
+  if (!stats) { return undefined; }
   const inV = stats.documentsIn;
   const outV = stats.documentsOut;
   if (inV !== undefined && outV !== undefined) { return `${inV.toLocaleString()} in / ${outV.toLocaleString()} out`; }
   if (inV !== undefined) { return `${inV.toLocaleString()} in`; }
   if (outV !== undefined) { return `${outV.toLocaleString()} out`; }
-  return null;
+  return undefined;
 }

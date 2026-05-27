@@ -10,7 +10,12 @@ export type PillColor = 'blue' | 'green' | 'red' | 'orange' | 'purple';
 export class DittoPill extends LitElement {
   @property({ type: String }) label = '';
   @property({ type: String }) value = '';
-  @property({ type: String }) color: PillColor = 'blue';
+  // `reflect: true` — the host-attribute selectors (:host([color='blue']),
+  // etc.) match against the DOM attribute, not the JS property. Without
+  // reflection, mutating `el.color = 'red'` via JS would silently fail
+  // to restyle. All current callers set color via attribute templates
+  // so this is defense-in-depth, not a current bug.
+  @property({ type: String, reflect: true }) color: PillColor = 'blue';
 
   static styles = css`
     :host {
