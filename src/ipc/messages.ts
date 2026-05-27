@@ -297,7 +297,11 @@ export type InspectorOut =
   // Per-installation Inspector preferences (currently just the
   // dismiss flag for the LIMIT hint). Pushed once on resolve and
   // again whenever the user toggles a preference.
-  | { type: 'inspector.preferences'; hideLimitHint: boolean };
+  | { type: 'inspector.preferences'; hideLimitHint: boolean }
+  // Workspace settings the Inspector cares about. Today: whether
+  // metrics collection is enabled (controls visibility of the Metrics
+  // tab). Pushed on resolve and whenever the user toggles the setting.
+  | { type: 'inspector.settings'; collectMetrics: boolean };
 
 // ─── Logging (any panel webview → host, host → any webview) ──────
 /** Webview → host: emit a log line. */

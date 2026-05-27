@@ -221,6 +221,29 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
 
+  // ─── Settings reactivity ─────────────────────────────────────
+  // When the user toggles dittoVsce.collectProfiling or
+  // dittoVsce.collectMetrics (either via the Query Editor's cog menu,
+  // VS Code's settings UI, or editing settings.json directly), refresh
+  // the tree (so the Query Metrics row shows/hides) and re-push the
+  // settings to the Inspector webview (so the Metrics tab shows/hides).
+  // The Query Editor reads the settings fresh on every Run, so it
+  // doesn't need an event hook.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('dittoVsce.collectMetrics')) {
+        treeProvider.refresh();
+        inspectorView.pushSettings();
+      }
+      if (e.affectsConfiguration('dittoVsce.collectProfiling')) {
+        // No tree gate yet for profiling (Query Editor reads the
+        // setting on each Run), but re-push to the Inspector in case
+        // we add a profile-specific tab there later.
+        inspectorView.pushSettings();
+      }
+    }),
+  );
+
   // ─── Tree expansion persistence ──────────────────────────────
   // VS Code's TreeView API doesn't expose "is X expanded?" — we
   // maintain our own model by listening to expand/collapse events.

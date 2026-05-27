@@ -43,6 +43,10 @@ export class DittoInspectorElement extends LitElement {
   // resolve and on every dismiss/reset). Defaults to "show all tips"
   // until the host's first push lands.
   @state() private prefs: { hideLimitHint: boolean } = { hideLimitHint: false };
+  // Workspace settings that gate Inspector UI. `collectMetrics`
+  // controls whether the Metrics tab is offered. Defaults to true so
+  // a fresh install sees the tab until the host's first push lands.
+  @state() private settings: { collectMetrics: boolean } = { collectMetrics: true };
 
   static styles = [codiconStyles, css`
     :host {
@@ -109,6 +113,17 @@ export class DittoInspectorElement extends LitElement {
       case 'inspector.preferences':
         this.prefs = { hideLimitHint: !!m.hideLimitHint };
         break;
+      case 'inspector.settings':
+        this.settings = { collectMetrics: !!m.collectMetrics };
+        // If the user just turned metrics off while the Metrics tab is
+        // selected, the tab is about to disappear from the row — flip
+        // back to History so they don't end up on a stale empty body.
+        if (!this.settings.collectMetrics
+            && this.content.kind === 'query'
+            && this.content.tab === 'metrics') {
+          this.switchTab('history');
+        }
+        break;
     }
   };
 
@@ -134,7 +149,12 @@ export class DittoInspectorElement extends LitElement {
       return html`<help-content-element .uri=${this.helpUris.databaseMetrics ?? ''}></help-content-element>`;
     }
     if (c.kind === 'query') {
-      const tabs: QueryInspectorTab[] = ['history', 'favorites', 'json', 'metrics', 'help'];
+      // Filter the Metrics tab out when the workspace setting is off —
+      // the user opted out of metrics collection entirely so the tab
+      // has nothing to show.
+      const tabs: QueryInspectorTab[] = this.settings.collectMetrics
+        ? ['history', 'favorites', 'json', 'metrics', 'help']
+        : ['history', 'favorites', 'json', 'help'];
       return html`
         <div class="tabs" role="tablist">
           ${tabs.map(t => html`
