@@ -32,6 +32,8 @@ import {
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
+import { isSelectStatement, alreadyHasProfilePrefix, parseProfileItem } from './QueryProfileParser.js';
+import type { QueryProfile } from './QueryProfile.js';
 
 export interface TransportPrefs {
   isLanEnabled: boolean;
@@ -471,20 +473,41 @@ export class DittoManager {
 
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
    *
-   *  Mirrors the SwiftUI `QueryService.executeSelectedAppQuery` pattern: run the
-   *  user's query as-is for real result rows, then issue a SECOND `EXPLAIN <query>`
-   *  call to harvest plan metadata. Running EXPLAIN inline (prefixed) returns the
-   *  plan rows in place of the actual results, which is not what callers want.
+   *  For SELECT statements that the user hasn't already prefixed with PROFILE,
+   *  prepends `PROFILE ` so Ditto attaches an execution-plan envelope as the
+   *  trailing result item. The envelope is popped from the user-visible rows
+   *  and parsed into a structured `QueryProfile` returned alongside.
+   *
+   *  Non-SELECT statements, user-typed PROFILE prefixes, and parse failures
+   *  all degrade gracefully — query runs as-is, `metadata.profile` is undefined,
+   *  and the existing EXPLAIN side-trip still populates `metadata.explain`.
    */
   async executeQuery(query: string): Promise<{ rows: Record<string, unknown>[]; durationMs: number; metadata: QueryResultMetadata }> {
     if (!this.session) { throw new Error('No active database.'); }
-    const start = performance.now();
-    const result = await this.session.ditto.store.execute(query);
-    const durationMs = Math.round(performance.now() - start);
-    const rows = (result.items as any[]).map((i: any) => i.value as Record<string, unknown>);
 
-    // Capture the EXPLAIN plan as a separate, non-fatal call. If the user
-    // already prefixed EXPLAIN themselves, skip the recursive lookup.
+    const shouldProfile = isSelectStatement(query) && !alreadyHasProfilePrefix(query);
+    const effectiveQuery = shouldProfile ? `PROFILE ${query}` : query;
+
+    const start = performance.now();
+    const result = await this.session.ditto.store.execute(effectiveQuery);
+    const durationMs = Math.round(performance.now() - start);
+
+    // Pop the trailing ~request_profile item before we project the user's
+    // rows, so the result table never shows the profile envelope as a row.
+    let rows = (result.items as any[]).map((i: any) => i.value as Record<string, unknown>);
+    let profile: QueryProfile | undefined;
+    if (shouldProfile && rows.length > 0) {
+      const last = rows[rows.length - 1];
+      const parsed = parseProfileItem(last);
+      if (parsed) {
+        profile = parsed;
+        rows = rows.slice(0, rows.length - 1);
+      }
+    }
+
+    // Capture the EXPLAIN plan as a separate, non-fatal call. We pass the
+    // ORIGINAL (non-PROFILE-prefixed) query so EXPLAIN runs against what
+    // the user typed.
     const explain = await this.runExplain(query);
 
     const metadata: QueryResultMetadata = {
@@ -493,6 +516,7 @@ export class DittoManager {
       resultCount: rows.length,
       explain,
       timestamp: Date.now(),
+      profile,
     };
     return { rows, durationMs, metadata };
   }
