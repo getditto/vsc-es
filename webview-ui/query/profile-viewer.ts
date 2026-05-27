@@ -132,6 +132,15 @@ export class DittoProfileViewer extends LitElement {
     .legend { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); }
     .legend-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--vscode-descriptionForeground); }
     .legend-swatch { display: inline-flex; min-width: 64px; justify-content: flex-start; }
+    /* Hotspot swatch mirrors the dashed-orange border on bottleneck
+     * boxes — gives users a non-color cue (the dashes) in addition to
+     * the orange, so the legend reads correctly under deuteranopia. */
+    .legend-swatch.hotspot-swatch {
+      height: 14px;
+      border-radius: 4px;
+      background: rgba(245,124,0,0.22);
+      border: 2px dashed rgba(245,124,0,0.75);
+    }
 
     .empty {
       padding: 48px 24px;
@@ -205,6 +214,10 @@ export class DittoProfileViewer extends LitElement {
           ${this.renderLegendRow('exec', 'CPU time inside this operator', 'red')}
           ${this.renderLegendRow('recv', 'time waiting on upstream operators', 'orange')}
           ${this.renderLegendRow('send', 'time pushing output downstream', 'purple')}
+          <div class="legend-row" style="margin-top:6px;">
+            <span class="legend-swatch hotspot-swatch" aria-label="dashed orange border"></span>
+            <span>bottleneck — operator uses ≥ 50% of plan CPU work (Plan view only)</span>
+          </div>
         </div>
       </div>
     `;

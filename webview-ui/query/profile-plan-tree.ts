@@ -99,16 +99,29 @@ export class DittoProfilePlanTree extends LitElement {
       background: rgba(46,160,67,0.16);
       border: 1px solid rgba(46,160,67,0.45);
     }
+    /* Hotspot keeps the orange color cue AND adds a non-color cue
+     * (dashed, thicker border) so the distinction survives red-green
+     * color blindness (deuteranopia / protanopia — ~5-8% of men) where
+     * orange and green can collapse to similar yellow-brown hues. */
     .box.hotspot {
-      background: rgba(245,124,0,0.18);
-      border: 1px solid rgba(245,124,0,0.5);
+      background: rgba(245,124,0,0.22);
+      border: 2px dashed rgba(245,124,0,0.75);
     }
     .box .name { font-size: 12px; font-weight: 600; }
     .box .key  { font-size: 11px; color: var(--vscode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .box .time { font-size: 11px; font-variant-numeric: tabular-nums; }
     .box .io   { font-size: 10px; color: var(--vscode-descriptionForeground); }
     svg.connectors { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
-    line { stroke: var(--vscode-panel-border); stroke-width: 1; }
+    /* Tree-indent-guides is VS Code's purpose-built stroke for connector
+     * lines (used by the File Explorer tree). It's theme-aware and far
+     * more legible in dark mode than --vscode-panel-border (which is
+     * sized for thin pane dividers, not content lines). Foreground
+     * fallback covers themes that don't define the guides variable. */
+    line {
+      stroke: var(--vscode-tree-indentGuidesStroke, var(--vscode-foreground));
+      stroke-width: 1.5;
+      stroke-opacity: 0.65;
+    }
   `;
 
   render() {
