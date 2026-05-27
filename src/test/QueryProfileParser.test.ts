@@ -115,7 +115,7 @@ test('missing times default to zero (does not crash)', () => {
   assert.equal(p.times.elapsedNs, 0);
   assert.equal(p.times.parseNs, 0);
   assert.equal(p.times.planNs, 0);
-  assert.equal(p.times.startISO, '');
+  assert.equal(p.times.startISO, undefined);
 });
 
 test('does not misparse a user row with _id + plan as a profile (no envelope markers)', () => {

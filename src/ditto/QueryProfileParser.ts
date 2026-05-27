@@ -138,13 +138,13 @@ function parseStats(dict: Record<string, unknown>): QueryProfileStats {
 
 function parseTimes(dict: Record<string, unknown> | undefined): QueryProfileTimes {
   if (!dict) {
-    return { elapsedNs: 0, parseNs: 0, planNs: 0, startISO: '' };
+    return { elapsedNs: 0, parseNs: 0, planNs: 0, startISO: undefined };
   }
   return {
     elapsedNs: intValue(dict.elapsed) ?? 0,
     parseNs: intValue(dict.parse) ?? 0,
     planNs: intValue(dict.plan) ?? 0,
-    startISO: stringValue(dict.start) ?? '',
+    startISO: stringValue(dict.start),
   };
 }
 

@@ -22,10 +22,14 @@ function stripProfilePrefix(text: string): string {
   return text;
 }
 
+/** Format an epoch-ms timestamp as `YYYY-MM-DD HH:MM:SS` in local time.
+ *  The fixed ASCII format matches the SwiftUI Profile viewer's
+ *  screenshot — visual parity with the reference app outweighs
+ *  per-locale digit/format conventions for a developer tool. */
 function formatLocalTime(ms: number): string {
   if (!Number.isFinite(ms)) { return '—'; }
   const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, '0');
+  const pad = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 

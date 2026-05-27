@@ -12,8 +12,9 @@ export interface QueryProfileTimes {
   /** Time spent planning (operator selection, optimisation). */
   planNs: number;
   /** Server-side ISO timestamp of when the request started. Preserved
-   *  as the raw string for round-trip fidelity. */
-  startISO: string;
+   *  as the raw string for round-trip fidelity. `undefined` when Ditto
+   *  doesn't emit it (forward-compatible degrade). */
+  startISO?: string;
 }
 
 /** Per-operator throughput and timing from `#stats`. Every field is
@@ -55,7 +56,10 @@ export interface QueryProfile {
   id: string;
   /** Database ID. Comes back as `app_id` on the envelope, kept under
    *  that historical name in the field for parity with the SwiftUI
-   *  type, but surfaced in the UI as "db" (matches the screenshot). */
+   *  type, but surfaced in the UI as "db" (matches the screenshot).
+   *  TODO(terminology): rename to `databaseId` to match the
+   *  Ditto-Portal-terminology rename (App ID → Database ID); the
+   *  parser would keep reading `app_id` off the wire either way. */
   appId: string;
   featureFlags: string;
   queryType: string;
