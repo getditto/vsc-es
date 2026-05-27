@@ -1,9 +1,11 @@
 // webview-ui/query/profile-viewer.ts
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { QueryProfile } from '../../src/ditto/QueryProfile.js';
 import { formatNs } from '../../src/util/profileTimeFormatter.js';
 import { isSelectStatement } from '../../src/ditto/QueryProfileParser.js';
+import type { PillColor } from '../shared/pill.js';
+import '../shared/pill.js';
 import './profile-card-list.js';
 import './profile-plan-tree.js';
 
@@ -21,6 +23,7 @@ function stripProfilePrefix(text: string): string {
 }
 
 function formatLocalTime(ms: number): string {
+  if (!Number.isFinite(ms)) { return '—'; }
   const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
@@ -128,19 +131,7 @@ export class DittoProfileViewer extends LitElement {
 
     .legend { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); }
     .legend-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--vscode-descriptionForeground); }
-    .swatch {
-      display: inline-block;
-      width: 56px;
-      text-align: center;
-      font-weight: 600;
-      padding: 1px 0;
-      border-radius: 999px;
-    }
-    .swatch.blue   { background: rgba( 41,121,255,0.16); color: var(--vscode-charts-blue, #2979ff); }
-    .swatch.green  { background: rgba( 46,160, 67,0.16); color: var(--vscode-charts-green, #2ea043); }
-    .swatch.red    { background: rgba(229, 57, 53,0.16); color: var(--vscode-charts-red, #e53935); }
-    .swatch.orange { background: rgba(245,124,  0,0.16); color: var(--vscode-charts-orange, #f57c00); }
-    .swatch.purple { background: rgba(142, 36,170,0.16); color: var(--vscode-charts-purple, #8e24aa); }
+    .legend-swatch { display: inline-flex; min-width: 64px; justify-content: flex-start; }
 
     .empty {
       padding: 48px 24px;
@@ -223,8 +214,15 @@ export class DittoProfileViewer extends LitElement {
     return html`<div class="cell"><div class="label">${label}</div><div class="value">${value}</div></div>`;
   }
 
-  private renderLegendRow(label: string, description: string, color: string) {
-    return html`<div class="legend-row"><span class=${`swatch ${color}`}>${label}</span><span>${description}</span></div>`;
+  private renderLegendRow(label: string, description: string, color: PillColor) {
+    return html`
+      <div class="legend-row">
+        <span class="legend-swatch">
+          <ditto-pill label=${label} value="" color=${color}></ditto-pill>
+        </span>
+        <span>${description}</span>
+      </div>
+    `;
   }
 
   private renderHttpState() {
