@@ -19,6 +19,9 @@ without leaving VS Code.
   driven by `ditto.presence.observe` and the `__sync_status` system collection.
 - **Query Editor** — run ad-hoc DQL against the active database. Results in
   table or JSON view, with column union across heterogeneous documents.
+- **Query profiling** — visualize Ditto's `PROFILE` execution plan as nested
+  cards or a top-down tree, with per-operator timing, doc throughput, and
+  bottleneck highlighting.
 - **Two auth modes** — Server (Big Peer with URL) and
   Small Peers Only (offline token + optional shared-secret key).
 - **Get Quickstarts** — one click clones the official
