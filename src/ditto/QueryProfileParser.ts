@@ -48,7 +48,7 @@ export function parseProfileItem(item: Record<string, unknown>): QueryProfile | 
   let envelope: Record<string, unknown> | undefined;
   const nested = item[PROFILE_ENVELOPE_KEY];
   if (isObject(nested)) {
-    envelope = nested as Record<string, unknown>;
+    envelope = nested;
   } else if (
     typeof item._id === 'string'
     && isObject(item.plan)
@@ -62,7 +62,7 @@ export function parseProfileItem(item: Record<string, unknown>): QueryProfile | 
   const id = stringValue(envelope._id);
   const planDict = envelope.plan;
   if (!id || !isObject(planDict)) { return null; }
-  const plan = parseOperator(planDict as Record<string, unknown>);
+  const plan = parseOperator(planDict);
   if (!plan) { return null; }
 
   return {
@@ -74,7 +74,7 @@ export function parseProfileItem(item: Record<string, unknown>): QueryProfile | 
     resultCount: intValue(envelope.resultCount) ?? 0,
     state: stringValue(envelope.state) ?? '',
     text: stringValue(envelope.text) ?? '',
-    times: parseTimes(isObject(envelope.times) ? (envelope.times as Record<string, unknown>) : undefined),
+    times: parseTimes(isObject(envelope.times) ? envelope.times : undefined),
     plan,
     capturedAtMs: Date.now(),
   };
@@ -85,16 +85,14 @@ function parseOperator(dict: Record<string, unknown>): QueryProfileOperator | nu
   if (!name) { return null; }
 
   const statsRaw = dict['#stats'];
-  const stats = isObject(statsRaw)
-    ? parseStats(statsRaw as Record<string, unknown>)
-    : undefined;
+  const stats = isObject(statsRaw) ? parseStats(statsRaw) : undefined;
 
   const childrenRaw = dict.children;
   const children: QueryProfileOperator[] = [];
   if (Array.isArray(childrenRaw)) {
     for (const c of childrenRaw) {
       if (isObject(c)) {
-        const parsed = parseOperator(c as Record<string, unknown>);
+        const parsed = parseOperator(c);
         if (parsed) { children.push(parsed); }
       }
     }
@@ -175,12 +173,28 @@ function hasEnvelopeMarker(item: Record<string, unknown>): boolean {
   );
 }
 
+/** Best-effort string coercion. Strings pass through; numbers and
+ *  bigints stringify losslessly via `String(v)` — bigint IDs above
+ *  Number.MAX_SAFE_INTEGER preserve full precision through this path. */
 function stringValue(v: unknown): string | undefined {
   if (typeof v === 'string') { return v; }
   if (typeof v === 'number' || typeof v === 'bigint') { return String(v); }
   return undefined;
 }
 
+/** Best-effort integer coercion. All numeric paths route through
+ *  `number`, which is **lossy for bigints above Number.MAX_SAFE_INTEGER
+ *  (2^53 − 1)**. This is acceptable for the call sites:
+ *
+ *  - `documentsIn` / `documentsOut`: realistic profile envelopes report
+ *    document counts well below 2^53 (a single Ditto SELECT returning
+ *    9 quadrillion rows is not a real workload).
+ *  - Phase times in nanoseconds: 2^53 ns is ~104 days; a single query
+ *    elapsed time that long is a runaway, not a precision concern.
+ *
+ *  IDs that genuinely need bigint precision should route through
+ *  `stringValue` instead — see the `id`, `app_id` reads in
+ *  `parseProfileItem`. */
 function intValue(v: unknown): number | undefined {
   if (typeof v === 'number' && Number.isFinite(v)) { return v; }
   if (typeof v === 'bigint') { return Number(v); }
