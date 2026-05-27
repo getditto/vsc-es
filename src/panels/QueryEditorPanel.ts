@@ -224,6 +224,35 @@ export class QueryEditorPanel {
     // defeat VS Code's message-queue race (same defensive pattern the
     // other panels use).
     setTimeout(() => { void this.postModeInit(); }, 50);
+
+    // Push the current workspace settings so the cog menu and the
+    // Profile view-toggle button render with the right state on first
+    // paint. Same one-tick defer to avoid the message-queue race.
+    setTimeout(() => this.postSettings(), 50);
+
+    // Re-push settings whenever they change (either via the cog menu's
+    // round-trip, VS Code's settings UI, or a manual edit to
+    // settings.json). The tree + Inspector listeners in extension.ts
+    // handle their own surfaces; this is just for THIS panel.
+    this.disposables.push(
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('dittoVsce.collectProfiling')
+            || e.affectsConfiguration('dittoVsce.collectMetrics')) {
+          this.postSettings();
+        }
+      }),
+    );
+  }
+
+  /** Push the current `collectProfiling` + `collectMetrics` settings
+   *  to the webview. Called on panel resolve and from the config
+   *  listener above. */
+  private postSettings(): void {
+    this.post({
+      type: 'query.settings',
+      collectProfiling: readCollectProfiling(),
+      collectMetrics: readCollectMetrics(),
+    });
   }
 
   /** Resolve which run-locations are usable for this connection. HTTP
@@ -288,6 +317,18 @@ export class QueryEditorPanel {
       // last-edited contents. upsertQueryTab is idempotent on `id` so
       // emitting on every keystroke just rewrites the same slot.
       void this.tracker.upsertQueryTab(this.databaseId, { id: this.tabId, text: msg.text });
+      return;
+    }
+    if (msg.type === 'query.setSetting') {
+      // User toggled an item in the cog popover. Write to user-scope
+      // config (Global) so the preference travels across workspaces.
+      // The onDidChangeConfiguration listener above will fan the new
+      // value back out to all open Query Editors and the Inspector,
+      // so we don't need to manually echo here.
+      const key = msg.key === 'collectProfiling' ? 'collectProfiling' : 'collectMetrics';
+      void vscode.workspace
+        .getConfiguration('dittoVsce')
+        .update(key, msg.value, vscode.ConfigurationTarget.Global);
       return;
     }
     if (msg.type !== 'query.run') { return; }

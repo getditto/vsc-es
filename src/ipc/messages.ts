@@ -187,6 +187,11 @@ export type QueryIn =
   | { type: 'query.rowActivated'; rowJson: string }
   | { type: 'query.starCurrent'; query: string }
   | { type: 'query.textChanged'; text: string }
+  // Cog menu in the Query Editor — toggles the two workspace settings
+  // (`dittoVsce.collectProfiling`, `dittoVsce.collectMetrics`). The host
+  // writes the value to the user's global config and broadcasts the new
+  // settings back to every open Query Editor + the Inspector.
+  | { type: 'query.setSetting'; key: 'collectProfiling' | 'collectMetrics'; value: boolean }
   // Right-click menu items on a results row. The webview emits the
   // raw row JSON; the host derives the collection from the last-run
   // DQL and walks the user through the attachment dialog.
@@ -219,6 +224,12 @@ export type QueryOut =
   // dropdown entirely when only one mode is available.
   | { type: 'query.modeInit'; availableModes: QueryMode[] }
   | { type: 'query.setText'; text: string }
+  // Current workspace settings the Query Editor cog menu surfaces.
+  // Pushed on panel resolve and whenever the config changes (regardless
+  // of source: the cog menu itself, VS Code's settings UI, or a
+  // settings.json edit). The webview uses these to hide the Profile
+  // toggle button when `collectProfiling === false`.
+  | { type: 'query.settings'; collectProfiling: boolean; collectMetrics: boolean }
   // Acknowledgements for `query.exportRows`. The webview uses these to
   // clear its "Exporting…" indicator and (on error) surface the
   // message inline rather than via a modal.

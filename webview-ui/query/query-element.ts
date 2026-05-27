@@ -12,6 +12,7 @@ type In =
   | { type: 'query.error'; message: string }
   | { type: 'query.setText'; text: string }
   | { type: 'query.modeInit'; availableModes: QueryMode[] }
+  | { type: 'query.settings'; collectProfiling: boolean; collectMetrics: boolean }
   | { type: 'query.exportDone'; rowCount: number; path: string }
   | { type: 'query.exportCancelled' }
   | { type: 'query.exportError'; message: string };
@@ -78,6 +79,17 @@ export class QueryEditor extends LitElement {
   // statement that was actually executed (which may differ from the
   // current editor contents if the user has since typed more).
   @state() private lastQueryRun = '';
+  // Workspace settings pushed by the host. `collectProfiling` gates
+  // the Profile toggle button; `collectMetrics` is forwarded to the
+  // host on every Run (it doesn't directly affect this webview's UI
+  // — the Inspector handles its own Metrics tab gating). Defaults
+  // optimistic so the toggle is offered until the host's first push
+  // lands (the actual setting still applies to query.run-time
+  // behavior via the host's fresh read).
+  @state() private settings = { collectProfiling: true, collectMetrics: true };
+  // Cog popover open/closed state. Anchored to the cog button; clicks
+  // outside the popover close it (handled at document level).
+  @state() private settingsMenuOpen = false;
 
   static styles = css`
     :host {
@@ -149,6 +161,58 @@ export class QueryEditor extends LitElement {
       cursor: pointer;
     }
     button.star[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+    /* Cog button + popover for the profiling/metrics gate menu.
+     * The button sits in the toolbar after Favorite. The popover is
+     * anchored below the button via a wrapper with position: relative. */
+    .settings-wrap { position: relative; display: inline-block; }
+    button.settings-cog {
+      padding: 6px 10px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 2px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.settings-cog.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    .settings-popover {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      z-index: 1000;
+      min-width: 240px;
+      padding: 10px;
+      background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .settings-popover .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .settings-popover .row input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: var(--vscode-button-background);
+    }
+    .settings-popover .row .label { flex: 1; color: var(--vscode-foreground); }
+    .settings-popover .hint {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      padding-top: 4px;
+      border-top: 1px solid var(--vscode-panel-border);
+    }
 
     .results-header {
       display: flex;
@@ -396,6 +460,8 @@ export class QueryEditor extends LitElement {
     // removed in disconnectedCallback to avoid leaks across reloads.
     document.addEventListener('click', this.closeContextMenu);
     document.addEventListener('contextmenu', this.closeContextMenu);
+    // Same click-away pattern for the settings cog popover.
+    document.addEventListener('click', this.onDocumentClick);
     onHostMessage<In>(msg => {
       if (msg.type === 'query.result') {
         this.rows = msg.rows;
@@ -428,6 +494,17 @@ export class QueryEditor extends LitElement {
         if (!this.availableModes.includes(this.mode)) {
           this.mode = this.availableModes[0];
         }
+      } else if (msg.type === 'query.settings') {
+        this.settings = {
+          collectProfiling: !!msg.collectProfiling,
+          collectMetrics: !!msg.collectMetrics,
+        };
+        // If profiling just turned off while the user was on the
+        // Profile view, fall back to JSON so they're not stuck on a
+        // toggle button that's about to disappear.
+        if (!this.settings.collectProfiling && this.view === 'profile') {
+          this.view = 'json';
+        }
       } else if (
         msg.type === 'query.exportDone'
         || msg.type === 'query.exportCancelled'
@@ -444,6 +521,7 @@ export class QueryEditor extends LitElement {
   disconnectedCallback(): void {
     document.removeEventListener('click', this.closeContextMenu);
     document.removeEventListener('contextmenu', this.closeContextMenu);
+    document.removeEventListener('click', this.onDocumentClick);
     super.disconnectedCallback();
   }
 
@@ -577,6 +655,75 @@ export class QueryEditor extends LitElement {
     postToHost({ type: 'query.starCurrent', query: this.query });
   }
 
+  /** Render the cog button + (when open) the popover with the two
+   *  toggles. Clicking the cog opens; clicking outside the popover
+   *  closes (handled by the document-level listener below). */
+  private renderSettingsCog() {
+    return html`
+      <span class="settings-wrap">
+        <button
+          class=${'settings-cog' + (this.settingsMenuOpen ? ' active' : '')}
+          title="Profiling and metrics settings"
+          aria-label="Profiling and metrics settings"
+          aria-expanded=${this.settingsMenuOpen ? 'true' : 'false'}
+          @click=${(e: MouseEvent) => {
+            e.stopPropagation();
+            this.settingsMenuOpen = !this.settingsMenuOpen;
+          }}
+        >⚙</button>
+        ${this.settingsMenuOpen ? html`
+          <div class="settings-popover" @click=${(e: Event) => e.stopPropagation()}>
+            <label class="row">
+              <input
+                type="checkbox"
+                .checked=${this.settings.collectProfiling}
+                @change=${(e: Event) => this.toggleSetting('collectProfiling', (e.target as HTMLInputElement).checked)}
+              />
+              <span class="label">Capture profiling data</span>
+            </label>
+            <label class="row">
+              <input
+                type="checkbox"
+                .checked=${this.settings.collectMetrics}
+                @change=${(e: Event) => this.toggleSetting('collectMetrics', (e.target as HTMLInputElement).checked)}
+              />
+              <span class="label">Capture query metrics</span>
+            </label>
+            <div class="hint">
+              Off-toggles hide the matching tabs and skip the per-query
+              SDK overhead. Changes are saved to your user settings.
+            </div>
+          </div>
+        ` : nothing}
+      </span>
+    `;
+  }
+
+  private toggleSetting(key: 'collectProfiling' | 'collectMetrics', value: boolean) {
+    // Optimistically update local state so the checkbox reflects
+    // immediately; the host echoes back a `query.settings` after the
+    // config write completes which will overwrite (and reconcile if
+    // the write somehow failed).
+    this.settings = { ...this.settings, [key]: value };
+    postToHost({ type: 'query.setSetting', key, value });
+  }
+
+  /** Close the cog popover when the user clicks outside it. Hooked at
+   *  the document level so any click in the webview body works. */
+  private readonly onDocumentClick = (e: MouseEvent): void => {
+    if (!this.settingsMenuOpen) { return; }
+    const path = e.composedPath();
+    // Walk the event path; if it includes one of our own settings nodes,
+    // ignore (those handlers already e.stopPropagation()'d, but defend
+    // against bubbling weirdness across shadow boundaries).
+    const fromUs = path.some(t => {
+      if (!(t instanceof Element)) { return false; }
+      return t.classList?.contains('settings-popover')
+          || t.classList?.contains('settings-cog');
+    });
+    if (!fromUs) { this.settingsMenuOpen = false; }
+  };
+
   /**
    * Serialise the ENTIRE in-memory result set (not just `pagedRows`) as
    * a JSON array and ship it to the host. We pretty-print with 2-space
@@ -646,6 +793,7 @@ export class QueryEditor extends LitElement {
           <button class="star" ?disabled=${!this.query.trim()} title="Save current query to favorites" @click=${this.starCurrent}>
             ★ Favorite
           </button>
+          ${this.renderSettingsCog()}
         </div>
         <textarea
           .value=${this.query}
@@ -672,7 +820,9 @@ export class QueryEditor extends LitElement {
           <div class="view-toggle">
             <button class=${this.view === 'json' ? 'active' : ''} @click=${() => this.view = 'json'}>JSON</button>
             <button class=${this.view === 'table' ? 'active' : ''} @click=${() => this.view = 'table'}>Table</button>
-            <button class=${this.view === 'profile' ? 'active' : ''} @click=${() => this.view = 'profile'}>Profile</button>
+            ${this.settings.collectProfiling ? html`
+              <button class=${this.view === 'profile' ? 'active' : ''} @click=${() => this.view = 'profile'}>Profile</button>
+            ` : nothing}
           </div>
         </div>
       ` : nothing}
