@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { subtreeExecNs, layout, flatten } from '../../webview-ui/query/profile-plan-tree.js';
+import { subtreeExecNs, layout, flatten } from '../util/profilePlanLayout.js';
 import type { QueryProfileOperator } from '../ditto/QueryProfile.js';
 
 function op(execNs: number | undefined, children: QueryProfileOperator[] = []): QueryProfileOperator {

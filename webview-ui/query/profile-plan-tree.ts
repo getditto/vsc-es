@@ -2,72 +2,22 @@ import { LitElement, html, css, svg } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import type { QueryProfileOperator } from '../../src/ditto/QueryProfile.js';
 import { formatNs, percentOfTotal } from '../../src/util/profileTimeFormatter.js';
+import {
+  HOTSPOT_THRESHOLD,
+  BOX_WIDTH,
+  BOX_GAP_X,
+  ROW_GAP_Y,
+  BOX_HEIGHT_EST,
+  type LaidOutNode,
+  subtreeExecNs,
+  layout,
+  flatten,
+  flattenChildrenWidth,
+} from '../../src/util/profilePlanLayout.js';
 
-/** Hotspot threshold — share of plan-total exec above which a box is
- *  tinted orange instead of green. Matches PlanNodeBox.hotspotThreshold
- *  in the SwiftUI implementation. */
-const HOTSPOT_THRESHOLD = 0.5;
-
-const BOX_WIDTH = 160;
-const BOX_GAP_X = 24;     // horizontal gap between sibling boxes
-const ROW_GAP_Y = 36;     // vertical gap between parent row and child row
-const BOX_HEIGHT_EST = 90;
-
-/** Sum of `execNs` across this operator and every descendant. Only
- *  call on the root — non-root callers get a smaller total that
- *  breaks the percent-badge invariant (badges no longer sum to 100%
- *  across the tree). */
-export function subtreeExecNs(node: QueryProfileOperator): number {
-  const here = node.stats?.execNs ?? 0;
-  return node.children.reduce((acc, c) => acc + subtreeExecNs(c), here);
-}
-
-interface LaidOutNode {
-  node: QueryProfileOperator;
-  /** Width of the subtree rooted at this node (in px). */
-  subtreeWidth: number;
-  /** X of the center of this node's box (relative to subtree's left edge). */
-  centerX: number;
-  /** Y of the top of this node's box. */
-  y: number;
-  children: LaidOutNode[];
-}
-
-export function layout(node: QueryProfileOperator, y: number): LaidOutNode {
-  if (node.children.length === 0) {
-    return { node, subtreeWidth: BOX_WIDTH, centerX: BOX_WIDTH / 2, y, children: [] };
-  }
-  // Each child's centerX stays in its own subtree-local frame.
-  // `flatten()` and `renderConnectors()` reconstruct absolute positions
-  // by composing a walking `childLeftEdge` with each child's local
-  // centerX, so positioning here would double-count.
-  const laidOutChildren = node.children.map(c => layout(c, y + BOX_HEIGHT_EST + ROW_GAP_Y));
-  const totalChildWidth =
-    laidOutChildren.reduce((a, b) => a + b.subtreeWidth, 0)
-    + Math.max(0, laidOutChildren.length - 1) * BOX_GAP_X;
-  const subtreeWidth = Math.max(BOX_WIDTH, totalChildWidth);
-  const centerX = subtreeWidth / 2;
-  return { node, subtreeWidth, centerX, y, children: laidOutChildren };
-}
-
-export function flatten(n: LaidOutNode, offsetX = 0): Array<LaidOutNode & { absX: number }> {
-  const here = { ...n, absX: offsetX + n.centerX };
-  // For children, shift by their offset within this subtree. The
-  // child's centerX is already relative to its subtree's left edge;
-  // we need its subtree's left edge in absolute coords.
-  const out: Array<LaidOutNode & { absX: number }> = [here];
-  let childLeftEdge = offsetX + (n.subtreeWidth - flattenChildrenWidth(n)) / 2;
-  for (const c of n.children) {
-    out.push(...flatten(c, childLeftEdge));
-    childLeftEdge += c.subtreeWidth + BOX_GAP_X;
-  }
-  return out;
-}
-
-function flattenChildrenWidth(n: LaidOutNode): number {
-  return n.children.reduce((a, b) => a + b.subtreeWidth, 0)
-    + Math.max(0, n.children.length - 1) * BOX_GAP_X;
-}
+// Re-export so existing callers (e.g. <ditto-profile-viewer>) that
+// imported `subtreeExecNs` from this file continue to compile.
+export { subtreeExecNs };
 
 @customElement('ditto-profile-plan-tree')
 export class DittoProfilePlanTree extends LitElement {
