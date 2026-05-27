@@ -3,7 +3,9 @@ import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
 import '../shared/json-viewer.js';
 import type { QueryProfile } from '../../src/ditto/QueryProfile.js';
-import './profile-viewer.js';
+// Note: <ditto-profile-viewer> is registered by webview-ui/query/main.ts's
+// side-import, not here — keeping component registration in one place
+// (the entrypoint) avoids accidental double-imports.
 
 type QueryMode = 'local' | 'http';
 

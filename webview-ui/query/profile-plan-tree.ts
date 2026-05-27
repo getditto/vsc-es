@@ -15,10 +15,6 @@ import {
   flattenChildrenWidth,
 } from '../../src/util/profilePlanLayout.js';
 
-// Re-export so existing callers (e.g. <ditto-profile-viewer>) that
-// imported `subtreeExecNs` from this file continue to compile.
-export { subtreeExecNs };
-
 @customElement('ditto-profile-plan-tree')
 export class DittoProfilePlanTree extends LitElement {
   @property({ attribute: false }) root!: QueryProfileOperator;

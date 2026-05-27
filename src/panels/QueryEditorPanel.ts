@@ -324,15 +324,19 @@ export class QueryEditorPanel {
       // config (Global) so the preference travels across workspaces.
       // The onDidChangeConfiguration listener above will fan the new
       // value back out to all open Query Editors and the Inspector,
-      // so we don't need to manually echo here.
-      const key = msg.key === 'collectProfiling' ? 'collectProfiling' : 'collectMetrics';
+      // so we don't need to manually echo here. The IPC type already
+      // constrains `key` to the union of valid keys; passing it
+      // through directly keeps TS responsible for catching drift if
+      // a third setting key is ever added.
       void vscode.workspace
         .getConfiguration('dittoVsce')
-        .update(key, msg.value, vscode.ConfigurationTarget.Global);
+        .update(msg.key, msg.value, vscode.ConfigurationTarget.Global);
       return;
     }
     if (msg.type !== 'query.run') { return; }
-    const mode: QueryMode = msg.mode ?? 'local';
+    // `mode` is required on the query.run IPC message — the webview
+    // always sends it. Reading it directly without a fallback.
+    const mode: QueryMode = msg.mode;
     try {
       const { rows, durationMs, metadata } = mode === 'http'
         ? await this.runViaHttp(msg.query)
