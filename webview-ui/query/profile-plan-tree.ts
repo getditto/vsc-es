@@ -1,0 +1,208 @@
+import { LitElement, html, css, svg } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
+import type { QueryProfileOperator } from '../../src/ditto/QueryProfile.js';
+import { formatNs, percentOfTotal } from '../../src/util/profileTimeFormatter.js';
+
+/** Hotspot threshold — share of plan-total exec above which a box is
+ *  tinted orange instead of green. Matches PlanNodeBox.hotspotThreshold
+ *  in the SwiftUI implementation. */
+const HOTSPOT_THRESHOLD = 0.5;
+
+const BOX_WIDTH = 160;
+const BOX_GAP_X = 24;     // horizontal gap between sibling boxes
+const ROW_GAP_Y = 36;     // vertical gap between parent row and child row
+const BOX_HEIGHT_EST = 90;
+
+/** Sum of `execNs` across this operator and every descendant. Only
+ *  call on the root — non-root callers get a smaller total that
+ *  breaks the percent-badge invariant (badges no longer sum to 100%
+ *  across the tree). */
+export function subtreeExecNs(node: QueryProfileOperator): number {
+  const here = node.stats?.execNs ?? 0;
+  return node.children.reduce((acc, c) => acc + subtreeExecNs(c), here);
+}
+
+interface LaidOutNode {
+  node: QueryProfileOperator;
+  /** Width of the subtree rooted at this node (in px). */
+  subtreeWidth: number;
+  /** X of the center of this node's box (relative to subtree's left edge). */
+  centerX: number;
+  /** Y of the top of this node's box. */
+  y: number;
+  children: LaidOutNode[];
+}
+
+function layout(node: QueryProfileOperator, y: number): LaidOutNode {
+  if (node.children.length === 0) {
+    return { node, subtreeWidth: BOX_WIDTH, centerX: BOX_WIDTH / 2, y, children: [] };
+  }
+  const laidOutChildren = node.children.map(c => layout(c, y + BOX_HEIGHT_EST + ROW_GAP_Y));
+  // Total width = sum of child subtree widths + gaps between them.
+  const totalChildWidth =
+    laidOutChildren.reduce((a, b) => a + b.subtreeWidth, 0)
+    + Math.max(0, laidOutChildren.length - 1) * BOX_GAP_X;
+  const subtreeWidth = Math.max(BOX_WIDTH, totalChildWidth);
+  // Position children left-to-right with their natural widths.
+  let xCursor = (subtreeWidth - totalChildWidth) / 2;
+  const positionedChildren: LaidOutNode[] = laidOutChildren.map(c => {
+    const placed: LaidOutNode = { ...c, centerX: xCursor + c.centerX };
+    xCursor += c.subtreeWidth + BOX_GAP_X;
+    return placed;
+  });
+  const centerX = subtreeWidth / 2;
+  return { node, subtreeWidth, centerX, y, children: positionedChildren };
+}
+
+function flatten(n: LaidOutNode, offsetX = 0): Array<LaidOutNode & { absX: number }> {
+  const here = { ...n, absX: offsetX + n.centerX };
+  // For children, shift by their offset within this subtree. The
+  // child's centerX is already relative to its subtree's left edge;
+  // we need its subtree's left edge in absolute coords.
+  const out: Array<LaidOutNode & { absX: number }> = [here];
+  let childLeftEdge = offsetX + (n.subtreeWidth - flattenChildrenWidth(n)) / 2;
+  for (const c of n.children) {
+    out.push(...flatten(c, childLeftEdge));
+    childLeftEdge += c.subtreeWidth + BOX_GAP_X;
+  }
+  return out;
+}
+
+function flattenChildrenWidth(n: LaidOutNode): number {
+  return n.children.reduce((a, b) => a + b.subtreeWidth, 0)
+    + Math.max(0, n.children.length - 1) * BOX_GAP_X;
+}
+
+@customElement('ditto-profile-plan-tree')
+export class DittoProfilePlanTree extends LitElement {
+  @property({ attribute: false }) root!: QueryProfileOperator;
+
+  static styles = css`
+    :host {
+      display: block;
+      background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 10px;
+      padding: 16px;
+      overflow: auto;
+      min-height: 320px;
+      box-sizing: border-box;
+    }
+    .canvas { position: relative; }
+    .box {
+      position: absolute;
+      width: ${BOX_WIDTH}px;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border-radius: 10px;
+      text-align: center;
+      font-family: var(--vscode-editor-font-family);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+    }
+    .box.normal {
+      background: rgba(46,160,67,0.16);
+      border: 1px solid rgba(46,160,67,0.45);
+    }
+    .box.hotspot {
+      background: rgba(245,124,0,0.18);
+      border: 1px solid rgba(245,124,0,0.5);
+    }
+    .box .name { font-size: 12px; font-weight: 600; }
+    .box .key  { font-size: 11px; color: var(--vscode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .box .time { font-size: 11px; font-variant-numeric: tabular-nums; }
+    .box .io   { font-size: 10px; color: var(--vscode-descriptionForeground); }
+    svg.connectors { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+    line { stroke: var(--vscode-panel-border); stroke-width: 1; }
+  `;
+
+  render() {
+    const totalExec = subtreeExecNs(this.root);
+    const laid = layout(this.root, 0);
+    const flat = flatten(laid);
+    const width = laid.subtreeWidth;
+    // Height = deepest y + a single box height.
+    const height = Math.max(...flat.map(f => f.y)) + BOX_HEIGHT_EST;
+
+    return html`
+      <div class="canvas" style=${`width:${width}px; height:${height}px;`}>
+        <svg class="connectors" viewBox=${`0 0 ${width} ${height}`}>
+          ${this.renderConnectors(laid, 0)}
+        </svg>
+        ${flat.map(f => this.renderBox(f, totalExec))}
+      </div>
+    `;
+  }
+
+  private renderConnectors(n: LaidOutNode, offsetX: number): unknown {
+    if (n.children.length === 0) { return null; }
+    const parentX = offsetX + n.centerX;
+    const parentBottomY = n.y + BOX_HEIGHT_EST;
+    const railY = parentBottomY + ROW_GAP_Y / 2;
+    let childLeftEdge = offsetX + (n.subtreeWidth - flattenChildrenWidth(n)) / 2;
+    const lines: unknown[] = [];
+    const childCenters: number[] = [];
+    for (const c of n.children) {
+      const cx = childLeftEdge + c.centerX;
+      childCenters.push(cx);
+      // Stem from rail down into child box top.
+      lines.push(svg`<line x1=${cx} y1=${railY} x2=${cx} y2=${c.y} />`);
+      // Recurse into the child's own subtree.
+      lines.push(this.renderConnectors(c, childLeftEdge));
+      childLeftEdge += c.subtreeWidth + BOX_GAP_X;
+    }
+    // Vertical drop from parent to rail.
+    lines.push(svg`<line x1=${parentX} y1=${parentBottomY} x2=${parentX} y2=${railY} />`);
+    // Horizontal rail spanning min..max child center.
+    if (childCenters.length > 1) {
+      const railL = Math.min(...childCenters);
+      const railR = Math.max(...childCenters);
+      lines.push(svg`<line x1=${railL} y1=${railY} x2=${railR} y2=${railY} />`);
+    }
+    return lines;
+  }
+
+  private renderBox(f: LaidOutNode & { absX: number }, totalExec: number): unknown {
+    const node = f.node;
+    const execNs = node.stats?.execNs;
+    const share = execNs !== undefined && totalExec > 0 ? execNs / totalExec : 0;
+    const hotspot = share >= HOTSPOT_THRESHOLD;
+    const keyAttr = pickKeyAttribute(node);
+    const timeLabel = execNs === undefined
+      ? null
+      : (() => {
+          const pct = percentOfTotal(execNs, totalExec, 0);
+          return pct ? `${formatNs(execNs)}  (${pct})` : formatNs(execNs);
+        })();
+    const ioLabel = formatIo(node.stats);
+    return html`
+      <div
+        class=${`box ${hotspot ? 'hotspot' : 'normal'}`}
+        style=${`left:${f.absX - BOX_WIDTH / 2}px; top:${f.y}px;`}
+      >
+        <div class="name">${node.name}</div>
+        ${keyAttr ? html`<div class="key" title=${keyAttr}>${keyAttr}</div>` : null}
+        ${timeLabel ? html`<div class="time">${timeLabel}</div>` : null}
+        ${ioLabel ? html`<div class="io">${ioLabel}</div>` : null}
+      </div>
+    `;
+  }
+}
+
+function pickKeyAttribute(node: QueryProfileOperator): string | null {
+  const preferred = ['collection', 'alias', 'limit', 'field', 'table'];
+  for (const key of preferred) {
+    const found = node.attributes.find(a => a.key === key);
+    if (found) { return found.value; }
+  }
+  return null;
+}
+
+function formatIo(stats: QueryProfileOperator['stats']): string | null {
+  if (!stats) { return null; }
+  const inV = stats.documentsIn;
+  const outV = stats.documentsOut;
+  if (inV !== undefined && outV !== undefined) { return `${inV.toLocaleString()} in / ${outV.toLocaleString()} out`; }
+  if (inV !== undefined) { return `${inV.toLocaleString()} in`; }
+  if (outV !== undefined) { return `${outV.toLocaleString()} out`; }
+  return null;
+}
