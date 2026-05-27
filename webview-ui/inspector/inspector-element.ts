@@ -6,32 +6,17 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost } from '../shared/messaging.js';
+import { assertNever } from '../shared/assert-never.js';
 import { codiconStyles } from './codicon-styles.js';
+import type { InspectorContent, QueryInspectorTab } from '../../src/inspector/inspector-state.js';
+import type { InspectorOut } from '../../src/ipc/messages.js';
+import type { QueryHistoryEntry } from '../../src/storage/QueryHistoryStore.js';
+import type { QueryFavoriteEntry } from '../../src/storage/QueryFavoritesStore.js';
 
-type QueryInspectorTab = 'history' | 'favorites' | 'json' | 'metrics' | 'help';
-
-interface InspectorContentNone { kind: 'none'; }
-interface InspectorContentSub  { kind: 'subscriptions'; databaseId: string; }
-interface InspectorContentPeers { kind: 'peers'; databaseId: string; }
-interface InspectorContentMetrics { kind: 'metrics'; databaseId: string; }
-interface InspectorContentDbMetrics { kind: 'databaseMetrics'; databaseId: string; }
-interface InspectorContentQuery {
-  kind: 'query';
-  databaseId: string;
-  tab: QueryInspectorTab;
-  lastResultMetadata?: Record<string, unknown>;
-  selectedRowJson?: string;
-}
-type InspectorContent =
-  | InspectorContentNone
-  | InspectorContentSub
-  | InspectorContentPeers
-  | InspectorContentMetrics
-  | InspectorContentDbMetrics
-  | InspectorContentQuery;
-
-interface QueryHistoryEntry { id: string; query: string; timestamp?: number; }
-interface QueryFavoriteEntry { id: string; query: string; timestamp?: number; }
+// Narrowed alias for the 'query' branch — used as the parameter type
+// for `renderTab` so it can access `lastResultMetadata` / `selectedRowJson`
+// without re-discriminating.
+type InspectorContentQuery = Extract<InspectorContent, { kind: 'query' }>;
 
 @customElement('ditto-inspector')
 export class DittoInspectorElement extends LitElement {
@@ -95,17 +80,17 @@ export class DittoInspectorElement extends LitElement {
   }
 
   private onMessage = (e: MessageEvent): void => {
-    const m = e.data;
+    const m = e.data as InspectorOut | undefined;
     if (!m) { return; }
     switch (m.type) {
       case 'inspector.contentChanged':
-        this.content = m.content as InspectorContent;
+        this.content = m.content;
         break;
       case 'inspector.historyChanged':
-        this.history = (m.entries ?? []) as QueryHistoryEntry[];
+        this.history = m.entries ?? [];
         break;
       case 'inspector.favoritesChanged':
-        this.favorites = (m.entries ?? []) as QueryFavoriteEntry[];
+        this.favorites = m.entries ?? [];
         break;
       case 'inspector.helpHtml':
         this.helpUris = { ...this.helpUris, [m.kind]: m.uri };
@@ -124,6 +109,18 @@ export class DittoInspectorElement extends LitElement {
           this.switchTab('history');
         }
         break;
+      case 'inspector.attachmentProgress':
+      case 'inspector.attachmentLoaded':
+      case 'inspector.attachmentSaved':
+      case 'inspector.attachmentError':
+        // Attachment lifecycle messages are consumed by <query-json-element>
+        // via its own postMessage subscription; the router doesn't need to
+        // react to them here.
+        break;
+      default:
+        // Compile-time exhaustiveness — adding a new InspectorOut
+        // variant without handling it here fails typechecking.
+        assertNever(m);
     }
   };
 

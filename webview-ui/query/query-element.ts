@@ -1,23 +1,13 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { assertNever } from '../shared/assert-never.js';
 import '../shared/json-viewer.js';
 import type { QueryProfile } from '../../src/ditto/QueryProfile.js';
+import type { QueryOut, QueryMode } from '../../src/ipc/messages.js';
 // Note: <ditto-profile-viewer> is registered by webview-ui/query/main.ts's
 // side-import, not here — keeping component registration in one place
 // (the entrypoint) avoids accidental double-imports.
-
-type QueryMode = 'local' | 'http';
-
-type In =
-  | { type: 'query.result'; rows: Record<string, unknown>[]; columns: string[]; durationMs: number; metadata?: unknown; profile?: QueryProfile }
-  | { type: 'query.error'; message: string }
-  | { type: 'query.setText'; text: string }
-  | { type: 'query.modeInit'; availableModes: QueryMode[] }
-  | { type: 'query.settings'; collectProfiling: boolean; collectMetrics: boolean }
-  | { type: 'query.exportDone'; rowCount: number; path: string }
-  | { type: 'query.exportCancelled' }
-  | { type: 'query.exportError'; message: string };
 
 type View = 'table' | 'json' | 'profile';
 type RunState = 'idle' | 'running' | 'success' | 'error';
@@ -471,58 +461,70 @@ export class QueryEditor extends LitElement {
     document.addEventListener('contextmenu', this.closeContextMenu);
     // Same click-away pattern for the settings cog popover.
     document.addEventListener('click', this.onDocumentClick);
-    onHostMessage<In>(msg => {
-      if (msg.type === 'query.result') {
-        this.rows = msg.rows;
-        this.columns = msg.columns;
-        this.durationMs = msg.durationMs;
-        this.profile = msg.profile ?? null;
-        this.errorMessage = null;
-        this.state = 'success';
-        this.selectedRowIndex = null;
-        // New result → snap pagination to page 1, and clamp pageSize
-        // to a value that's valid for this size.
-        this.currentPage = 1;
-        const sizes = this.pageSizes;
-        if (!sizes.includes(this.pageSize)) { this.pageSize = sizes[0]; }
-      } else if (msg.type === 'query.error') {
-        this.errorMessage = msg.message;
-        this.rows = [];
-        this.columns = [];
-        this.state = 'error';
-        this.selectedRowIndex = null;
-      } else if (msg.type === 'query.setText') {
-        this.query = msg.text;
-        // Sync the host immediately so the tab title matches the loaded query
-        // (no debounce needed — this is a deliberate user action).
-        postToHost({ type: 'query.textChanged', text: this.query });
-      } else if (msg.type === 'query.modeInit') {
-        this.availableModes = msg.availableModes.length > 0 ? msg.availableModes : ['local'];
-        // Pin the current selection to a still-valid mode (e.g. host
-        // re-pushes after a config change that removed HTTP creds).
-        if (!this.availableModes.includes(this.mode)) {
-          this.mode = this.availableModes[0];
-        }
-      } else if (msg.type === 'query.settings') {
-        this.settings = {
-          collectProfiling: !!msg.collectProfiling,
-          collectMetrics: !!msg.collectMetrics,
-        };
-        // If profiling just turned off while the user was on the
-        // Profile view, fall back to JSON so they're not stuck on a
-        // toggle button that's about to disappear.
-        if (!this.settings.collectProfiling && this.view === 'profile') {
-          this.view = 'json';
-        }
-      } else if (
-        msg.type === 'query.exportDone'
-        || msg.type === 'query.exportCancelled'
-        || msg.type === 'query.exportError'
-      ) {
-        // Three flavours of "export over" — clear the busy flag in all
-        // three. The success/error toasts are owned by the host so the
-        // webview doesn't render its own banner.
-        this.isExporting = false;
+    onHostMessage<QueryOut>(msg => {
+      switch (msg.type) {
+        case 'query.result':
+          this.rows = msg.rows;
+          this.columns = msg.columns;
+          this.durationMs = msg.durationMs;
+          this.profile = msg.metadata.profile ?? null;
+          this.errorMessage = null;
+          this.state = 'success';
+          this.selectedRowIndex = null;
+          // New result → snap pagination to page 1, and clamp pageSize
+          // to a value that's valid for this size.
+          this.currentPage = 1;
+          {
+            const sizes = this.pageSizes;
+            if (!sizes.includes(this.pageSize)) { this.pageSize = sizes[0]; }
+          }
+          break;
+        case 'query.error':
+          this.errorMessage = msg.message;
+          this.rows = [];
+          this.columns = [];
+          this.state = 'error';
+          this.selectedRowIndex = null;
+          break;
+        case 'query.setText':
+          this.query = msg.text;
+          // Sync the host immediately so the tab title matches the loaded query
+          // (no debounce needed — this is a deliberate user action).
+          postToHost({ type: 'query.textChanged', text: this.query });
+          break;
+        case 'query.modeInit':
+          this.availableModes = msg.availableModes.length > 0 ? msg.availableModes : ['local'];
+          // Pin the current selection to a still-valid mode (e.g. host
+          // re-pushes after a config change that removed HTTP creds).
+          if (!this.availableModes.includes(this.mode)) {
+            this.mode = this.availableModes[0];
+          }
+          break;
+        case 'query.settings':
+          this.settings = {
+            collectProfiling: !!msg.collectProfiling,
+            collectMetrics: !!msg.collectMetrics,
+          };
+          // If profiling just turned off while the user was on the
+          // Profile view, fall back to JSON so they're not stuck on a
+          // toggle button that's about to disappear.
+          if (!this.settings.collectProfiling && this.view === 'profile') {
+            this.view = 'json';
+          }
+          break;
+        case 'query.exportDone':
+        case 'query.exportCancelled':
+        case 'query.exportError':
+          // Three flavours of "export over" — clear the busy flag in all
+          // three. The success/error toasts are owned by the host so the
+          // webview doesn't render its own banner.
+          this.isExporting = false;
+          break;
+        default:
+          // Compile-time exhaustiveness check — if QueryOut grows a
+          // new variant and we forget to handle it here, the
+          // assertNever call will fail typechecking.
+          assertNever(msg);
       }
     });
   }

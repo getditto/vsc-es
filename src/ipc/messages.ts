@@ -210,12 +210,11 @@ export type QueryOut =
       rows: Record<string, unknown>[];
       columns: string[];
       durationMs: number;
-      metadata?: QueryResultMetadata;
-      /** Same value as `metadata.profile`, hoisted for convenience so
-       *  the webview can render it without unpacking the metadata bag.
-       *  Undefined for HTTP-mode runs (PROFILE is local-only for v1)
-       *  and non-SELECT statements. */
-      profile?: import('../ditto/QueryProfile.js').QueryProfile;
+      /** Result metadata. Always populated by the host (never
+       *  undefined on the wire). Includes `profile` when a profile
+       *  was captured — webview consumers read `metadata.profile`
+       *  rather than a hoisted field to keep one source of truth. */
+      metadata: QueryResultMetadata;
     }
   | { type: 'query.error'; message: string }
   // Available run-locations for this connection. `['local']` when the

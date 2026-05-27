@@ -348,7 +348,6 @@ export class QueryEditorPanel {
         columns,
         durationMs,
         metadata,
-        profile: metadata.profile,
       });
       this.lastMetadata = metadata;
       this.lastSelectedRowJson = null;
