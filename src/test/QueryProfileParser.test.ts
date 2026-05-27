@@ -131,3 +131,15 @@ test('does not misparse a user row with _id + plan as a profile (no envelope mar
   };
   assert.equal(parseProfileItem(userRow), null);
 });
+
+test('does not misparse a user row whose only "envelope-like" field is `text`', () => {
+  // A chat-message row — `text` is a common user field. The discriminator
+  // must reject this even though `_id` + `plan` + `text` looks superficially
+  // close to a profile envelope.
+  const chatRow: Record<string, unknown> = {
+    _id: 'msg-7',
+    plan: { '#operator': 'note', body: 'lunch tomorrow?' },
+    text: 'hello world',
+  };
+  assert.equal(parseProfileItem(chatRow), null);
+});

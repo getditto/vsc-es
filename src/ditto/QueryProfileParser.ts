@@ -159,7 +159,11 @@ function isObject(v: unknown): v is Record<string, unknown> {
  *  string `_id` and a JSON `plan` field, so we require at least one
  *  envelope-only marker to avoid false-positives. The keys checked
  *  are ones Ditto's profile envelope always emits but user collections
- *  effectively never use as field names. */
+ *  effectively never use as field names.
+ *
+ *  We deliberately do NOT include `text` as a marker — `text` is a
+ *  common user field name (chat messages, notes, posts) so accepting
+ *  it would re-open the false-positive class we're guarding against. */
 function hasEnvelopeMarker(item: Record<string, unknown>): boolean {
   return (
     isObject(item.times)
@@ -168,7 +172,6 @@ function hasEnvelopeMarker(item: Record<string, unknown>): boolean {
     || typeof item.featureFlags === 'string'
     || typeof item.state === 'string'
     || typeof item.resultCount === 'number'
-    || typeof item.text === 'string'
   );
 }
 
