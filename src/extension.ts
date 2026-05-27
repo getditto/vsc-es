@@ -720,6 +720,34 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         : undefined;
       AddIndexPanel.show(context, collectionsRepo, logger, preselected);
     }),
+    vscode.commands.registerCommand('dittoVsce.deleteIndex', async (node?: any) => {
+      // Context-menu only — the menu's `when` clause restricts to
+      // `viewItem == index`, so a missing node here means the command
+      // was invoked from the palette without a tree selection.
+      if (node?.kind !== 'index') {
+        vscode.window.showWarningMessage('Right-click an index in the tree to delete it.');
+        return;
+      }
+      if (manager.getActiveConfigId() !== node.databaseId) {
+        vscode.window.showWarningMessage('Connect to this database first.');
+        return;
+      }
+      const indexName = node.index.displayName;
+      const confirm = await vscode.window.showWarningMessage(
+        `Delete index "${indexName}" on collection "${node.collectionName}"?`,
+        { modal: true, detail: 'This removes the index from the SDK store. The data in the collection is not affected, but queries that relied on the index may run slower until you add it back.' },
+        'Delete',
+      );
+      if (confirm !== 'Delete') { return; }
+      try {
+        await collectionsRepo.dropIndex(indexName);
+        vscode.window.showInformationMessage(`Deleted index "${indexName}".`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.withTag('ext:deleteIndex').error('Drop index failed', { indexName, err: message });
+        vscode.window.showErrorMessage(`Delete index failed: ${message}`);
+      }
+    }),
     vscode.commands.registerCommand('dittoVsce.queryAllInCollection', (databaseIdOrNode: any, collectionName?: string) => {
       // Tree single-click invocation passes (databaseId, collectionName) via `arguments`.
       // Right-click context menu passes the node itself.

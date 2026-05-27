@@ -185,6 +185,11 @@
         "command": "dittoVsce.addIndex",
         "title": "Add Index…",
         "icon": "$(add)"
+      },
+      {
+        "command": "dittoVsce.deleteIndex",
+        "title": "Delete Index",
+        "icon": "$(trash)"
       }
     ],
     "keybindings": [
@@ -293,6 +298,16 @@
         {
           "command": "dittoVsce.addIndex",
           "when": "view == dittoDatabases && viewItem == indexesParent",
+          "group": "inline"
+        },
+        {
+          "command": "dittoVsce.deleteIndex",
+          "when": "view == dittoDatabases && viewItem == index",
+          "group": "9_destructive@1"
+        },
+        {
+          "command": "dittoVsce.deleteIndex",
+          "when": "view == dittoDatabases && viewItem == index",
           "group": "inline"
         },
         {

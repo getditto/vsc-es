@@ -61,6 +61,18 @@ export class CollectionsRepository {
     await this.hydrate('createIndex');
   }
 
+  /** Drops an index by its bare name (the `displayName` form of
+   *  `DittoIndex` — i.e. the `id` with the `<collection>.` prefix
+   *  stripped). DQL's `DROP INDEX` takes that bare form, matching the
+   *  name produced by `CREATE INDEX`. Re-hydrates afterwards so the
+   *  tree updates immediately. */
+  async dropIndex(indexName: string): Promise<void> {
+    const query = `DROP INDEX ${indexName}`;
+    this.log.info('Dropping index', { indexName });
+    await this.manager.executeRaw(query);
+    await this.hydrate('dropIndex');
+  }
+
   /** Empties the cache, cancels the observer, and fires onChange. Called
    *  when DB transitions to non-active. */
   clear(): void {
@@ -136,7 +148,7 @@ export class CollectionsRepository {
     }
   }
 
-  private async hydrate(reason: 'load' | 'refresh' | 'createIndex'): Promise<void> {
+  private async hydrate(reason: 'load' | 'refresh' | 'createIndex' | 'dropIndex'): Promise<void> {
     this.log.info('Hydrating collections', { reason });
     try {
       // A. SELECT * FROM __collections — discover non-system collections.
