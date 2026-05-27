@@ -167,12 +167,19 @@ export class QueryEditor extends LitElement {
      * anchored below the button via a wrapper with position: relative. */
     .settings-wrap { position: relative; display: inline-block; }
     button.settings-cog {
-      padding: 6px 10px;
+      /* Match Favorite's overall button height (padding 6px 12px around
+       * the 13px "★ Favorite" text → ~28px tall) while showing a single
+       * larger glyph. The lower vertical padding + larger font-size +
+       * pinned line-height keep the height aligned without adding a
+       * text label. */
+      padding: 3px 10px;
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
       border: none;
       border-radius: 2px;
       font: inherit;
+      font-size: 18px;
+      line-height: 1.2;
       cursor: pointer;
     }
     button.settings-cog.active {
