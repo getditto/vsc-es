@@ -40,8 +40,8 @@ export const PROFILE_ENVELOPE_KEY = '~request_profile';
 
 /** Forgiving parser for the `~request_profile` envelope. Returns null
  *  if the input doesn't look like a profile (no `~request_profile` key,
- *  missing required fields). Caller treats null as "PROFILE didn't
- *  fire" rather than throwing. */
+ *  missing required envelope markers, or missing required fields).
+ *  Caller treats null as "PROFILE didn't fire" rather than throwing. */
 export function parseProfileItem(item: Record<string, unknown>): QueryProfile | null {
   // Envelope can be either { "~request_profile": { … } } or the bare
   // profile dict if the SDK already unwrapped it.
@@ -49,7 +49,11 @@ export function parseProfileItem(item: Record<string, unknown>): QueryProfile | 
   const nested = item[PROFILE_ENVELOPE_KEY];
   if (isObject(nested)) {
     envelope = nested as Record<string, unknown>;
-  } else if (typeof item._id === 'string' && isObject(item.plan)) {
+  } else if (
+    typeof item._id === 'string'
+    && isObject(item.plan)
+    && hasEnvelopeMarker(item)
+  ) {
     envelope = item;
   } else {
     return null;
@@ -148,6 +152,24 @@ function parseTimes(dict: Record<string, unknown> | undefined): QueryProfileTime
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Discriminator for bare profile dicts (where Ditto didn't wrap in
+ *  `~request_profile`). A user document might coincidentally have a
+ *  string `_id` and a JSON `plan` field, so we require at least one
+ *  envelope-only marker to avoid false-positives. The keys checked
+ *  are ones Ditto's profile envelope always emits but user collections
+ *  effectively never use as field names. */
+function hasEnvelopeMarker(item: Record<string, unknown>): boolean {
+  return (
+    isObject(item.times)
+    || typeof item.queryType === 'string'
+    || typeof item.requestType === 'string'
+    || typeof item.featureFlags === 'string'
+    || typeof item.state === 'string'
+    || typeof item.resultCount === 'number'
+    || typeof item.text === 'string'
+  );
 }
 
 function stringValue(v: unknown): string | undefined {

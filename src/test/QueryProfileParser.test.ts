@@ -117,3 +117,17 @@ test('missing times default to zero (does not crash)', () => {
   assert.equal(p.times.planNs, 0);
   assert.equal(p.times.startISO, '');
 });
+
+test('does not misparse a user row with _id + plan as a profile (no envelope markers)', () => {
+  // A document from a collection like `lesson_plans` — has a string
+  // `_id` and a `plan` sub-document but is NOT a profile envelope.
+  const userRow: Record<string, unknown> = {
+    _id: 'plan-42',
+    plan: {
+      '#operator': 'scan',   // even with a parseable operator, this shouldn't qualify
+      title: 'Geometry 101',
+    },
+    objective: 'Teach kids about triangles',
+  };
+  assert.equal(parseProfileItem(userRow), null);
+});

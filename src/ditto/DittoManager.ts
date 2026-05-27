@@ -473,14 +473,23 @@ export class DittoManager {
 
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
    *
-   *  For SELECT statements that the user hasn't already prefixed with PROFILE,
-   *  prepends `PROFILE ` so Ditto attaches an execution-plan envelope as the
-   *  trailing result item. The envelope is popped from the user-visible rows
-   *  and parsed into a structured `QueryProfile` returned alongside.
+   *  PROFILE injection is **always-on** for every SELECT statement that the
+   *  user hasn't already prefixed with `PROFILE`. The injected envelope is
+   *  popped from the user-visible rows and parsed into `metadata.profile`.
+   *  There is no user-facing kill switch in v1 — if profiling overhead is
+   *  ever reported as a regression the gate goes here.
    *
-   *  Non-SELECT statements, user-typed PROFILE prefixes, and parse failures
-   *  all degrade gracefully — query runs as-is, `metadata.profile` is undefined,
-   *  and the existing EXPLAIN side-trip still populates `metadata.explain`.
+   *  Non-SELECT statements and user-typed PROFILE prefixes run unmodified.
+   *  When the parser doesn't recognise the trailing item as an envelope
+   *  (forward-incompatible SDK output, or a degenerate row that happens to
+   *  pop the same shape), the whole result set is returned as-is and
+   *  `metadata.profile` is undefined.
+   *
+   *  EXPLAIN runs as a separate non-fatal side-trip against the ORIGINAL
+   *  (non-PROFILE-prefixed) query, so `metadata.explain` keeps populating
+   *  even when PROFILE fires. The two queries are intentional duplicate cost
+   *  for now — the Profile view in the panel reads `metadata.profile`; the
+   *  Metrics panel reads `metadata.explain`. Consolidation is a follow-up.
    */
   async executeQuery(query: string): Promise<{ rows: Record<string, unknown>[]; durationMs: number; metadata: QueryResultMetadata }> {
     if (!this.session) { throw new Error('No active database.'); }
