@@ -391,7 +391,7 @@ export class DittoManager {
     const result = args === undefined
       ? await this.session.ditto.store.execute(query)
       : await this.session.ditto.store.execute(query, args as any);
-    return (result.items as any[]).map(i => i.value as Record<string, unknown>);
+    return result.items.map(i => i.value as Record<string, unknown>);
   }
 
   /**
@@ -410,7 +410,7 @@ export class DittoManager {
     const result = await this.session.ditto.store.execute(`SELECT * FROM ${collectionExpr}`);
     let totalBytes = 0;
     let documentCount = 0;
-    for (const item of result.items as any[]) {
+    for (const item of result.items) {
       try {
         const bytes: Uint8Array = item.cborData();
         totalBytes += bytes.byteLength;
@@ -522,7 +522,7 @@ export class DittoManager {
 
     // Pop the trailing ~request_profile item before we project the user's
     // rows, so the result table never shows the profile envelope as a row.
-    let rows = (result.items as any[]).map((i: any) => i.value as Record<string, unknown>);
+    let rows = result.items.map(i => i.value as Record<string, unknown>);
     let profile: QueryProfile | undefined;
     if (expectsEnvelope && rows.length > 0) {
       const last = rows[rows.length - 1];
@@ -557,7 +557,7 @@ export class DittoManager {
     if (query.trimStart().toUpperCase().startsWith('EXPLAIN')) { return ''; }
     try {
       const result = await this.session.ditto.store.execute(`EXPLAIN ${query}`);
-      const first = (result.items as any[])[0]?.value;
+      const first = result.items[0]?.value;
       if (!first) { return ''; }
       return JSON.stringify(first, null, 2);
     } catch (err) {

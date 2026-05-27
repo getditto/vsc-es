@@ -212,39 +212,61 @@ export class CollectionsRepository {
     const indexRows = await this.manager.executeRaw('SELECT * FROM system:indexes');
     const indexesByCollection = new Map<string, DittoIndex[]>();
     for (const row of indexRows) {
-      const id = typeof row._id === 'string' ? row._id : '';
-      const collection = typeof row.collection === 'string' ? row.collection : '';
-      if (!id || !collection) {
+      const idx = parseSystemIndexRow(row);
+      if (!idx) {
         this.log.warn('Skipping index row missing _id or collection', { row });
         continue;
       }
-      // Field shape #1: [{direction:'asc', key:['`fieldName`']}, …]
-      // Field shape #2 (older SDK): ['fieldName', …]
-      const rawFields = (row as any).fields;
-      const fields: string[] = [];
-      if (Array.isArray(rawFields)) {
-        for (const f of rawFields) {
-          if (typeof f === 'string') {
-            fields.push(f.replace(/`/g, ''));
-          } else if (f && typeof f === 'object') {
-            const key = (f as any).key;
-            if (Array.isArray(key) && key.length > 0 && typeof key[0] === 'string') {
-              fields.push((key[0] as string).replace(/`/g, ''));
-            }
-          }
-        }
-      }
-      const dotIdx = id.indexOf('.');
-      const displayName = dotIdx >= 0 ? id.slice(dotIdx + 1) : id;
-      const idx: DittoIndex = { id, collection, fields, displayName };
-      const existing = indexesByCollection.get(collection);
+      const existing = indexesByCollection.get(idx.collection);
       if (existing) { existing.push(idx); }
-      else { indexesByCollection.set(collection, [idx]); }
+      else { indexesByCollection.set(idx.collection, [idx]); }
     }
     for (const c of collections) {
       c.indexes = indexesByCollection.get(c.name) ?? [];
     }
   }
+}
+
+/** Shape of a row from `SELECT * FROM system:indexes`. Two field shapes
+ *  exist in the wild:
+ *   - Newer SDK: `[{ direction: 'asc', key: ['`fieldName`'] }, …]`
+ *   - Older SDK: `['fieldName', …]`
+ *
+ *  Everything is typed as `unknown` because the SDK doesn't expose a
+ *  declarative type for system rows. `parseSystemIndexRow` does the
+ *  runtime narrowing in one place. */
+interface SystemIndexFieldDescriptor {
+  direction?: string;
+  key?: unknown[];
+}
+
+/** Pure parser for a `system:indexes` row into a `DittoIndex`. Returns
+ *  `undefined` if the row is missing required fields so the caller can
+ *  log + skip. */
+function parseSystemIndexRow(row: Record<string, unknown>): DittoIndex | undefined {
+  const id = typeof row._id === 'string' ? row._id : '';
+  const collection = typeof row.collection === 'string' ? row.collection : '';
+  if (!id || !collection) { return undefined; }
+
+  const rawFields = row.fields;
+  const fields: string[] = [];
+  if (Array.isArray(rawFields)) {
+    for (const f of rawFields) {
+      if (typeof f === 'string') {
+        fields.push(f.replace(/`/g, ''));
+      } else if (f && typeof f === 'object' && !Array.isArray(f)) {
+        const desc = f as SystemIndexFieldDescriptor;
+        const key = desc.key;
+        if (Array.isArray(key) && key.length > 0 && typeof key[0] === 'string') {
+          fields.push(key[0].replace(/`/g, ''));
+        }
+      }
+    }
+  }
+
+  const dotIdx = id.indexOf('.');
+  const displayName = dotIdx >= 0 ? id.slice(dotIdx + 1) : id;
+  return { id, collection, fields, displayName };
 }
 
 /** Decode `__collections` rows → `DittoCollection[]`, filtering out
