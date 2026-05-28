@@ -10,7 +10,8 @@ export type ActiveFeature =
   | { kind: 'peers'; databaseId: string }
   | { kind: 'query'; databaseId: string }
   | { kind: 'metrics'; databaseId: string }
-  | { kind: 'databaseMetrics'; databaseId: string };
+  | { kind: 'databaseMetrics'; databaseId: string }
+  | { kind: 'observers'; databaseId: string; observerId: string; tab: 'json' | 'help' };
 
 export class InspectorController {
   private content: InspectorContent = { kind: 'none' };
@@ -25,6 +26,13 @@ export class InspectorController {
     if (feat.kind === 'query') {
       const tab = (this.state.get<QueryInspectorTab>(QUERY_TAB_KEY + feat.databaseId)) ?? 'history';
       this.content = { kind: 'query', databaseId: feat.databaseId, tab };
+    } else if (feat.kind === 'observers') {
+      this.content = {
+        kind: 'observers',
+        databaseId: feat.databaseId,
+        observerId: feat.observerId,
+        tab: feat.tab,
+      };
     } else {
       this.content = { kind: feat.kind, databaseId: feat.databaseId } as InspectorContent;
     }
@@ -35,6 +43,17 @@ export class InspectorController {
     if (this.content.kind !== 'query') return;
     await this.state.update(QUERY_TAB_KEY + this.content.databaseId, tab);
     this.content = { ...this.content, tab };
+    this._onChange.fire(this.content);
+  }
+
+  /** Mirrors `setQueryTab` for the observer-content kind. No-op if
+   *  the current content isn't an observer. Observer tabs aren't
+   *  persisted (unlike query tabs) — the panel re-asserts 'json' on
+   *  every focus change, so there's no global preference to remember. */
+  async setObserverTab(tab: 'json' | 'help'): Promise<void> {
+    const c = this.content;
+    if (c.kind !== 'observers') return;
+    this.content = { ...c, tab };
     this._onChange.fire(this.content);
   }
 
