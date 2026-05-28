@@ -75,9 +75,9 @@ test('databaseDetails expands to subs + inline collections + section + peers + q
   // divider — no "Collections" wrapper any more.
   assert.deepEqual(grandchildren.map(c => c.kind), [
     'subscriptionsParent',
+    'collection',
+    'collection',
     'observersParent',
-    'collection',
-    'collection',
     'sectionHeader',
     'peerListing',
     'queryEditor',

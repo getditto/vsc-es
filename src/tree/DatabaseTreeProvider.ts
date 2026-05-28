@@ -98,8 +98,12 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         .get<boolean>('collectMetrics', true);
       return [
         { kind: 'subscriptionsParent', databaseId: dbId },
-        { kind: 'observersParent', databaseId: dbId },
         ...collectionRows,
+        // Observers sit below collections — they're a debugging /
+        // diagnostics feature, less important than the data drill-ins
+        // above them, but still part of the same logical "data" group
+        // (above the Features divider).
+        { kind: 'observersParent', databaseId: dbId },
         // Blank divider visually separates the data drill-ins above from the
         // feature shortcuts below (rendered as a thin rule, no label).
         { kind: 'sectionHeader', databaseId: dbId, id: 'features', label: 'Features' },
