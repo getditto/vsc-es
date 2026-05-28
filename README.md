@@ -14,6 +14,7 @@ without leaving VS Code.
   idle / activating / active / error.
 - **Subscriptions** — create, edit, and delete DQL sync subscriptions.
   Persisted across reconnects and re-registered automatically.
+- **Observers** — register a DQL `SELECT` query against your local store and activate it on demand to see a live stream of events with insertion / update / move / delete diffs. Each event's documents are inspectable as JSON or in a flat table view, reusing the Query Editor's existing viewers. Observers are intentionally inactive at panel open — they're expensive, so activation is explicit.
 - **Peer Listing** — live grid of connected peers with gradient-coded cards by
   dominant connection type, sync status, SDK info, and animated insert/remove
   driven by `ditto.presence.observe` and the `__sync_status` system collection.
