@@ -23,7 +23,7 @@ export class DittoInspectorElement extends LitElement {
   @state() private content: InspectorContent = { kind: 'none' };
   @state() private history: QueryHistoryEntry[] = [];
   @state() private favorites: QueryFavoriteEntry[] = [];
-  @state() private helpUris: { subscription?: string; query?: string; presence?: string; metrics?: string; databaseMetrics?: string } = {};
+  @state() private helpUris: { subscription?: string; query?: string; presence?: string; metrics?: string; databaseMetrics?: string; observers?: string } = {};
   // Inspector preferences (per-installation, pushed by the host on
   // resolve and on every dismiss/reset). Defaults to "show all tips"
   // until the host's first push lands.
@@ -167,6 +167,23 @@ export class DittoInspectorElement extends LitElement {
         <div class="body">${this.renderTab(c)}</div>
       `;
     }
+    if (c.kind === 'observers') {
+      const tabs: Array<'json' | 'help'> = ['json', 'help'];
+      return html`
+        <div class="tabs" role="tablist">
+          ${tabs.map(t => html`
+            <button
+              class="tab"
+              role="tab"
+              aria-selected=${c.tab === t}
+              title=${t}
+              @click=${() => this.switchObserverTab(t)}
+            >${this.tabIcon(t)}</button>
+          `)}
+        </div>
+        <div class="body">${this.renderObserverTab(c)}</div>
+      `;
+    }
     return html``;
   }
 
@@ -193,6 +210,21 @@ export class DittoInspectorElement extends LitElement {
         return html`<query-metrics-element .metadata=${c.lastResultMetadata} .hideLimitHint=${this.prefs.hideLimitHint}></query-metrics-element>`;
       case 'help':
         return html`<help-content-element .uri=${this.helpUris.query ?? ''}></help-content-element>`;
+      default:
+        return html``;
+    }
+  }
+
+  private switchObserverTab(tab: 'json' | 'help'): void {
+    postToHost({ type: 'inspector.tabSelected', tab });
+  }
+
+  private renderObserverTab(c: Extract<InspectorContent, { kind: 'observers' }>) {
+    switch (c.tab) {
+      case 'json':
+        return html`<query-json-element .json=${c.selectedRowJson}></query-json-element>`;
+      case 'help':
+        return html`<help-content-element .uri=${this.helpUris.observers ?? ''}></help-content-element>`;
       default:
         return html``;
     }

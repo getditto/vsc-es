@@ -58,7 +58,7 @@ export class InspectorController {
   }
 
   setSelectedRowJson(json: string | null): void {
-    if (this.content.kind !== 'query') return;
+    if (this.content.kind !== 'query' && this.content.kind !== 'observers') return;
     this.content = { ...this.content, selectedRowJson: json ?? undefined };
     this._onChange.fire(this.content);
   }

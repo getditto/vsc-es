@@ -76,12 +76,14 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     const presenceHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'presence.html')).toString();
     const metricsHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'metrics.html')).toString();
     const databaseMetricsHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'databaseMetrics.html')).toString();
+    const observeHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'observe.html')).toString();
     const pushHelpUris = () => {
       this.post({ type: 'inspector.helpHtml', kind: 'subscription',     uri: subscriptionHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'query',            uri: queryHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'presence',         uri: presenceHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'metrics',          uri: metricsHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'databaseMetrics',  uri: databaseMetricsHelpUri });
+      this.post({ type: 'inspector.helpHtml', kind: 'observers',        uri: observeHelpUri });
     };
 
     this.disposables.push(
@@ -159,6 +161,9 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     switch (msg.type) {
       case 'inspector.tabSelected':
         if (cur.kind === 'query') { void this.controller.setQueryTab(msg.tab); }
+        else if (cur.kind === 'observers' && (msg.tab === 'json' || msg.tab === 'help')) {
+          void this.controller.setObserverTab(msg.tab);
+        }
         return;
       case 'inspector.loadQueryInEditor':
         try {
