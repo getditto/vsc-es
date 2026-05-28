@@ -38,6 +38,17 @@ export type InspectorContent =
       tab: QueryInspectorTab;
       lastResultMetadata?: QueryResultMetadata;
       selectedRowJson?: string;
+    }
+  | {
+      /** Active feature = Observer panel for a specific observer.
+       *  The Inspector renders its help tab and a JSON tab showing
+       *  the currently-selected event's data (matches how the
+       *  Query Editor surfaces selected-row JSON). */
+      kind: 'observers';
+      databaseId: string;
+      observerId: string;
+      tab: 'json' | 'help';
+      selectedRowJson?: string;
     };
 
 /** SDK attachment token as found in document fields. The Node SDK

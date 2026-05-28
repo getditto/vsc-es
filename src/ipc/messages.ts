@@ -12,6 +12,7 @@ import type {
 import type { QueryHistoryEntry } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoriteEntry } from '../storage/QueryFavoritesStore.js';
 import type { ImportableSubscription } from '../ditto/import-subscription-parser.js';
+import type { ObserverEvent } from '../ditto/ObserverEventStore.js';
 
 // ─── Welcome / first-run onboarding panel ──────────────────────
 /** Webview → host. The welcome panel has two action buttons: a primary
@@ -235,6 +236,38 @@ export type QueryOut =
   | { type: 'query.exportDone'; rowCount: number; path: string }
   | { type: 'query.exportCancelled' }
   | { type: 'query.exportError'; message: string };
+
+// ─── Observer panel ────────────────────────────────────────────
+/** Webview → host. */
+export type ObserverIn =
+  // User clicked Activate in the panel toolbar.
+  | { type: 'observer.activate' }
+  // User clicked Stop in the panel toolbar.
+  | { type: 'observer.stop' }
+  // User selected an event in the events table; surface the
+  // currently-selected event's row JSON to the Inspector.
+  | { type: 'observer.eventSelected'; eventId: string | null }
+  // User selected a single row inside the bottom-pane detail view.
+  // The Inspector's JSON tab shows this row.
+  | { type: 'observer.rowSelected'; rowJson: string | null }
+  // User clicked the help icon (or it auto-opens on first run).
+  | { type: 'observer.helpRequested' };
+
+/** Host → webview. */
+export type ObserverOut =
+  // Pushed on resolve and after every save — name + query for the
+  // panel title/toolbar.
+  | { type: 'observer.init'; observer: { id: string; name: string; query: string } }
+  // Pushed when the observer is activated or stopped.
+  | { type: 'observer.statusChanged'; active: boolean }
+  // Coalesced batch of events from the host's 100ms flush window.
+  // The webview appends them to its ring buffer.
+  | { type: 'observer.events'; events: ObserverEvent[] }
+  // Pushed when the user clicks Stop or when the observer is
+  // cancelled programmatically — clears the webview's event store.
+  | { type: 'observer.cleared' }
+  // Pushed on resolve — same pattern as the inspector help URI.
+  | { type: 'observer.helpHtml'; uri: string };
 
 // ─── Query Metrics panel ───────────────────────────────────────
 /** A single record in the Query Metrics history. The shape is the
