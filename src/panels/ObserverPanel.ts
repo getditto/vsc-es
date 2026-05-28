@@ -118,7 +118,7 @@ export class ObserverPanel {
     const levelSub = logger.onDidChangeChannelLevel((level) => {
       this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
     });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
+    this.disposables.push(levelSub);
 
     setTimeout(() => this.pushInit(), 50);
   }
@@ -199,6 +199,7 @@ export class ObserverPanel {
     });
     if (!handle) {
       vscode.window.showWarningMessage('Could not register observer — no active session.');
+      this.post({ type: 'observer.statusChanged', active: false });
       return;
     }
     this.cancelObserver = handle;
