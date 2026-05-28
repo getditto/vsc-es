@@ -92,6 +92,7 @@ function buildSwitchDeps(
       closeQueryMetrics: () => QueryMetricsPanel.dispose(),
       closeDatabaseMetrics: () => DatabaseMetricsPanel.dispose(),
       closeImportData: () => ImportDataPanel.dispose(),
+      closeObserver: () => ObserverPanel.disposeAll(),
       showQuery: (databaseId, queryText) => {
         const panel = QueryEditorPanel.show(
           context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, metrics, loggerArg,
