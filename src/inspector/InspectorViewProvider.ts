@@ -1,7 +1,6 @@
 // src/inspector/InspectorViewProvider.ts
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from './InspectorController.js';
 import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';

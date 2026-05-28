@@ -56,7 +56,7 @@ export class QueryMetricsPanel {
 
   private constructor(
     context: vscode.ExtensionContext,
-    private readonly configs: ConfigStore,
+    configs: ConfigStore,
     private readonly metricsStore: QueryMetricsStore,
     private readonly databaseId: string,
     private readonly inspector: InspectorController,

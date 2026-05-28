@@ -309,7 +309,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
 
   /** Try to reveal each id; returns the set of ids that didn't resolve
    *  (because the corresponding tree node doesn't exist yet). */
-  const restoreExpansion = async (dbId: string, ids: readonly string[]): Promise<Set<string>> => {
+  const restoreExpansion = async (_dbId: string, ids: readonly string[]): Promise<Set<string>> => {
     const remaining = new Set<string>();
     for (const id of ids) {
       const node = await treeProvider.findNodeById(id);

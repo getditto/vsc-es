@@ -13,7 +13,7 @@
 //                   picking a new file, matching SwiftUI)
 
 import { LitElement, html, css, type TemplateResult } from 'lit';
-import { customElement, state, query } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
 
 type InsertType = 'regular' | 'initial';
@@ -45,8 +45,6 @@ export class ImportDataElement extends LitElement {
   @state() private progressDocId: string | undefined;
   @state() private errorMessage: string | undefined;
   @state() private done: { successCount: number; failureCount: number; errors: string[]; collection: string } | undefined;
-
-  @query('#new-collection-input') private newCollectionInput?: HTMLInputElement;
 
   static styles = css`
     :host {

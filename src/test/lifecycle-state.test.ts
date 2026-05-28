@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reduceLifecycle, type LifecycleState, type LifecycleAction } from '../ditto/lifecycle-state.js';
+import { reduceLifecycle, type LifecycleState } from '../ditto/lifecycle-state.js';
 
 test('reduceLifecycle: idle + connectStart → connecting', () => {
   const next = reduceLifecycle({ kind: 'idle' }, { type: 'connectStart', configId: 'A' });

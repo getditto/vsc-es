@@ -200,7 +200,6 @@ export class PeerListing extends LitElement {
   @state() private nowTick = 0;
 
   // ─── Transport configuration popover ──────────────────────────
-  @state() private platform: Platform = 'other';
   @state() private support: TransportSupport = { lan: true, bluetoothLE: false, awdl: false };
   @state() private baseline: TransportPrefs = { isLanEnabled: true, isBluetoothLeEnabled: false, isAwdlEnabled: false };
   @state() private form: TransportPrefs = { isLanEnabled: true, isBluetoothLeEnabled: false, isAwdlEnabled: false };
@@ -737,7 +736,6 @@ export class PeerListing extends LitElement {
         return;
       }
       if (msg.type === 'peer.platformInit') {
-        this.platform = msg.platform;
         this.support = msg.support;
         this.baseline = { ...msg.current };
         this.form = { ...msg.current };
@@ -1129,10 +1127,6 @@ export class PeerListing extends LitElement {
         </div>
       </div>
     `;
-  }
-
-  private renderGraphPlaceholder() {
-    return html`<div class="placeholder">Presence Graph — coming soon.<br><br>The force-directed network visualization is planned for a future release.</div>`;
   }
 
   private renderGraphTab() {

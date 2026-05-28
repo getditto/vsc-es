@@ -39,7 +39,7 @@ export class AddIndexPanel {
   private readonly disposables: vscode.Disposable[] = [];
 
   private constructor(
-    private readonly context: vscode.ExtensionContext,
+    context: vscode.ExtensionContext,
     private readonly collections: AddIndexCollectionsShim,
     private readonly logger: Logger,
     preselectedCollection?: string,

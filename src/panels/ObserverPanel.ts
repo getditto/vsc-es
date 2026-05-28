@@ -63,7 +63,7 @@ export class ObserverPanel {
   private static readonly flushIntervalMs = 100;
 
   private constructor(
-    private readonly context: vscode.ExtensionContext,
+    context: vscode.ExtensionContext,
     private readonly manager: DittoManager,
     private readonly databaseId: string,
     private observer: StoredObserver,

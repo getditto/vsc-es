@@ -56,7 +56,7 @@ export class DatabaseMetricsPanel {
 
   private constructor(
     context: vscode.ExtensionContext,
-    private readonly configs: ConfigStore,
+    configs: ConfigStore,
     private readonly manager: DittoManager,
     private readonly databaseId: string,
     private readonly inspector: InspectorController,

@@ -28,7 +28,7 @@ export class DatabaseEditorPanel {
   private readonly disposables: vscode.Disposable[] = [];
 
   private constructor(
-    private readonly context: vscode.ExtensionContext,
+    context: vscode.ExtensionContext,
     private readonly configs: ConfigStore,
     private readonly secrets: SecretStore,
     private readonly logger: Logger,

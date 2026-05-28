@@ -10,7 +10,6 @@ import {
   type Diff,
   Logger as DittoLogger,
   type PresenceGraph,
-  type Attachment,
   type AttachmentFetcher,
   type AttachmentFetchEvent,
 } from '@dittolive/ditto';

@@ -151,7 +151,7 @@ export class QueryEditorPanel {
   private lastSelectedRowJson: string | null | undefined;
 
   private constructor(
-    private readonly context: vscode.ExtensionContext,
+    context: vscode.ExtensionContext,
     private readonly manager: DittoManager,
     private readonly configs: ConfigStore,
     private readonly secrets: SecretStore,
