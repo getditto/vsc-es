@@ -109,6 +109,24 @@
         "icon": "$(edit)"
       },
       {
+        "command": "dittoVsce.newObserver",
+        "title": "New Observer…",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dittoVsce.editObserver",
+        "title": "Edit Observer"
+      },
+      {
+        "command": "dittoVsce.deleteObserver",
+        "title": "Delete Observer",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dittoVsce.openObserver",
+        "title": "Open Observer"
+      },
+      {
         "command": "dittoVsce.importSubscriptionsFromServer",
         "title": "Ditto: Import Subscriptions from Server…",
         "icon": "$(cloud-download)"
@@ -264,6 +282,31 @@
           "command": "dittoVsce.deleteSubscription",
           "when": "view == dittoDatabases && viewItem == subscription",
           "group": "1@1"
+        },
+        {
+          "command": "dittoVsce.newObserver",
+          "when": "view == dittoDatabases && viewItem == observersParent",
+          "group": "inline"
+        },
+        {
+          "command": "dittoVsce.newObserver",
+          "when": "view == dittoDatabases && viewItem == observersParent",
+          "group": "1_new@1"
+        },
+        {
+          "command": "dittoVsce.editObserver",
+          "when": "view == dittoDatabases && viewItem == observer",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "dittoVsce.deleteObserver",
+          "when": "view == dittoDatabases && viewItem == observer",
+          "group": "9_destructive@1"
+        },
+        {
+          "command": "dittoVsce.deleteObserver",
+          "when": "view == dittoDatabases && viewItem == observer",
+          "group": "inline"
         },
         {
           "command": "dittoVsce.refreshCollections",

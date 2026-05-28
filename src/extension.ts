@@ -18,6 +18,8 @@ import { DatabaseMetricsPanel } from './panels/DatabaseMetricsPanel.js';
 import { ImportDataPanel } from './panels/ImportDataPanel.js';
 import { WelcomePanel } from './panels/WelcomePanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
+import { ObserverEditorPanel } from './panels/ObserverEditorPanel.js';
+import { ObserverPanel } from './panels/ObserverPanel.js';
 import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
@@ -434,6 +436,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
             QueryEditorPanel.dispose();
             PeerListingPanel.dispose();
             SubscriptionEditorPanel.dispose();
+            ObserverPanel.disposeAll();
             await manager.disconnect();
           } finally {
             statusItem.dispose();
@@ -516,6 +519,40 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     vscode.commands.registerCommand('dittoVsce.editSubscription', (node) => {
       if (node?.kind !== 'subscription') { return; }
       SubscriptionEditorPanel.show(context, subscriptionStore, manager, node.databaseId, inspectorController, logger, node.sub);
+    }),
+    vscode.commands.registerCommand('dittoVsce.newObserver', async (node) => {
+      const databaseId = node?.kind === 'observersParent'
+        ? node.databaseId
+        : manager.getActiveConfigId();
+      if (!databaseId) {
+        vscode.window.showWarningMessage('Open a connection first.');
+        return;
+      }
+      ObserverEditorPanel.show(context, observerStore, databaseId, inspectorController, logger);
+    }),
+    vscode.commands.registerCommand('dittoVsce.editObserver', (node) => {
+      if (node?.kind !== 'observer') { return; }
+      ObserverEditorPanel.show(context, observerStore, node.databaseId, inspectorController, logger, node.observer);
+    }),
+    vscode.commands.registerCommand('dittoVsce.deleteObserver', async (node) => {
+      if (node?.kind !== 'observer') { return; }
+      const ok = await vscode.window.showWarningMessage(
+        `Delete observer "${node.observer.name}"?`,
+        { modal: true },
+        'Delete',
+      );
+      if (ok !== 'Delete') { return; }
+      await observerStore.delete(node.databaseId, node.observer.id);
+      // Close the live panel (if any) so the stopped observer stops emitting.
+      ObserverPanel.disposeForDatabase(node.databaseId);
+    }),
+    vscode.commands.registerCommand('dittoVsce.openObserver', (node) => {
+      if (node?.kind !== 'observer') { return; }
+      if (manager.getActiveConfigId() !== node.databaseId) {
+        vscode.window.showWarningMessage('Connect to this database first.');
+        return;
+      }
+      ObserverPanel.show(context, manager, node.databaseId, node.observer, inspectorController, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.openQueryEditor', (databaseId: string) => {
       if (!databaseId) { return; }
