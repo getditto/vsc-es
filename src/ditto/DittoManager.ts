@@ -6,6 +6,7 @@ import {
   DittoConfig,
   DittoError,
   Authenticator,
+  Differ,
   Logger as DittoLogger,
   type PresenceGraph,
   type Attachment,
@@ -464,6 +465,64 @@ export class DittoManager {
       try { callback(rows); }
       catch (err) {
         this.log.warn('Store observer callback threw', {
+          query, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+    return { cancel: () => { try { observer.cancel(); } catch { /* ignore */ } } };
+  }
+
+  /** Register a Ditto store observer for `query`, wrapping the SDK's
+   *  `Differ` so the callback receives both the materialized rows
+   *  AND the diff vs. the previous firing (insertions / updates /
+   *  moves / deletions as index arrays).
+   *
+   *  Each call constructs its own `Differ` instance so multiple
+   *  concurrent observer panels don't interfere with one another's
+   *  diff state. The first firing always reports every row as an
+   *  insertion (that's the SDK's documented `Differ` contract).
+   *
+   *  Returns a cancel handle the caller is responsible for invoking
+   *  on teardown. Returns `null` if there is no active session. */
+  registerObserver(
+    query: string,
+    callback: (event: {
+      rows: Record<string, unknown>[];
+      insertions: number[];
+      updates: number[];
+      deletions: number[];
+      moves: Array<{ from: number; to: number }>;
+    }) => void,
+  ): { cancel(): void } | null {
+    if (!this.session) { return null; }
+    const differ = new Differ();
+    const observer = this.session.ditto.store.registerObserver(query, (queryResult) => {
+      const rows: Record<string, unknown>[] = [];
+      for (const item of queryResult.items) {
+        rows.push(item.value as Record<string, unknown>);
+      }
+      let diff;
+      try {
+        diff = differ.diff(queryResult.items);
+      } catch (err) {
+        this.log.warn('Differ.diff threw — emitting event with empty diff arrays', {
+          query, err: err instanceof Error ? err.message : String(err),
+        });
+        diff = { insertions: [], updates: [], deletions: [], moves: [] };
+      }
+      for (const item of queryResult.items) {
+        try { item.dematerialize(); } catch { /* ignore */ }
+      }
+      try {
+        callback({
+          rows,
+          insertions: Array.from(diff.insertions),
+          updates: Array.from(diff.updates),
+          deletions: Array.from(diff.deletions),
+          moves: diff.moves.map(m => ({ from: m.from, to: m.to })),
+        });
+      } catch (err) {
+        this.log.warn('Observer callback threw', {
           query, err: err instanceof Error ? err.message : String(err),
         });
       }
