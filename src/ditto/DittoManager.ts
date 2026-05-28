@@ -7,6 +7,7 @@ import {
   DittoError,
   Authenticator,
   Differ,
+  type Diff,
   Logger as DittoLogger,
   type PresenceGraph,
   type Attachment,
@@ -497,29 +498,27 @@ export class DittoManager {
     if (!this.session) { return null; }
     const differ = new Differ();
     const observer = this.session.ditto.store.registerObserver(query, (queryResult) => {
-      const rows: Record<string, unknown>[] = [];
-      for (const item of queryResult.items) {
-        rows.push(item.value as Record<string, unknown>);
-      }
-      let diff;
+      let diff: Diff;
       try {
         diff = differ.diff(queryResult.items);
       } catch (err) {
         this.log.warn('Differ.diff threw — emitting event with empty diff arrays', {
           query, err: err instanceof Error ? err.message : String(err),
         });
-        diff = { insertions: [], updates: [], deletions: [], moves: [] };
+        diff = { insertions: [], deletions: [], updates: [], moves: [] } as Diff;
       }
+      const rows: Record<string, unknown>[] = [];
       for (const item of queryResult.items) {
+        rows.push(item.value as Record<string, unknown>);
         try { item.dematerialize(); } catch { /* ignore */ }
       }
       try {
         callback({
           rows,
-          insertions: Array.from(diff.insertions),
-          updates: Array.from(diff.updates),
-          deletions: Array.from(diff.deletions),
-          moves: diff.moves.map(m => ({ from: m.from, to: m.to })),
+          insertions: diff.insertions,
+          updates: diff.updates,
+          deletions: diff.deletions,
+          moves: diff.moves,
         });
       } catch (err) {
         this.log.warn('Observer callback threw', {
