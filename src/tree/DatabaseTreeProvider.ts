@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
+import type { ObserverStore } from '../storage/ObserverStore.js';
 import type { DatabaseTreeNode } from './DatabaseTreeItem.js';
 import type { LifecycleState } from '../ditto/lifecycle-state.js';
 import type { DittoCollection } from '../models/DittoCollection.js';
@@ -48,11 +49,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     private readonly configs: ConfigStore,
     private readonly statusFor: StatusResolver,
     private readonly subs: SubscriptionStore,
+    private readonly observers: ObserverStore,
     private readonly lifecycleFor?: LifecycleResolver,
     private readonly collections?: CollectionsSource,
   ) {
     configs.onDidChange(() => this._changeEmitter.fire(undefined));
     subs.onDidChange(() => this._changeEmitter.fire(undefined));
+    observers.onDidChange(() => this._changeEmitter.fire(undefined));
     collections?.onChange(() => this._changeEmitter.fire(undefined));
   }
 
@@ -95,6 +98,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         .get<boolean>('collectMetrics', true);
       return [
         { kind: 'subscriptionsParent', databaseId: dbId },
+        { kind: 'observersParent', databaseId: dbId },
         ...collectionRows,
         // Blank divider visually separates the data drill-ins above from the
         // feature shortcuts below (rendered as a thin rule, no label).
@@ -122,6 +126,16 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       // long subscriptions unreadable. The chevron lets the user choose
       // whether to see the body.
       return [{ kind: 'subscriptionQuery', databaseId: node.databaseId, sub: node.sub }];
+    }
+    if (node.kind === 'observersParent') {
+      return this.observers.list(node.databaseId).map(o => ({
+        kind: 'observer' as const,
+        databaseId: node.databaseId,
+        observer: o,
+      }));
+    }
+    if (node.kind === 'observer') {
+      return [{ kind: 'observerQuery', databaseId: node.databaseId, observer: node.observer }];
     }
     if (node.kind === 'collection') {
       // Collections expand to a Documents leaf (right-click → query
@@ -196,6 +210,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     if (!config) { return undefined; }
     if (element.kind === 'sectionHeader'
       || element.kind === 'subscriptionsParent'
+      || element.kind === 'observersParent'
       || element.kind === 'collection'
       || element.kind === 'peerListing'
       || element.kind === 'queryEditor'
@@ -209,6 +224,12 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     }
     if (element.kind === 'subscriptionQuery') {
       return { kind: 'subscription', databaseId: element.databaseId, sub: element.sub };
+    }
+    if (element.kind === 'observer') {
+      return { kind: 'observersParent', databaseId: element.databaseId };
+    }
+    if (element.kind === 'observerQuery') {
+      return { kind: 'observer', databaseId: element.databaseId, observer: element.observer };
     }
     if (element.kind === 'documentsLeaf' || element.kind === 'indexesParent') {
       return { kind: 'collection', databaseId: element.databaseId, collection: element.collection };
@@ -342,6 +363,40 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.tooltip = new vscode.MarkdownString().appendCodeblock(node.sub.query, 'sql');
         item.contextValue = 'subscriptionQuery';
         item.id = `subQ.${node.databaseId}.${node.sub.id}`;
+        return item;
+      }
+      case 'observersParent': {
+        const count = this.observers.list(node.databaseId).length;
+        const item = new vscode.TreeItem(
+          count > 0 ? labelWithCountChip('Observers', count) : 'Observers',
+          vscode.TreeItemCollapsibleState.Collapsed,
+        );
+        item.iconPath = new vscode.ThemeIcon('eye');
+        item.contextValue = 'observersParent';
+        item.id = `obs.${node.databaseId}`;
+        return item;
+      }
+      case 'observer': {
+        const item = new vscode.TreeItem(
+          node.observer.name,
+          vscode.TreeItemCollapsibleState.Collapsed,
+        );
+        item.iconPath = new vscode.ThemeIcon('eye');
+        item.contextValue = 'observer';
+        item.id = `obs.${node.databaseId}.${node.observer.id}`;
+        item.command = {
+          command: 'dittoVsce.openObserver',
+          title: 'Open Observer',
+          arguments: [node],
+        };
+        return item;
+      }
+      case 'observerQuery': {
+        const item = new vscode.TreeItem(node.observer.query, vscode.TreeItemCollapsibleState.None);
+        item.iconPath = new vscode.ThemeIcon('note');
+        item.contextValue = 'observerQuery';
+        item.id = `obsQ.${node.databaseId}.${node.observer.id}`;
+        item.tooltip = node.observer.query;
         return item;
       }
       case 'collection': {

@@ -1,5 +1,6 @@
 import type { StoredDittoConfig, StoredSubscription } from '../models/DittoConfig.js';
 import type { DittoCollection, DittoIndex } from '../models/DittoCollection.js';
+import type { StoredObserver } from '../models/StoredObserver.js';
 
 /** Visual section header inside an active database — non-clickable, dimmed.
  *  `id` makes the section unique per DB so VS Code's per-id tree state doesn't
@@ -17,6 +18,9 @@ export type DatabaseTreeNode =
   | { kind: 'subscriptionsParent'; databaseId: string }
   | { kind: 'subscription'; databaseId: string; sub: StoredSubscription }
   | { kind: 'subscriptionQuery'; databaseId: string; sub: StoredSubscription }
+  | { kind: 'observersParent'; databaseId: string }
+  | { kind: 'observer'; databaseId: string; observer: StoredObserver }
+  | { kind: 'observerQuery'; databaseId: string; observer: StoredObserver }
   | { kind: 'collection'; databaseId: string; collection: DittoCollection }
   | { kind: 'documentsLeaf'; databaseId: string; collection: DittoCollection }
   | { kind: 'indexesParent'; databaseId: string; collection: DittoCollection }

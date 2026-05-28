@@ -5,6 +5,7 @@ import { Logger as DittoLogger } from '@dittolive/ditto';
 import { ConfigStore } from './storage/ConfigStore.js';
 import { SecretStore } from './storage/SecretStore.js';
 import { SubscriptionStore } from './storage/SubscriptionStore.js';
+import { ObserverStore } from './storage/ObserverStore.js';
 import { DatabaseTreeProvider } from './tree/DatabaseTreeProvider.js';
 import type { DatabaseTreeNode } from './tree/DatabaseTreeItem.js';
 import { LoggingTreeProvider } from './tree/LoggingTreeProvider.js';
@@ -140,6 +141,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const configStore = new ConfigStore(context.globalState);
   const secretStore = new SecretStore(context.secrets);
   const subscriptionStore = new SubscriptionStore(context.globalState);
+  const observerStore = new ObserverStore(context.globalState);
   const tracker = new OpenPanelsTracker(context.globalState);
   const manager = new DittoManager(context, logger, configStore);
   const collectionsRepo = new CollectionsRepository(manager, logger);
@@ -213,6 +215,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     configStore,
     id => manager.getStatus(id),
     subscriptionStore,
+    observerStore,
     () => manager.getCurrentLifecycleState(),
     collectionsRepo,
   );
