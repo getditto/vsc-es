@@ -93,6 +93,7 @@ function buildSwitchDeps(
       closeDatabaseMetrics: () => DatabaseMetricsPanel.dispose(),
       closeImportData: () => ImportDataPanel.dispose(),
       closeObserver: () => ObserverPanel.disposeAll(),
+      closeObserverEditor: () => ObserverEditorPanel.dispose(),
       showQuery: (databaseId, queryText) => {
         const panel = QueryEditorPanel.show(
           context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, metrics, loggerArg,
@@ -393,6 +394,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         await configStore.delete(node.config.id);
         await secretStore.deleteAll(node.config.id);
         await subscriptionStore.deleteAll(node.config.id);
+        await observerStore.deleteAll(node.config.id);
         await tracker.deleteAll(node.config.id);
         await historyStore.deleteAll(node.config.id);
         await favoritesStore.deleteAll(node.config.id);
@@ -437,6 +439,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
             QueryEditorPanel.dispose();
             PeerListingPanel.dispose();
             SubscriptionEditorPanel.dispose();
+            ObserverEditorPanel.dispose();
             ObserverPanel.disposeAll();
             await manager.disconnect();
           } finally {
