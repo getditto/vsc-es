@@ -386,7 +386,18 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     }),
     vscode.commands.registerCommand('dittoVsce.deleteDatabase', async (node) => {
       if (node?.kind !== 'database') { return; }
-      if (manager.getActiveConfigId() === node.config.id) { await manager.disconnect(); }
+      if (manager.getActiveConfigId() === node.config.id) {
+        // Mirror the disconnect command's panel teardown — without
+        // this, deleting the active database leaves stale Query /
+        // Peer / Subscription / Observer panels pointing at a
+        // session that's about to vanish.
+        QueryEditorPanel.dispose();
+        PeerListingPanel.dispose();
+        SubscriptionEditorPanel.dispose();
+        ObserverEditorPanel.dispose();
+        ObserverPanel.disposeAll();
+        await manager.disconnect();
+      }
       const ok = await vscode.window.showWarningMessage(
         `Delete connection "${node.config.name}"?`, { modal: true }, 'Delete'
       );

@@ -495,16 +495,22 @@ export class DittoManager {
     }) => void,
   ): { cancel(): void } | null {
     if (!this.session) { return null; }
-    const differ = new Differ();
+    // `let` (not const): if .diff() ever throws the differ's internal
+    // baseline is indeterminate — replace it with a fresh instance so
+    // the next firing reports everything as insertions (matching the
+    // SDK's documented "first call shows everything as inserted"
+    // behaviour) instead of silently emitting wrong diffs forever.
+    let differ = new Differ();
     const observer = this.session.ditto.store.registerObserver(query, (queryResult) => {
       let diff: Diff;
       try {
         diff = differ.diff(queryResult.items);
       } catch (err) {
-        this.log.warn('Differ.diff threw — emitting event with empty diff arrays', {
+        this.log.warn('Differ.diff threw — resetting differ and emitting empty diff', {
           query, err: err instanceof Error ? err.message : String(err),
         });
         diff = { insertions: [], deletions: [], updates: [], moves: [] } as Diff;
+        differ = new Differ();
       }
       const rows: Record<string, unknown>[] = [];
       for (const item of queryResult.items) {

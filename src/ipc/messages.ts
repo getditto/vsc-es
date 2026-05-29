@@ -249,9 +249,7 @@ export type ObserverIn =
   | { type: 'observer.eventSelected'; eventId: string | null }
   // User selected a single row inside the bottom-pane detail view.
   // The Inspector's JSON tab shows this row.
-  | { type: 'observer.rowSelected'; rowJson: string | null }
-  // User clicked the help icon (or it auto-opens on first run).
-  | { type: 'observer.helpRequested' };
+  | { type: 'observer.rowSelected'; rowJson: string | null };
 
 /** Host → webview. */
 export type ObserverOut =
@@ -265,9 +263,7 @@ export type ObserverOut =
   | { type: 'observer.events'; events: ObserverEvent[] }
   // Pushed when the user clicks Stop or when the observer is
   // cancelled programmatically — clears the webview's event store.
-  | { type: 'observer.cleared' }
-  // Pushed on resolve — same pattern as the inspector help URI.
-  | { type: 'observer.helpHtml'; uri: string };
+  | { type: 'observer.cleared' };
 
 // ─── Query Metrics panel ───────────────────────────────────────
 /** A single record in the Query Metrics history. The shape is the

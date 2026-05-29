@@ -5,10 +5,7 @@ import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
 import type { StoredObserver } from '../models/StoredObserver.js';
 import type { ObserverIn, ObserverOut, LogIn, LogOut } from '../ipc/messages.js';
-import {
-  ObserverEventStore,
-  type ObserverEvent,
-} from '../ditto/ObserverEventStore.js';
+import type { ObserverEvent } from '../ditto/ObserverEventStore.js';
 
 /** Per-database observer panel registry. We allow multiple observer
  *  panels open at once (one per observer), so this is a Map keyed by
@@ -79,7 +76,6 @@ export class ObserverPanel {
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
-  private readonly eventStore = new ObserverEventStore();
   private cancelObserver?: { cancel(): void };
   /** Coalescing buffer for events pushed to the webview. Matches the
    *  SwiftUI 100ms flush window. */
@@ -197,10 +193,6 @@ export class ObserverPanel {
         this.inspector.setSelectedRowJson(msg.rowJson);
         return;
       }
-      case 'observer.helpRequested': {
-        await this.inspector.setObserverTab('help');
-        return;
-      }
     }
   }
 
@@ -235,7 +227,6 @@ export class ObserverPanel {
     this.cancelObserver?.cancel();
     this.cancelObserver = undefined;
     this.cancelFlush();
-    this.eventStore.clear();
     this.post({ type: 'observer.cleared' });
     this.post({ type: 'observer.statusChanged', active: false });
   }
@@ -255,7 +246,9 @@ export class ObserverPanel {
     if (this.pendingEvents.length === 0) { return; }
     const batch = this.pendingEvents;
     this.pendingEvents = [];
-    this.eventStore.appendBatch(batch);
+    // The webview owns the 500-cap ring buffer (see
+    // observer-element.ts:appendEvents); the host doesn't need its
+    // own mirror because it never reads back from one.
     this.post({ type: 'observer.events', events: batch });
   }
 

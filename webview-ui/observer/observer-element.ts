@@ -95,10 +95,6 @@ export class DittoObserverPanel extends LitElement {
           this.selectedEventId = null;
           this.selectedRowIndex = null;
           break;
-        case 'observer.helpHtml':
-          // Currently nothing local to do — Inspector renders the help
-          // tab; we just acknowledge the message.
-          break;
         default:
           assertNever(msg);
       }
