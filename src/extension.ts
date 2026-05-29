@@ -547,8 +547,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       );
       if (ok !== 'Delete') { return; }
       await observerStore.delete(node.databaseId, node.observer.id);
-      // Close the live panel (if any) so the stopped observer stops emitting.
-      ObserverPanel.disposeForDatabase(node.databaseId);
+      // Close ONLY the panel for the observer being deleted — other
+      // open observer panels for the same database stay put.
+      ObserverPanel.disposeOne(node.databaseId, node.observer.id);
     }),
     vscode.commands.registerCommand('dittoVsce.openObserver', (node) => {
       if (node?.kind !== 'observer') { return; }

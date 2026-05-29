@@ -5,6 +5,7 @@ import type { StoredObserver } from '../models/StoredObserver.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
 import type { LogIn, LogOut, SubIn, SubOut } from '../ipc/messages.js';
+import { ObserverPanel } from './ObserverPanel.js';
 
 /** Editor for creating/renaming an observer. Reuses the existing
  *  subscription-form webview bundle (`subscription.js`) because the
@@ -126,6 +127,10 @@ export class ObserverEditorPanel {
         query: msg.query.trim(),
       };
       await this.observers.save(this.databaseId, observer);
+      // Sync any already-open ObserverPanel for this observer so a
+      // rename / query rewrite is reflected immediately (title +
+      // toolbar + restart of the SDK observer against the new query).
+      ObserverPanel.refreshIfOpen(this.databaseId, observer);
       vscode.window.showInformationMessage(`Saved observer "${observer.name}".`);
       this.panel.dispose();
     }

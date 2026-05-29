@@ -30,11 +30,28 @@ export class ObserverPanel {
   ): ObserverPanel {
     const k = keyOf(databaseId, observer.id);
     const existing = _open.get(k);
-    if (existing) { existing.panel.reveal(); return existing; }
+    if (existing) {
+      // The tree may hold a newer observer object (renamed, query
+      // rewritten) than the one this panel captured at construction
+      // time — sync it before revealing so the title/toolbar reflect
+      // the latest save.
+      existing.updateObserver(observer);
+      existing.panel.reveal();
+      return existing;
+    }
     const inst = new ObserverPanel(context, manager, databaseId, observer, inspector, logger);
     _open.set(k, inst);
     autoRevealInspectorOnce(context);
     return inst;
+  }
+
+  /** Sync an open panel (if any) to the latest StoredObserver. Called
+   *  from the editor after `save()` so a rename/query-rewrite while
+   *  the panel is open immediately retitles + restarts the SDK
+   *  observer against the new query. No-op when no panel is open. */
+  static refreshIfOpen(databaseId: string, observer: StoredObserver): void {
+    const existing = _open.get(keyOf(databaseId, observer.id));
+    if (existing) { existing.updateObserver(observer); }
   }
 
   /** Dispose every open panel for a given database (called from the
@@ -43,6 +60,14 @@ export class ObserverPanel {
     for (const [k, p] of _open) {
       if (p.databaseId === databaseId) { p.dispose(); _open.delete(k); }
     }
+  }
+
+  /** Dispose a single observer's panel (called from the delete-observer
+   *  handler so deleting one observer doesn't close every other
+   *  open observer panel for the same database). */
+  static disposeOne(databaseId: string, observerId: string): void {
+    const existing = _open.get(keyOf(databaseId, observerId));
+    if (existing) { existing.dispose(); }
   }
 
   /** Dispose every open observer panel (called when the active
