@@ -123,3 +123,40 @@ test('Logger: redacts secrets in production mode', async () => {
   assert.match(ch.lines[0].line, /\[redacted\]/);
   await logger.dispose();
 });
+
+test('TEMP_DELIBERATE_FAIL_2', () => {
+  throw new Error('intentional failure');
+});
+
+test('Logger: writes to extraSinks alongside channel and file', async () => {
+  const ch = fakeChannel();
+  const dir = await tmpdir();
+  const captured: { level: string; line: string }[] = [];
+  const logger = createLogger({
+    channel: ch.api,
+    fileDir: dir,
+    extraSinks: [{ write: (level, line) => captured.push({ level, line }) }],
+  });
+  logger.info('via-extra-sink');
+  await logger.flush();
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].level, 'info');
+  assert.match(captured[0].line, /via-extra-sink/);
+  await logger.dispose();
+});
+
+test('Logger: extraSink throw does not affect channel or file', async () => {
+  const ch = fakeChannel();
+  const dir = await tmpdir();
+  const logger = createLogger({
+    channel: ch.api,
+    fileDir: dir,
+    extraSinks: [{ write: () => { throw new Error('boom'); } }],
+  });
+  logger.info('still-written');
+  await logger.flush();
+  assert.equal(ch.lines.length, 1);
+  const file = await fs.readFile(path.join(dir, 'ditto-edge-studio.log'), 'utf8');
+  assert.match(file, /still-written/);
+  await logger.dispose();
+});

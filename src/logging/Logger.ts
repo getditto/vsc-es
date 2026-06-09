@@ -3,6 +3,7 @@ import { ChannelSink } from './ChannelSink.js';
 import { FileSink } from './FileSink.js';
 import { formatLogLine } from './format.js';
 import { containsSecret, SECRET_KEYS } from './secrets.js';
+import type { Sink } from './Sink.js';
 import type { Logger, LogLevel, LogContext } from './types.js';
 import { LOG_LEVEL_ORDER, shouldEmit } from './types.js';
 
@@ -21,6 +22,7 @@ export interface CreateLoggerOptions {
   fileMin?: LogLevel;                  // default 'info'
   mode?: 'development' | 'production'; // default 'production' — guard behavior
   sessionId?: string;
+  extraSinks?: Sink[];
 }
 
 interface InternalLogger extends Logger {
@@ -38,6 +40,17 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
   });
   const fileMin: LogLevel = opts.fileMin ?? 'info';
   const mode = opts.mode ?? 'production';
+
+  // Adapters keep the existing fire-and-forget file write and level-routed
+  // channel write while exposing them as the common Sink shape, so any extra
+  // sinks supplied by callers fan out from the same code path below.
+  const fileSinkAdapter: Sink = {
+    write: (_level, line) => { void fileSink.write(line + '\n'); },
+  };
+  const channelSinkAdapter: Sink = {
+    write: (level, line) => channelSink.write(level, line),
+  };
+  const extra = opts.extraSinks ?? [];
 
   const channelLevelEmitter = new vscode.EventEmitter<LogLevel>();
   const sdkLevelEmitter = new vscode.EventEmitter<LogLevel>();
@@ -76,12 +89,20 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
     const finalLine = formatLogLine({ timestamp: new Date(), level, tag, message: messageToUse, ctx: ctxToUse });
 
     if (shouldEmit(level, channelLevel)) {
-      channelSink.write(level, finalLine);
+      channelSinkAdapter.write(level, finalLine);
     }
     const effectiveFile: LogLevel =
       LOG_LEVEL_ORDER.indexOf(channelLevel) > LOG_LEVEL_ORDER.indexOf(fileMin) ? channelLevel : fileMin;
     if (shouldEmit(level, effectiveFile)) {
-      void fileSink.write(finalLine + '\n');
+      fileSinkAdapter.write(level, finalLine);
+    }
+    for (const sink of extra) {
+      try { sink.write(level, finalLine); }
+      catch (err) {
+        // Extra sinks must never break logging. Report the failure on the
+        // channel as 'error', and swallow any failure from that too.
+        try { channelSink.write('error', `[Logger] extraSink threw: ${String(err)}`); } catch { /* swallow */ }
+      }
     }
   }
 
