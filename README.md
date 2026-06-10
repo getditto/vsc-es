@@ -33,6 +33,27 @@ without leaving VS Code.
   context-menu (or inline `＋`), and remove one via right-click → **Delete
   Index** (or inline trash icon) on any index row. Both flows confirm
   before mutating.
+- **Log Analyzer** — live problem detection over the SDK + extension log
+  stream. Opens from the **Logging** sidebar → **Open Log Analyzer**. On
+  open, the panel backfills history from `ditto-edge-studio.log` and then
+  subscribes to new lines. A bundled regex catalog (`problem_patterns.json`)
+  flags known issues — deadlocks, expired certificates, OOM kills, query
+  size limits, auth failures — and surfaces a recommendation per match,
+  severity-ranked. Includes a stacked log-volume histogram, a
+  problems-over-time histogram, a log-binned connection-duration histogram,
+  a per-peer connection timeline (SVG lanes colored by transport with
+  `ditto_init` markers), and a live tail. Pause / Clear / Manage Patterns
+  toolbar.
+- **Manage Log Patterns** — the **Logging** sidebar → **Manage Log
+  Patterns** opens a dedicated editor for user-defined patterns. Bundled
+  patterns are listed read-only (lock icon, no edit/delete affordance);
+  user patterns get full CRUD with live regex validation, a test-line
+  field, and severity (1–5) + optional level / tag filters. Saved to
+  `<globalStorage>/log-analyzer/user_patterns.json` by default, or to the
+  path in the `dittoVsce.logAnalyzer.customPatternsFile` setting if set
+  (useful for sharing patterns via version control). On-disk format
+  matches the bundled catalog, so power users can edit by hand and the
+  editor will read it correctly.
 - **Two auth modes** — Server (Big Peer with URL) and
   Small Peers Only (offline token + optional shared-secret key).
 - **Get Quickstarts** — one click clones the official
