@@ -14,7 +14,10 @@ export class LogTable extends LitElement {
   static styles = css`
     :host {
       display: block;
-      height: 500px;
+      /* Fill the available height from the parent's flex layout, but keep
+         a sensible floor so the table is usable even on small panels. */
+      height: 100%;
+      min-height: 300px;
       overflow: auto;
       border: 1px solid var(--vscode-panel-border);
       border-radius: 4px;

@@ -39,13 +39,17 @@ import type {
 export class DittoLogAnalyzer extends LitElement {
   static styles = css`
     :host {
-      display: block;
+      /* Fill the webview viewport so the log table can grow into the
+         space freed when other accordion sections collapse. */
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
       padding: 12px;
       color: var(--vscode-foreground);
       font-family: var(--vscode-font-family);
       box-sizing: border-box;
     }
-    .toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }
     button {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
@@ -64,7 +68,21 @@ export class DittoLogAnalyzer extends LitElement {
       margin: 6px 0;
       border-radius: 4px;
     }
-    .stack { display: flex; flex-direction: column; gap: 12px; }
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      /* Take the rest of the viewport so the log-table inside can
+         flex-fill when the accordion sections above it collapse. */
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    /* Collapsible/filter rows keep their natural height. The log table is
+       the only flex-grow child of .stack — it absorbs the slack. */
+    .stack > collapsible-section,
+    .stack > filter-tabs,
+    .stack > .table-controls { flex: 0 0 auto; }
+    .stack > log-table { flex: 1 1 auto; min-height: 0; }
     .table-controls {
       display: flex;
       align-items: center;
