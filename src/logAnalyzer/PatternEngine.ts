@@ -1,4 +1,4 @@
-import { LOG_LEVEL_ORDER, type LogLevel } from '../logging/types.js';
+import type { LogLevel } from '../logging/types.js';
 import type { LogLine } from './types.js';
 
 export interface RawPattern {
@@ -76,14 +76,13 @@ export class PatternEngine {
   scan(line: LogLine): CompiledPattern[] {
     const out: CompiledPattern[] = [];
     for (const p of this.compiled.values()) {
-      if (p.levelFilter && !levelAtLeast(line.level, p.levelFilter)) continue;
+      // Exact level match (not "at least") so tiered patterns (e.g. deadlock at
+      // ERROR vs WARN) stay mutually exclusive instead of both firing on the
+      // more severe variant.
+      if (p.levelFilter && line.level !== p.levelFilter) continue;
       if (p.tagFilter && !p.tagFilter.test(line.tag ?? '')) continue;
       if (p.regex.test(line.text)) out.push(p);
     }
     return out;
   }
-}
-
-function levelAtLeast(actual: LogLevel, threshold: LogLevel): boolean {
-  return LOG_LEVEL_ORDER.indexOf(actual) <= LOG_LEVEL_ORDER.indexOf(threshold);
 }
