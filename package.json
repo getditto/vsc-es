@@ -395,7 +395,7 @@
     "build": "node esbuild.config.mjs",
     "build:integration": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
-    "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/*.test.ts'",
+    "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/*.test.ts' 'src/test/webview/*.test.ts'",
     "test:integration:load": "DITTO_CI_DEPTH=load node dist/test/integration/runTests.js",
     "test:integration:e2e": "DITTO_CI_DEPTH=e2e DITTO_CI_MODE=1 node dist/test/integration/runTests.js",
     "vscode:prepublish": "npm run build",
