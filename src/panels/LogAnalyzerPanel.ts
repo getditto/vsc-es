@@ -109,6 +109,32 @@ export class LogAnalyzerPanel {
       case 'analyzer.revealLine':
         // Future: open log file at the recorded line. For MVP: no-op.
         return;
+      case 'analyzer.queryLines': {
+        const result = this.svc.queryLines({
+          filter: msg.filter,
+          search: msg.search,
+          limit: msg.limit,
+          offset: msg.offset,
+        });
+        this.post({
+          type: 'analyzer.linesResult',
+          requestId: msg.requestId,
+          items: result.items,
+          total: result.total,
+        });
+        return;
+      }
+      case 'analyzer.requestLineDetail': {
+        const result = this.svc.getLineDetail(msg.lineId);
+        this.post({
+          type: 'analyzer.lineDetail',
+          requestId: msg.requestId,
+          line: result.line,
+          before: result.before,
+          after: result.after,
+        });
+        return;
+      }
     }
   }
 

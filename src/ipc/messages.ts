@@ -358,7 +358,15 @@ export type AnalyzerOut =
   | { type: 'analyzer.sessionsUpdated'; sessions: import('../logAnalyzer/types.js').Session[] }
   | { type: 'analyzer.histogramsUpdated'; histograms: import('../logAnalyzer/types.js').AnalyzerState['histograms'] }
   | { type: 'analyzer.live'; lines: import('../logAnalyzer/types.js').LogLine[] }
-  | { type: 'analyzer.error'; stage: 'backfill' | 'live'; message: string };
+  | { type: 'analyzer.error'; stage: 'backfill' | 'live'; message: string }
+  | { type: 'analyzer.linesResult'; requestId: string; items: import('../logAnalyzer/types.js').LogLine[]; total: number }
+  | {
+      type: 'analyzer.lineDetail';
+      requestId: string;
+      line: import('../logAnalyzer/types.js').LogLine | null;
+      before: import('../logAnalyzer/types.js').LogLine[];
+      after: import('../logAnalyzer/types.js').LogLine[];
+    };
 
 /** Webview → host: user controls + reveal requests. */
 export type AnalyzerIn =
@@ -367,7 +375,16 @@ export type AnalyzerIn =
   | { type: 'analyzer.pause' }
   | { type: 'analyzer.resume' }
   | { type: 'analyzer.revealLine'; lineId: number }
-  | { type: 'analyzer.openPatternEditor' };
+  | { type: 'analyzer.openPatternEditor' }
+  | {
+      type: 'analyzer.queryLines';
+      filter: 'all' | 'critical' | 'error' | 'warn' | 'problem';
+      search?: string;
+      limit?: number;
+      offset?: number;
+      requestId: string;
+    }
+  | { type: 'analyzer.requestLineDetail'; lineId: number; requestId: string };
 
 // ─── Pattern Editor panel ──────────────────────────────────────
 /** Host → webview: pattern catalog snapshot + save results.
