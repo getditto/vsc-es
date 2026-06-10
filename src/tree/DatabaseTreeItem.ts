@@ -30,4 +30,5 @@ export type DatabaseTreeNode =
   | { kind: 'queryEditor'; databaseId: string }
   | { kind: 'queryMetrics'; databaseId: string }
   | { kind: 'databaseMetrics'; databaseId: string }
+  | { kind: 'logAnalyzer'; databaseId: string }
   | { kind: 'importData'; databaseId: string };

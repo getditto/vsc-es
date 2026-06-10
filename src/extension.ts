@@ -42,6 +42,13 @@ import { makeTestApi } from './test-api/index.js';
 import { QuickstartService, createNodeGitRunner } from './quickstart/QuickstartService.js';
 import type { EnvValues, CloneMode } from './quickstart/QuickstartService.js';
 import { QUICKSTART_FOLDER_NAME } from './quickstart/quickstart-projects.js';
+import { AnalyzerSink } from './logAnalyzer/AnalyzerSink.js';
+import { PatternEngine } from './logAnalyzer/PatternEngine.js';
+import { PatternStore } from './logAnalyzer/PatternStore.js';
+import { ConnectionTracker } from './logAnalyzer/ConnectionTracker.js';
+import { LogAnalyzerService } from './logAnalyzer/LogAnalyzerService.js';
+import { LogAnalyzerPanel } from './panels/LogAnalyzerPanel.js';
+import { PatternEditorPanel } from './panels/PatternEditorPanel.js';
 
 let logger: Logger;
 
@@ -127,6 +134,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const channel = vscode.window.createOutputChannel('Ditto Edge Studio', { log: true });
   const sessionId = crypto.randomUUID();
   const fileDir = path.join(context.globalStorageUri.fsPath, 'logs');
+  const analyzerSink = new AnalyzerSink();
   logger = createLogger({
     channel,
     fileDir,
@@ -134,6 +142,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     mode: context.extensionMode === vscode.ExtensionMode.Development
       || context.extensionMode === vscode.ExtensionMode.Test
         ? 'development' : 'production',
+    extraSinks: [analyzerSink],
   });
   context.subscriptions.push({ dispose: () => { void logger.dispose(); } });
 
@@ -141,6 +150,43 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   attachSdkLogBridge(DittoLogger as unknown as Parameters<typeof attachSdkLogBridge>[0], logger.withTag('sdk'));
 
   const log = logger.withTag('ext');
+
+  // ─── Log Analyzer wiring ─────────────────────────────────────
+  // PatternStore reads the bundled catalog from the extension's dist/
+  // and merges in user-authored patterns from globalStorage (or a
+  // workspace-configured override). Engine reloads compiled patterns
+  // whenever the store changes (add/update/delete from the editor) or
+  // when the user points the setting at a different file.
+  const patternStore = new PatternStore({
+    bundledPath: context.asAbsolutePath(path.join('dist', 'patterns', 'problem_patterns.json')),
+    resolveUserPath: () => {
+      const setting = vscode.workspace.getConfiguration('dittoVsce.logAnalyzer').get<string>('customPatternsFile');
+      if (setting && setting.trim().length > 0) { return setting; }
+      return path.join(context.globalStorageUri.fsPath, 'log-analyzer', 'user_patterns.json');
+    },
+    logger,
+  });
+  const patternEngine = new PatternEngine(patternStore);
+  // activate() is sync, so kick the initial load asynchronously. The
+  // engine starts empty until the load resolves — that's fine: the
+  // analyzer panel is user-initiated and won't open faster than this
+  // I/O completes in practice.
+  void patternStore.load().then(() => patternEngine.load());
+  context.subscriptions.push(
+    patternStore.onDidChange(() => patternEngine.reload()),
+  );
+
+  // LogAnalyzerService is per-database, lazily created when the user opens
+  // the panel for an active connection. Each service has its own
+  // ConnectionTracker + line buffer so disconnect→reconnect produces a
+  // fresh view rather than carrying stale problems across sessions.
+  function makeAnalyzerService(): LogAnalyzerService {
+    return new LogAnalyzerService({
+      sink: analyzerSink,
+      engine: patternEngine,
+      tracker: new ConnectionTracker(),
+    });
+  }
 
   const configStore = new ConfigStore(context.globalState);
   const secretStore = new SecretStore(context.secrets);
@@ -172,8 +218,25 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   // memory profile sane; see AttachmentCache for the LRU policy.
   const attachmentCache = new AttachmentCache();
 
+  // Tracks when each database last entered the 'active' lifecycle state.
+  // The Log Analyzer uses this as a backfill floor so its histograms only
+  // reflect the current connection — not weeks of rotated log history.
+  // Map clears the entry on disconnect so reconnecting gives a fresh
+  // timestamp.
+  const connectedAt = new Map<string, Date>();
+  let lastActiveConfigId: string | null = null;
+
   context.subscriptions.push(manager.onLifecycleStateChange(state => {
-    if (state.kind !== 'active') {
+    if (state.kind === 'active') {
+      // Record connect time on transition INTO active. The lifecycle
+      // emitter can fire 'active' multiple times for the same configId
+      // (e.g. transient sub-state notifications) — only stamp the first.
+      if (lastActiveConfigId !== state.configId) {
+        connectedAt.set(state.configId, new Date());
+        lastActiveConfigId = state.configId;
+      }
+      void collectionsRepo.load();
+    } else {
       inspectorController.clearOnDisconnect();
       collectionsRepo.clear();
       // Lifecycle leaving 'active' === the previously-cached
@@ -183,8 +246,14 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       // even if some other path stashed entries we don't carry orphans
       // into the next connection.
       attachmentCache.clearAll();
-    } else {
-      void collectionsRepo.load();
+      // Log Analyzer is per-database; close all open panels (their
+      // services dispose with them) so disconnect → reconnect produces
+      // a fresh view rather than carrying stale problems across sessions.
+      LogAnalyzerPanel.dispose();
+      if (lastActiveConfigId) {
+        connectedAt.delete(lastActiveConfigId);
+        lastActiveConfigId = null;
+      }
     }
     void vscode.commands.executeCommand('setContext', 'dittoVsce.hasActiveDatabase', state.kind === 'active');
   }));
@@ -247,6 +316,14 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         // setting on each Run), but re-push to the Inspector in case
         // we add a profile-specific tab there later.
         inspectorView.pushSettings();
+      }
+      if (e.affectsConfiguration('dittoVsce.logAnalyzer.customPatternsFile')) {
+        // Repoint PatternStore at the new user file (or fall back to
+        // the default in globalStorage) and recompile the engine. The
+        // analyzer panel, if open, will see the new patterns the next
+        // time it processes a line (or via the store's change event,
+        // which already triggers engine.reload above).
+        void patternStore.load().then(() => patternEngine.reload());
       }
     }),
   );
@@ -775,6 +852,37 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         'revealFileInOS',
         vscode.Uri.joinPath(context.globalStorageUri, 'logs', 'ditto-edge-studio.log'),
       );
+    }),
+    vscode.commands.registerCommand('dittoVsce.openLogAnalyzer', (databaseId?: string) => {
+      // The Log Analyzer is per-database — invoked from the tree row of an
+      // active connection. Without a databaseId we have no scope to bind
+      // to, so refuse rather than guess.
+      if (!databaseId) {
+        void vscode.window.showWarningMessage(
+          'Log Analyzer must be opened from a connected database. Expand a connected database in the Ditto sidebar and click "Log Analyzer".',
+        );
+        return;
+      }
+      const cfg = configStore.get(databaseId);
+      const databaseName = cfg?.name ?? databaseId;
+      // Fall back to "now" when we have no recorded connect time (edge
+      // case: panel opened from a tree row of a DB that's somehow active
+      // without a tracked transition). A `now` cutoff effectively means
+      // "no backfill" — the panel populates from new lines only, which
+      // is still correct: we shouldn't import weeks of unrelated history.
+      const minTimestamp = connectedAt.get(databaseId) ?? new Date();
+      LogAnalyzerPanel.show(
+        context,
+        databaseId,
+        databaseName,
+        makeAnalyzerService(),
+        () => logger.readAllLogs(),
+        logger,
+        minTimestamp,
+      );
+    }),
+    vscode.commands.registerCommand('dittoVsce.openLogPatternEditor', () => {
+      PatternEditorPanel.show(context, patternStore, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.toggleInspector', async () => {
       await vscode.commands.executeCommand('dittoVsce.inspector.focus');

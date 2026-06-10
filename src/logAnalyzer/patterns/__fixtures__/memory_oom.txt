@@ -1,0 +1,1 @@
+2026-06-09T14:23:09.123Z  ERROR  [sdk]  Killed process 1234 (ditto-sync) total-vm:8388608kB

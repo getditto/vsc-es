@@ -7,7 +7,8 @@ export type LoggingNode =
   | { kind: 'sdkLevel' }
   | { kind: 'openOutput' }
   | { kind: 'exportLogs' }
-  | { kind: 'showLogFile' };
+  | { kind: 'showLogFile' }
+  | { kind: 'openPatternEditor' };
 
 export class LoggingTreeProvider implements vscode.TreeDataProvider<LoggingNode> {
   private readonly _onDidChange = new vscode.EventEmitter<void>();
@@ -25,6 +26,7 @@ export class LoggingTreeProvider implements vscode.TreeDataProvider<LoggingNode>
       { kind: 'openOutput' },
       { kind: 'exportLogs' },
       { kind: 'showLogFile' },
+      { kind: 'openPatternEditor' },
     ];
   }
 
@@ -60,6 +62,12 @@ export class LoggingTreeProvider implements vscode.TreeDataProvider<LoggingNode>
         const it = new vscode.TreeItem('Show Log File in Finder', vscode.TreeItemCollapsibleState.None);
         it.iconPath = new vscode.ThemeIcon('folder');
         it.command = { command: 'dittoVsce.showLogFile', title: 'Show Log File' };
+        return it;
+      }
+      case 'openPatternEditor': {
+        const it = new vscode.TreeItem('Manage Log Patterns', vscode.TreeItemCollapsibleState.None);
+        it.iconPath = new vscode.ThemeIcon('settings-gear');
+        it.command = { command: 'dittoVsce.openLogPatternEditor', title: 'Manage Log Patterns' };
         return it;
       }
     }

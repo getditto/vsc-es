@@ -1,6 +1,7 @@
 // src/logging/ChannelSink.ts
 import * as vscode from 'vscode';
 import type { LogLevel } from './types.js';
+import type { Sink } from './Sink.js';
 
 /**
  * Adapter over LogOutputChannel.
@@ -8,7 +9,7 @@ import type { LogLevel } from './types.js';
  * built-in `Developer: Set Log Level…` integration. We additionally
  * filter at the Logger layer based on the channel's reported level.
  */
-export class ChannelSink {
+export class ChannelSink implements Sink {
   constructor(private readonly channel: vscode.LogOutputChannel) {}
 
   write(level: LogLevel, formatted: string): void {
