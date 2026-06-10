@@ -42,6 +42,13 @@ import { makeTestApi } from './test-api/index.js';
 import { QuickstartService, createNodeGitRunner } from './quickstart/QuickstartService.js';
 import type { EnvValues, CloneMode } from './quickstart/QuickstartService.js';
 import { QUICKSTART_FOLDER_NAME } from './quickstart/quickstart-projects.js';
+import { AnalyzerSink } from './logAnalyzer/AnalyzerSink.js';
+import { PatternEngine } from './logAnalyzer/PatternEngine.js';
+import { PatternStore } from './logAnalyzer/PatternStore.js';
+import { ConnectionTracker } from './logAnalyzer/ConnectionTracker.js';
+import { LogAnalyzerService } from './logAnalyzer/LogAnalyzerService.js';
+import { LogAnalyzerPanel } from './panels/LogAnalyzerPanel.js';
+import { PatternEditorPanel } from './panels/PatternEditorPanel.js';
 
 let logger: Logger;
 
@@ -127,6 +134,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const channel = vscode.window.createOutputChannel('Ditto Edge Studio', { log: true });
   const sessionId = crypto.randomUUID();
   const fileDir = path.join(context.globalStorageUri.fsPath, 'logs');
+  const analyzerSink = new AnalyzerSink();
   logger = createLogger({
     channel,
     fileDir,
@@ -134,6 +142,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     mode: context.extensionMode === vscode.ExtensionMode.Development
       || context.extensionMode === vscode.ExtensionMode.Test
         ? 'development' : 'production',
+    extraSinks: [analyzerSink],
   });
   context.subscriptions.push({ dispose: () => { void logger.dispose(); } });
 
@@ -141,6 +150,38 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   attachSdkLogBridge(DittoLogger as unknown as Parameters<typeof attachSdkLogBridge>[0], logger.withTag('sdk'));
 
   const log = logger.withTag('ext');
+
+  // ─── Log Analyzer wiring ─────────────────────────────────────
+  // PatternStore reads the bundled catalog from the extension's dist/
+  // and merges in user-authored patterns from globalStorage (or a
+  // workspace-configured override). Engine reloads compiled patterns
+  // whenever the store changes (add/update/delete from the editor) or
+  // when the user points the setting at a different file.
+  const patternStore = new PatternStore({
+    bundledPath: context.asAbsolutePath(path.join('dist', 'patterns', 'problem_patterns.json')),
+    resolveUserPath: () => {
+      const setting = vscode.workspace.getConfiguration('dittoVsce.logAnalyzer').get<string>('customPatternsFile');
+      if (setting && setting.trim().length > 0) { return setting; }
+      return path.join(context.globalStorageUri.fsPath, 'log-analyzer', 'user_patterns.json');
+    },
+    logger,
+  });
+  const patternEngine = new PatternEngine(patternStore);
+  // activate() is sync, so kick the initial load asynchronously. The
+  // engine starts empty until the load resolves — that's fine: the
+  // analyzer panel is user-initiated and won't open faster than this
+  // I/O completes in practice.
+  void patternStore.load().then(() => patternEngine.load());
+  context.subscriptions.push(
+    patternStore.onDidChange(() => patternEngine.reload()),
+  );
+
+  const connectionTracker = new ConnectionTracker();
+  const analyzerSvc = new LogAnalyzerService({
+    sink: analyzerSink,
+    engine: patternEngine,
+    tracker: connectionTracker,
+  });
 
   const configStore = new ConfigStore(context.globalState);
   const secretStore = new SecretStore(context.secrets);
@@ -247,6 +288,14 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         // setting on each Run), but re-push to the Inspector in case
         // we add a profile-specific tab there later.
         inspectorView.pushSettings();
+      }
+      if (e.affectsConfiguration('dittoVsce.logAnalyzer.customPatternsFile')) {
+        // Repoint PatternStore at the new user file (or fall back to
+        // the default in globalStorage) and recompile the engine. The
+        // analyzer panel, if open, will see the new patterns the next
+        // time it processes a line (or via the store's change event,
+        // which already triggers engine.reload above).
+        void patternStore.load().then(() => patternEngine.reload());
       }
     }),
   );
@@ -775,6 +824,12 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         'revealFileInOS',
         vscode.Uri.joinPath(context.globalStorageUri, 'logs', 'ditto-edge-studio.log'),
       );
+    }),
+    vscode.commands.registerCommand('dittoVsce.openLogAnalyzer', () => {
+      LogAnalyzerPanel.show(context, analyzerSvc, () => logger.readAllLogs(), logger);
+    }),
+    vscode.commands.registerCommand('dittoVsce.openLogPatternEditor', () => {
+      PatternEditorPanel.show(context, patternStore, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.toggleInspector', async () => {
       await vscode.commands.executeCommand('dittoVsce.inspector.focus');
