@@ -54,6 +54,7 @@ const integrationCtx = await esbuild.context({
     'src/test/integration/index.ts',
     'src/test/integration/activation.test.ts',
     'src/test/integration/e2e.test.ts',
+    'src/test/integration/log-analyzer.test.ts',
   ],
   bundle: true,
   outdir: 'dist/test/integration',
