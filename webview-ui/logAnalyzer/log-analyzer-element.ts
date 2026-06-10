@@ -4,28 +4,33 @@ import { postToHost, onHostMessage } from '../shared/messaging.js';
 import './components/summary-header.js';
 import './components/problems-list.js';
 import './components/histograms-row.js';
+import './components/connection-timeline.js';
+import './components/live-tail.js';
 import type { AnalyzerOut } from '../../src/ipc/messages.js';
 import type {
   AnalyzerState,
+  LogLine,
   ProblemInstance,
+  Session,
 } from '../../src/logAnalyzer/types.js';
 
 /** Root element for the Log Analyzer panel. Owns the IPC message
  *  listener and the aggregate analyzer state derived from
- *  `AnalyzerOut` diffs. Child components (`summary-header`,
- *  `problems-list`, and — in later tasks — histograms / timeline /
- *  live tail) are pure presentation.
+ *  `AnalyzerOut` diffs. All child components (`summary-header`,
+ *  `problems-list`, `histograms-row`, `connection-timeline`,
+ *  `live-tail`) are pure presentation.
  *
  *  Message wire-up: messages from the host are coalesced incremental
- *  diffs (`analyzer.summary`, `analyzer.problemsAdded`, …). The
- *  webview keeps its own grouped map of problems keyed by pattern,
- *  rebuilt only when needed for render. The host owns the source of
- *  truth — `analyzer.reset` wipes our local view.
+ *  diffs (`analyzer.summary`, `analyzer.problemsAdded`,
+ *  `analyzer.histogramsUpdated`, `analyzer.sessionsUpdated`,
+ *  `analyzer.live`, …). The webview keeps its own grouped map of
+ *  problems keyed by pattern, rebuilt only when needed for render.
+ *  The host owns the source of truth — `analyzer.reset` wipes our
+ *  local view.
  *
- *  Tasks 15 + 16 will add histogram/timeline/live-tail children and
- *  consume the remaining message variants (`sessionsUpdated`,
- *  `histogramsUpdated`, `live`). For now we just store nothing for
- *  those branches and let the `default` arm swallow them silently. */
+ *  Note: `reinits` is not currently emitted as a separate message —
+ *  it's kept as state so future versions can push reinit markers from
+ *  the host without changing the component contract. */
 @customElement('ditto-log-analyzer')
 export class DittoLogAnalyzer extends LitElement {
   static styles = css`
@@ -68,6 +73,9 @@ export class DittoLogAnalyzer extends LitElement {
     problemsOverTime: [],
     connectionDurations: [],
   };
+  @state() private sessions: Session[] = [];
+  @state() private reinits: Date[] = [];
+  @state() private liveLines: LogLine[] = [];
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -111,6 +119,9 @@ export class DittoLogAnalyzer extends LitElement {
           problemsOverTime: [],
           connectionDurations: [],
         };
+        this.sessions = [];
+        this.reinits = [];
+        this.liveLines = [];
         this.errorBanner = null;
         this.requestUpdate();
         break;
@@ -121,8 +132,15 @@ export class DittoLogAnalyzer extends LitElement {
       case 'analyzer.histogramsUpdated':
         this.histograms = m.histograms;
         break;
-      // sessionsUpdated / live: handled by child components introduced
-      // in task 16.
+      case 'analyzer.sessionsUpdated':
+        this.sessions = m.sessions;
+        break;
+      case 'analyzer.live':
+        // Cap the buffer at 1000 lines; the child component clips to
+        // the most recent 200 for render but we retain a longer tail
+        // here so the user can scroll back briefly.
+        this.liveLines = [...this.liveLines, ...m.lines].slice(-1000);
+        break;
       default:
         break;
     }
@@ -154,6 +172,8 @@ export class DittoLogAnalyzer extends LitElement {
         ></summary-header>
         <problems-list .groups=${this.problemGroups()}></problems-list>
         <histograms-row .histograms=${this.histograms}></histograms-row>
+        <connection-timeline .sessions=${this.sessions} .reinits=${this.reinits}></connection-timeline>
+        <live-tail .lines=${this.liveLines}></live-tail>
       </div>
     `;
   }
