@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
 import './components/summary-header.js';
 import './components/problems-list.js';
+import './components/histograms-row.js';
 import type { AnalyzerOut } from '../../src/ipc/messages.js';
 import type {
   AnalyzerState,
@@ -62,6 +63,11 @@ export class DittoLogAnalyzer extends LitElement {
   @state() private tags: string[] = [];
   @state() private sdkVersion: string | null = null;
   @state() private errorBanner: string | null = null;
+  @state() private histograms: AnalyzerState['histograms'] = {
+    volumeByLevel: [],
+    problemsOverTime: [],
+    connectionDurations: [],
+  };
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -100,6 +106,11 @@ export class DittoLogAnalyzer extends LitElement {
       case 'analyzer.reset':
         this.counts = null;
         this.problems = new Map();
+        this.histograms = {
+          volumeByLevel: [],
+          problemsOverTime: [],
+          connectionDurations: [],
+        };
         this.errorBanner = null;
         this.requestUpdate();
         break;
@@ -107,8 +118,11 @@ export class DittoLogAnalyzer extends LitElement {
         this.errorBanner = `[${m.stage}] ${m.message}`;
         this.requestUpdate();
         break;
-      // sessionsUpdated / histogramsUpdated / live: handled by child
-      // components introduced in tasks 15 + 16.
+      case 'analyzer.histogramsUpdated':
+        this.histograms = m.histograms;
+        break;
+      // sessionsUpdated / live: handled by child components introduced
+      // in task 16.
       default:
         break;
     }
@@ -139,6 +153,7 @@ export class DittoLogAnalyzer extends LitElement {
           .sdkVersion=${this.sdkVersion}
         ></summary-header>
         <problems-list .groups=${this.problemGroups()}></problems-list>
+        <histograms-row .histograms=${this.histograms}></histograms-row>
       </div>
     `;
   }
