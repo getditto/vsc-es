@@ -39,6 +39,47 @@ test('Service: backfill text is processed before live', () => {
   assert.equal(state.counts.totalLines, 2);
 });
 
+test('Service: backfill skips lines older than minTimestamp', () => {
+  const { svc } = makeSvc();
+  // Connect time is 14:00:30 — only the two lines at/after that should
+  // be admitted. The older 14:00:00 line is dropped silently.
+  svc.start({
+    minTimestamp: new Date('2026-06-09T14:00:30.000Z'),
+    backfillText: [
+      '2026-06-09T14:00:00.000Z  INFO   [sdk]  old',
+      '2026-06-09T14:00:30.000Z  INFO   [sdk]  at-cutoff',
+      '2026-06-09T14:00:45.000Z  INFO   [sdk]  newer',
+    ].join('\n'),
+  });
+  const state = svc.getStateForTesting();
+  assert.equal(state.counts.totalLines, 2);
+});
+
+test('Service: backfill drops lines with no parsed timestamp when a cutoff is set', () => {
+  const { svc } = makeSvc();
+  svc.start({
+    minTimestamp: new Date('2026-06-09T14:00:00.000Z'),
+    backfillText: [
+      '2026-06-09T14:00:30.000Z  INFO   [sdk]  ok',
+      'not a real log line at all',  // line.timestamp === null
+    ].join('\n'),
+  });
+  // Only the well-formed line passes; we refuse to admit lines we can't
+  // prove belong to the connection.
+  assert.equal(svc.getStateForTesting().counts.totalLines, 1);
+});
+
+test('Service: backfill without minTimestamp admits every parseable line (legacy behavior)', () => {
+  const { svc } = makeSvc();
+  svc.start({
+    backfillText: [
+      '2020-01-01T00:00:00.000Z  INFO   [sdk]  ancient',
+      '2026-06-09T14:00:00.000Z  INFO   [sdk]  recent',
+    ].join('\n'),
+  });
+  assert.equal(svc.getStateForTesting().counts.totalLines, 2);
+});
+
 test('Service: counts errors and warnings by level', () => {
   const { svc, sink } = makeSvc();
   svc.start();

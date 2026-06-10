@@ -218,8 +218,25 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   // memory profile sane; see AttachmentCache for the LRU policy.
   const attachmentCache = new AttachmentCache();
 
+  // Tracks when each database last entered the 'active' lifecycle state.
+  // The Log Analyzer uses this as a backfill floor so its histograms only
+  // reflect the current connection — not weeks of rotated log history.
+  // Map clears the entry on disconnect so reconnecting gives a fresh
+  // timestamp.
+  const connectedAt = new Map<string, Date>();
+  let lastActiveConfigId: string | null = null;
+
   context.subscriptions.push(manager.onLifecycleStateChange(state => {
-    if (state.kind !== 'active') {
+    if (state.kind === 'active') {
+      // Record connect time on transition INTO active. The lifecycle
+      // emitter can fire 'active' multiple times for the same configId
+      // (e.g. transient sub-state notifications) — only stamp the first.
+      if (lastActiveConfigId !== state.configId) {
+        connectedAt.set(state.configId, new Date());
+        lastActiveConfigId = state.configId;
+      }
+      void collectionsRepo.load();
+    } else {
       inspectorController.clearOnDisconnect();
       collectionsRepo.clear();
       // Lifecycle leaving 'active' === the previously-cached
@@ -233,8 +250,10 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       // services dispose with them) so disconnect → reconnect produces
       // a fresh view rather than carrying stale problems across sessions.
       LogAnalyzerPanel.dispose();
-    } else {
-      void collectionsRepo.load();
+      if (lastActiveConfigId) {
+        connectedAt.delete(lastActiveConfigId);
+        lastActiveConfigId = null;
+      }
     }
     void vscode.commands.executeCommand('setContext', 'dittoVsce.hasActiveDatabase', state.kind === 'active');
   }));
@@ -846,6 +865,12 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       }
       const cfg = configStore.get(databaseId);
       const databaseName = cfg?.name ?? databaseId;
+      // Fall back to "now" when we have no recorded connect time (edge
+      // case: panel opened from a tree row of a DB that's somehow active
+      // without a tracked transition). A `now` cutoff effectively means
+      // "no backfill" — the panel populates from new lines only, which
+      // is still correct: we shouldn't import weeks of unrelated history.
+      const minTimestamp = connectedAt.get(databaseId) ?? new Date();
       LogAnalyzerPanel.show(
         context,
         databaseId,
@@ -853,6 +878,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         makeAnalyzerService(),
         () => logger.readAllLogs(),
         logger,
+        minTimestamp,
       );
     }),
     vscode.commands.registerCommand('dittoVsce.openLogPatternEditor', () => {

@@ -25,13 +25,19 @@ export class LogAnalyzerPanel {
     svc: LogAnalyzerService,
     backfillProvider: () => Promise<string>,
     logger: Logger,
+    /** Lines older than this are skipped during backfill so the panel
+     *  shows only the current connection's logs, not weeks of history
+     *  carried in the rotated log files. */
+    minTimestamp?: Date,
   ): void {
     const existing = LogAnalyzerPanel.panels.get(databaseId);
     if (existing) {
       existing.panel.reveal();
       return;
     }
-    const panel = new LogAnalyzerPanel(context, databaseId, databaseName, svc, backfillProvider, logger);
+    const panel = new LogAnalyzerPanel(
+      context, databaseId, databaseName, svc, backfillProvider, logger, minTimestamp,
+    );
     LogAnalyzerPanel.panels.set(databaseId, panel);
   }
 
@@ -57,6 +63,7 @@ export class LogAnalyzerPanel {
     private readonly svc: LogAnalyzerService,
     private readonly backfillProvider: () => Promise<string>,
     private readonly logger: Logger,
+    private readonly minTimestamp?: Date,
   ) {
     this.panel = vscode.window.createWebviewPanel(
       'dittoLogAnalyzer',
@@ -98,7 +105,7 @@ export class LogAnalyzerPanel {
     const log = this.logger.withTag('ext:LogAnalyzerPanel');
     try {
       const text = await this.backfillProvider();
-      this.svc.start({ backfillText: text });
+      this.svc.start({ backfillText: text, minTimestamp: this.minTimestamp });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.warn('Backfill failed; continuing with live-only ingestion', { err: message });

@@ -41,9 +41,9 @@ export class LogAnalyzerService {
     this.throttleMs = opts.throttleMs ?? 250;
   }
 
-  start(p: { backfillText?: string } = {}): void {
+  start(p: { backfillText?: string; minTimestamp?: Date } = {}): void {
     if (p.backfillText) {
-      this.processBackfill(p.backfillText);
+      this.processBackfill(p.backfillText, p.minTimestamp);
     }
     this.liveSub = this.opts.sink.onLine(l => this.processLine(l));
   }
@@ -152,12 +152,21 @@ export class LogAnalyzerService {
     return { line, before, after };
   }
 
-  private processBackfill(text: string): void {
+  private processBackfill(text: string, minTimestamp?: Date): void {
     try {
       const lines = text.split('\n').filter(s => s.length > 0);
+      const cutoffMs = minTimestamp?.getTime();
       for (const raw of lines) {
         const id = this.backfillIdCursor--;
         const line = parseLine(raw, id);
+        // Drop lines older than the scope's connect time. Lines that
+        // failed to parse a timestamp (line.timestamp === null) are
+        // ALSO dropped when a cutoff is set — without a timestamp we
+        // can't prove they belong to this connection. Without a
+        // cutoff (legacy callers), every parseable line is admitted.
+        if (cutoffMs !== undefined) {
+          if (!line.timestamp || line.timestamp.getTime() < cutoffMs) continue;
+        }
         this.processLine(line, true);
       }
     } catch (err) {

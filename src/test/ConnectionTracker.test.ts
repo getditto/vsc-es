@@ -7,7 +7,7 @@ function L(raw: string, id = 0) { return parseLine(raw, id); }
 
 test('ConnectionTracker: pairs start with end by remote+role', () => {
   const t = new ConnectionTracker();
-  t.consume(L('2026-06-09T14:00:00.000Z  INFO   [sdk]  physical connection started remote=abc transport=Websocket role=Client'));
+  t.consume(L('2026-06-09T14:00:00.000Z  INFO   [sdk]  physical connection started remote=abc transport_type=Websocket role=Client'));
   t.consume(L('2026-06-09T14:05:00.000Z  INFO   [sdk]  physical connection ended remote=abc role=Client'));
   const sessions = t.snapshot();
   assert.equal(sessions.length, 1);

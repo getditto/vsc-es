@@ -1,7 +1,10 @@
 import type { LogLine, Session } from './types.js';
 
 const RE_REMOTE    = /remote=([^\s]+)/i;
-const RE_TRANSPORT = /transport=([^\s]+)/i;
+// SDK emits `transport_type=Websocket` (not `transport=…`); see grep of
+// ditto-edge-studio.log. Matching the wrong key silently defaulted every
+// session to transport="unknown".
+const RE_TRANSPORT = /transport_type=([^\s]+)/i;
 const RE_ROLE      = /role=([^\s]+)/i;
 
 const RE_START   = /physical connection.*started/i;
