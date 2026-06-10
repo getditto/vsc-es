@@ -176,12 +176,17 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     patternStore.onDidChange(() => patternEngine.reload()),
   );
 
-  const connectionTracker = new ConnectionTracker();
-  const analyzerSvc = new LogAnalyzerService({
-    sink: analyzerSink,
-    engine: patternEngine,
-    tracker: connectionTracker,
-  });
+  // LogAnalyzerService is per-database, lazily created when the user opens
+  // the panel for an active connection. Each service has its own
+  // ConnectionTracker + line buffer so disconnect→reconnect produces a
+  // fresh view rather than carrying stale problems across sessions.
+  function makeAnalyzerService(): LogAnalyzerService {
+    return new LogAnalyzerService({
+      sink: analyzerSink,
+      engine: patternEngine,
+      tracker: new ConnectionTracker(),
+    });
+  }
 
   const configStore = new ConfigStore(context.globalState);
   const secretStore = new SecretStore(context.secrets);
@@ -224,6 +229,10 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       // even if some other path stashed entries we don't carry orphans
       // into the next connection.
       attachmentCache.clearAll();
+      // Log Analyzer is per-database; close all open panels (their
+      // services dispose with them) so disconnect → reconnect produces
+      // a fresh view rather than carrying stale problems across sessions.
+      LogAnalyzerPanel.dispose();
     } else {
       void collectionsRepo.load();
     }
@@ -825,8 +834,26 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         vscode.Uri.joinPath(context.globalStorageUri, 'logs', 'ditto-edge-studio.log'),
       );
     }),
-    vscode.commands.registerCommand('dittoVsce.openLogAnalyzer', () => {
-      LogAnalyzerPanel.show(context, analyzerSvc, () => logger.readAllLogs(), logger);
+    vscode.commands.registerCommand('dittoVsce.openLogAnalyzer', (databaseId?: string) => {
+      // The Log Analyzer is per-database — invoked from the tree row of an
+      // active connection. Without a databaseId we have no scope to bind
+      // to, so refuse rather than guess.
+      if (!databaseId) {
+        void vscode.window.showWarningMessage(
+          'Log Analyzer must be opened from a connected database. Expand a connected database in the Ditto sidebar and click "Log Analyzer".',
+        );
+        return;
+      }
+      const cfg = configStore.get(databaseId);
+      const databaseName = cfg?.name ?? databaseId;
+      LogAnalyzerPanel.show(
+        context,
+        databaseId,
+        databaseName,
+        makeAnalyzerService(),
+        () => logger.readAllLogs(),
+        logger,
+      );
     }),
     vscode.commands.registerCommand('dittoVsce.openLogPatternEditor', () => {
       PatternEditorPanel.show(context, patternStore, logger);

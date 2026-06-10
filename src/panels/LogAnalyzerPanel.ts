@@ -5,32 +5,44 @@ import type { Logger } from '../logging/types.js';
 import type { AnalyzerIn, AnalyzerOut } from '../ipc/messages.js';
 
 /**
- * Webview wrapper for the Log Analyzer. Singleton — opening it again
- * just reveals the existing panel.
+ * Webview wrapper for the Log Analyzer. **Singleton per databaseId** —
+ * each connection gets its own panel; opening the same database's
+ * analyzer again reveals the existing panel. Mirrors the
+ * DatabaseMetricsPanel scoping model.
  *
- * The panel does NOT own the LogAnalyzerService. The service lives for
- * the lifetime of the extension so it can keep accumulating state while
- * the panel is closed. The panel subscribes to service diffs on open
- * and unsubscribes on dispose.
+ * The panel owns the LogAnalyzerService for its database, so closing
+ * the panel disposes the service. extension.ts disposes the panel when
+ * the database disconnects so per-connection state doesn't leak across
+ * sessions.
  */
 export class LogAnalyzerPanel {
-  private static current: LogAnalyzerPanel | undefined;
+  private static panels = new Map<string, LogAnalyzerPanel>();
 
   static show(
     context: vscode.ExtensionContext,
+    databaseId: string,
+    databaseName: string,
     svc: LogAnalyzerService,
     backfillProvider: () => Promise<string>,
     logger: Logger,
   ): void {
-    if (LogAnalyzerPanel.current) {
-      LogAnalyzerPanel.current.panel.reveal();
+    const existing = LogAnalyzerPanel.panels.get(databaseId);
+    if (existing) {
+      existing.panel.reveal();
       return;
     }
-    LogAnalyzerPanel.current = new LogAnalyzerPanel(context, svc, backfillProvider, logger);
+    const panel = new LogAnalyzerPanel(context, databaseId, databaseName, svc, backfillProvider, logger);
+    LogAnalyzerPanel.panels.set(databaseId, panel);
   }
 
-  static dispose(): void {
-    LogAnalyzerPanel.current?.dispose();
+  /** Dispose the panel for one database, or all of them when no id is passed. */
+  static dispose(databaseId?: string): void {
+    if (databaseId === undefined) {
+      for (const p of [...LogAnalyzerPanel.panels.values()]) p.dispose();
+      LogAnalyzerPanel.panels.clear();
+      return;
+    }
+    LogAnalyzerPanel.panels.get(databaseId)?.dispose();
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -40,13 +52,15 @@ export class LogAnalyzerPanel {
 
   private constructor(
     context: vscode.ExtensionContext,
+    private readonly databaseId: string,
+    databaseName: string,
     private readonly svc: LogAnalyzerService,
     private readonly backfillProvider: () => Promise<string>,
     private readonly logger: Logger,
   ) {
     this.panel = vscode.window.createWebviewPanel(
       'dittoLogAnalyzer',
-      'Log Analyzer',
+      `Log Analyzer — ${databaseName}`,
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -147,8 +161,9 @@ export class LogAnalyzerPanel {
   private post(msg: AnalyzerOut): void { void this.panel.webview.postMessage(msg); }
 
   private dispose() {
-    LogAnalyzerPanel.current = undefined;
+    LogAnalyzerPanel.panels.delete(this.databaseId);
     this.diffSub?.dispose();
+    this.svc.dispose();
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }

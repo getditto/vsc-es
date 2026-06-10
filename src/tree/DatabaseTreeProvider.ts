@@ -111,6 +111,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         { kind: 'queryEditor', databaseId: dbId },
         ...(collectMetrics ? [{ kind: 'queryMetrics' as const, databaseId: dbId }] : []),
         { kind: 'databaseMetrics', databaseId: dbId },
+        // Log Analyzer is scoped to the active database — it lives here
+        // next to Database Metrics rather than in the global Logging
+        // sidebar so it's clear which connection's logs you're viewing.
+        { kind: 'logAnalyzer', databaseId: dbId },
         // Second thin divider so Import Data reads as a distinct
         // bulk-action group rather than another "feature shortcut".
         { kind: 'sectionHeader', databaseId: dbId, id: 'importGroup', label: 'Import' },
@@ -220,6 +224,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       || element.kind === 'queryEditor'
       || element.kind === 'queryMetrics'
       || element.kind === 'databaseMetrics'
+      || element.kind === 'logAnalyzer'
       || element.kind === 'importData') {
       return { kind: 'databaseDetails', config };
     }
@@ -502,6 +507,18 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.contextValue = 'databaseMetrics';
         item.id = `dbmetrics.${node.databaseId}`;
         item.command = { command: 'dittoVsce.openDatabaseMetrics', title: 'Open Database Metrics', arguments: [node.databaseId] };
+        return item;
+      }
+      case 'logAnalyzer': {
+        // Per-database log analyzer — scoped to the current connection.
+        // 'search' codicon since the panel is primarily a log-search tool;
+        // distinct from pie-chart (Database Metrics) and dashboard
+        // (Query Metrics) that flank it.
+        const item = new vscode.TreeItem('Log Analyzer');
+        item.iconPath = new vscode.ThemeIcon('search');
+        item.contextValue = 'logAnalyzer';
+        item.id = `logAnalyzer.${node.databaseId}`;
+        item.command = { command: 'dittoVsce.openLogAnalyzer', title: 'Open Log Analyzer', arguments: [node.databaseId] };
         return item;
       }
       case 'importData': {

@@ -22,12 +22,16 @@ function fakeLogger() {
   };
 }
 
-test('LoggingTreeProvider: returns 7 root nodes in fixed order', async () => {
+test('LoggingTreeProvider: returns 6 root nodes in fixed order', async () => {
+  // Note: openAnalyzer is intentionally NOT here — the Log Analyzer is
+  // per-database and lives in the database tree row, not the global
+  // Logging sidebar. Pattern Editor stays here because patterns apply
+  // to all logs across connections.
   const f = fakeLogger();
   const p = new LoggingTreeProvider(f.api);
   const nodes = await p.getChildren();
-  assert.equal(nodes.length, 7);
-  assert.deepEqual(nodes.map(n => n.kind), ['appLevel', 'sdkLevel', 'openOutput', 'exportLogs', 'showLogFile', 'openAnalyzer', 'openPatternEditor']);
+  assert.equal(nodes.length, 6);
+  assert.deepEqual(nodes.map(n => n.kind), ['appLevel', 'sdkLevel', 'openOutput', 'exportLogs', 'showLogFile', 'openPatternEditor']);
 });
 
 test('LoggingTreeProvider: appLevel item description shows current level', async () => {
@@ -54,17 +58,6 @@ test('LoggingTreeProvider: openOutput item has command id dittoVsce.openOutputCh
   const oo = nodes.find(n => n.kind === 'openOutput')!;
   const item = p.getTreeItem(oo);
   assert.equal(item.command?.command, 'dittoVsce.openOutputChannel');
-});
-
-test('LoggingTreeProvider: exposes openAnalyzer node', async () => {
-  const f = fakeLogger();
-  const p = new LoggingTreeProvider(f.api);
-  const nodes = await p.getChildren();
-  const analyzer = nodes.find(n => n.kind === 'openAnalyzer');
-  assert.ok(analyzer, 'openAnalyzer node missing');
-  const item = p.getTreeItem(analyzer!);
-  assert.equal(item.command?.command, 'dittoVsce.openLogAnalyzer');
-  assert.equal(item.label, 'Open Log Analyzer');
 });
 
 test('LoggingTreeProvider: exposes openPatternEditor node', async () => {

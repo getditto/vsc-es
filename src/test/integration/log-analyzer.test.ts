@@ -22,13 +22,22 @@ suite('Log Analyzer integration', function () {
     );
   });
 
-  test('opening the Log Analyzer command does not throw', async () => {
-    // Smoke test: panel creation goes through real WebviewPanel, real
-    // backfillProvider (Logger.readAllLogs), real diff subscription.
-    // We just assert the command resolves without throwing.
+  test('opening the Log Analyzer without a databaseId is a graceful no-op', async () => {
+    // The Log Analyzer is per-database now — invoking without a databaseId
+    // surfaces a warning instead of opening an unscoped panel. The command
+    // must still resolve cleanly so commandPalette invocations don't throw.
     await vscode.commands.executeCommand('dittoVsce.openLogAnalyzer');
+    await vscode.commands.executeCommand('dittoVsce.openLogAnalyzer', undefined);
+  });
+
+  test('opening the Log Analyzer with a databaseId opens the panel', async () => {
+    // Passing a databaseId routes through the panel constructor. There's no
+    // active connection in the load-depth harness, so the panel opens with
+    // the friendly name fallback (= the id). We just assert the command
+    // resolves cleanly; deeper E2E is left to DITTO_CI_DEPTH=e2e.
+    await vscode.commands.executeCommand('dittoVsce.openLogAnalyzer', 'ci-fake-database-id');
     // Re-execute to exercise the singleton-reveal path.
-    await vscode.commands.executeCommand('dittoVsce.openLogAnalyzer');
+    await vscode.commands.executeCommand('dittoVsce.openLogAnalyzer', 'ci-fake-database-id');
   });
 
   test('opening the Pattern Editor command does not throw', async () => {
@@ -36,10 +45,10 @@ suite('Log Analyzer integration', function () {
     await vscode.commands.executeCommand('dittoVsce.openLogPatternEditor');
   });
 
-  test('Logging tree exposes the two new nodes', () => {
-    // The tree is registered with id 'dittoLogging' in package.json. We can't
-    // call its provider directly from here, but we can verify the contribution
-    // is declared and the commands the nodes use are present (covered above).
+  test('dittoLogging view is registered', () => {
+    // The Log Analyzer is no longer in the global Logging sidebar (it's
+    // per-database now), but the Pattern Editor still is, so the view
+    // must remain. The dittoLogging view is contributed by package.json.
     const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
     const views = ext!.packageJSON?.contributes?.views?.dittoVsce as { id: string }[] | undefined;
     assert.ok(Array.isArray(views), 'dittoVsce views must be an array');
