@@ -208,6 +208,16 @@
         "command": "dittoVsce.deleteIndex",
         "title": "Delete Index",
         "icon": "$(trash)"
+      },
+      {
+        "command": "dittoVsce.openLogAnalyzer",
+        "title": "Ditto: Open Log Analyzer",
+        "icon": "$(search)"
+      },
+      {
+        "command": "dittoVsce.openLogPatternEditor",
+        "title": "Ditto: Manage Log Patterns",
+        "icon": "$(settings-gear)"
       }
     ],
     "keybindings": [
@@ -372,6 +382,11 @@
           "type": "boolean",
           "default": true,
           "description": "Capture EXPLAIN plans and duration metrics for queries. When off, the Metrics tab in the Inspector and the Query Metrics panel are hidden, and queries run without the EXPLAIN side-trip (no metrics overhead)."
+        },
+        "dittoVsce.logAnalyzer.customPatternsFile": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a JSON file containing user-defined log analyzer patterns. Leave empty to use the editor's default location (globalStorage/log-analyzer/user_patterns.json)."
         }
       }
     }
