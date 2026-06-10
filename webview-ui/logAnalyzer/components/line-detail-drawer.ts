@@ -86,8 +86,11 @@ export class LineDetailDrawer extends LitElement {
   `;
 
   @property({ type: Object }) line: LogLine | null = null;
-  @property({ type: Array }) before: LogLine[] = [];
-  @property({ type: Array }) after: LogLine[] = [];
+  // `before` / `after` collide with HTMLElement methods, so the props
+  // use a `Lines` suffix. The root element binds them as
+  // `.beforeLines=${…}` / `.afterLines=${…}`.
+  @property({ type: Array, attribute: 'before-lines' }) beforeLines: LogLine[] = [];
+  @property({ type: Array, attribute: 'after-lines' }) afterLines: LogLine[] = [];
 
   private close(): void {
     this.dispatchEvent(new CustomEvent('drawer-close', { bubbles: true, composed: true }));
@@ -117,9 +120,9 @@ export class LineDetailDrawer extends LitElement {
         ${this.line == null
           ? html`<div class="empty">No line selected.</div>`
           : html`
-              ${this.before.map(l => this.renderLine(l, false))}
+              ${this.beforeLines.map(l => this.renderLine(l, false))}
               ${this.renderLine(this.line, true)}
-              ${this.after.map(l => this.renderLine(l, false))}
+              ${this.afterLines.map(l => this.renderLine(l, false))}
             `}
       </div>
     `;

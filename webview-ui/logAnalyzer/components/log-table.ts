@@ -74,7 +74,9 @@ export class LogTable extends LitElement {
   @property({ type: Array }) lines: LogLine[] = [];
   @property({ type: Number }) selectedId: number | null = null;
 
-  @state() private scrollTop = 0;
+  // Renamed off `scrollTop` because that's an HTMLElement instance
+  // property — collision blocks TS subclassing of LitElement.
+  @state() private _scrollTop = 0;
   @state() private viewportHeight = 500;
 
   connectedCallback(): void {
@@ -92,7 +94,7 @@ export class LogTable extends LitElement {
   }
 
   private onScroll = (): void => {
-    this.scrollTop = (this as unknown as HTMLElement).scrollTop;
+    this._scrollTop = (this as unknown as HTMLElement).scrollTop;
   };
 
   private clickRow(lineId: number): void {
@@ -109,7 +111,7 @@ export class LogTable extends LitElement {
       `;
     }
     const total = this.lines.length;
-    const startIdx = Math.max(0, Math.floor(this.scrollTop / ROW_HEIGHT) - OVERSCAN);
+    const startIdx = Math.max(0, Math.floor(this._scrollTop / ROW_HEIGHT) - OVERSCAN);
     const visibleCount = Math.ceil(this.viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
     const endIdx = Math.min(total, startIdx + visibleCount);
     const visible = this.lines.slice(startIdx, endIdx);

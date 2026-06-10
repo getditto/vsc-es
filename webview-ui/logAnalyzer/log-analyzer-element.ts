@@ -5,7 +5,11 @@ import './components/summary-header.js';
 import './components/problems-list.js';
 import './components/histograms-row.js';
 import './components/connection-timeline.js';
-import './components/live-tail.js';
+import './components/collapsible-section.js';
+import './components/filter-tabs.js';
+import './components/log-table.js';
+import './components/line-detail-drawer.js';
+import type { FilterKey } from './components/filter-tabs.js';
 import type { AnalyzerOut } from '../../src/ipc/messages.js';
 import type {
   AnalyzerState,
@@ -16,17 +20,17 @@ import type {
 
 /** Root element for the Log Analyzer panel. Owns the IPC message
  *  listener and the aggregate analyzer state derived from
- *  `AnalyzerOut` diffs. All child components (`summary-header`,
+ *  `AnalyzerOut` diffs. Child components (`summary-header`,
  *  `problems-list`, `histograms-row`, `connection-timeline`,
- *  `live-tail`) are pure presentation.
+ *  `log-table`, `line-detail-drawer`) are pure presentation.
  *
  *  Message wire-up: messages from the host are coalesced incremental
  *  diffs (`analyzer.summary`, `analyzer.problemsAdded`,
- *  `analyzer.histogramsUpdated`, `analyzer.sessionsUpdated`,
- *  `analyzer.live`, …). The webview keeps its own grouped map of
- *  problems keyed by pattern, rebuilt only when needed for render.
- *  The host owns the source of truth — `analyzer.reset` wipes our
- *  local view.
+ *  `analyzer.histogramsUpdated`, `analyzer.sessionsUpdated`, …). The
+ *  webview keeps its own grouped map of problems keyed by pattern.
+ *  The log table is fed by on-demand `analyzer.queryLines` requests
+ *  that the root element re-issues whenever the active filter, search
+ *  text, or summary counts change.
  *
  *  Note: `reinits` is not currently emitted as a separate message —
  *  it's kept as state so future versions can push reinit markers from
@@ -61,6 +65,28 @@ export class DittoLogAnalyzer extends LitElement {
       border-radius: 4px;
     }
     .stack { display: flex; flex-direction: column; gap: 12px; }
+    .table-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .search {
+      flex: 1 1 200px;
+      min-width: 200px;
+      padding: 4px 8px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+      border-radius: 2px;
+      font: inherit;
+    }
+    .result-info {
+      color: var(--vscode-descriptionForeground);
+      font-size: 12px;
+      white-space: nowrap;
+    }
   `;
 
   @state() private counts: AnalyzerState['counts'] | null = null;
@@ -75,16 +101,48 @@ export class DittoLogAnalyzer extends LitElement {
   };
   @state() private sessions: Session[] = [];
   @state() private reinits: Date[] = [];
-  @state() private liveLines: LogLine[] = [];
+
+  // Log-table state
+  @state() private activeFilter: FilterKey = 'all';
+  @state() private tableLines: LogLine[] = [];
+  @state() private tableTotal = 0;
+  @state() private search = '';
+  @state() private selectedLineId: number | null = null;
+
+  // Drawer state
+  @state() private drawerLine: LogLine | null = null;
+  @state() private drawerBefore: LogLine[] = [];
+  @state() private drawerAfter: LogLine[] = [];
+  @state() private drawerOpen = false;
+
+  /** Monotonic counter used to mint `requestId`s for analyzer.queryLines /
+   *  analyzer.requestLineDetail. We track the latest issued request id
+   *  per channel and drop late responses whose id doesn't match. */
+  private requestCursor = 0;
+  private latestLinesReq: string | null = null;
+  private latestDetailReq: string | null = null;
+  private searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
     onHostMessage<AnalyzerOut>(this.handleMessage);
     this.addEventListener('reveal-line', this.onRevealLine as EventListener);
+    this.addEventListener('filter-change', this.onFilterChange as EventListener);
+    this.addEventListener('line-clicked', this.onLineClicked as EventListener);
+    this.addEventListener('drawer-close', this.onDrawerClose as EventListener);
+    // Kick off an initial query so the table is populated on first open.
+    this.requestLines();
   }
 
   disconnectedCallback(): void {
     this.removeEventListener('reveal-line', this.onRevealLine as EventListener);
+    this.removeEventListener('filter-change', this.onFilterChange as EventListener);
+    this.removeEventListener('line-clicked', this.onLineClicked as EventListener);
+    this.removeEventListener('drawer-close', this.onDrawerClose as EventListener);
+    if (this.searchDebounce != null) {
+      clearTimeout(this.searchDebounce);
+      this.searchDebounce = null;
+    }
     super.disconnectedCallback();
   }
 
@@ -93,11 +151,55 @@ export class DittoLogAnalyzer extends LitElement {
     postToHost({ type: 'analyzer.revealLine', lineId: detail.id });
   };
 
+  private onFilterChange = (e: Event): void => {
+    const detail = (e as CustomEvent).detail as { key: FilterKey };
+    if (detail.key === this.activeFilter) return;
+    this.activeFilter = detail.key;
+    this.requestLines();
+  };
+
+  private onLineClicked = (e: Event): void => {
+    const detail = (e as CustomEvent).detail as { lineId: number };
+    this.selectedLineId = detail.lineId;
+    const requestId = String(++this.requestCursor);
+    this.latestDetailReq = requestId;
+    postToHost({ type: 'analyzer.requestLineDetail', lineId: detail.lineId, requestId });
+  };
+
+  private onDrawerClose = (): void => {
+    this.drawerOpen = false;
+  };
+
+  private onSearchInput = (e: Event): void => {
+    const target = e.target as HTMLInputElement;
+    this.search = target.value;
+    if (this.searchDebounce != null) clearTimeout(this.searchDebounce);
+    this.searchDebounce = setTimeout(() => {
+      this.searchDebounce = null;
+      this.requestLines();
+    }, 200);
+  };
+
+  private requestLines(): void {
+    const requestId = String(++this.requestCursor);
+    this.latestLinesReq = requestId;
+    postToHost({
+      type: 'analyzer.queryLines',
+      filter: this.activeFilter,
+      search: this.search || undefined,
+      limit: 1000,
+      offset: 0,
+      requestId,
+    });
+  }
+
   private handleMessage = (m: AnalyzerOut): void => {
     if (!m) { return; }
     switch (m.type) {
       case 'analyzer.summary':
         this.counts = m.counts;
+        // Counts changed → table totals + tab badges should refresh.
+        this.requestLines();
         break;
       case 'analyzer.problemsAdded': {
         // Append to an existing group or open a new one. We mutate the
@@ -121,7 +223,13 @@ export class DittoLogAnalyzer extends LitElement {
         };
         this.sessions = [];
         this.reinits = [];
-        this.liveLines = [];
+        this.tableLines = [];
+        this.tableTotal = 0;
+        this.selectedLineId = null;
+        this.drawerOpen = false;
+        this.drawerLine = null;
+        this.drawerBefore = [];
+        this.drawerAfter = [];
         this.errorBanner = null;
         this.requestUpdate();
         break;
@@ -136,10 +244,22 @@ export class DittoLogAnalyzer extends LitElement {
         this.sessions = m.sessions;
         break;
       case 'analyzer.live':
-        // Cap the buffer at 1000 lines; the child component clips to
-        // the most recent 200 for render but we retain a longer tail
-        // here so the user can scroll back briefly.
-        this.liveLines = [...this.liveLines, ...m.lines].slice(-1000);
+        // Streaming live lines no longer feed a separate tail — the
+        // log table refreshes whenever analyzer.summary fires. Nothing
+        // to do here.
+        break;
+      case 'analyzer.linesResult':
+        // Drop late responses; only honour the most recent request.
+        if (m.requestId !== this.latestLinesReq) break;
+        this.tableLines = m.items;
+        this.tableTotal = m.total;
+        break;
+      case 'analyzer.lineDetail':
+        if (m.requestId !== this.latestDetailReq) break;
+        this.drawerLine = m.line;
+        this.drawerBefore = m.before;
+        this.drawerAfter = m.after;
+        this.drawerOpen = true;
         break;
       default:
         break;
@@ -155,26 +275,57 @@ export class DittoLogAnalyzer extends LitElement {
       .sort((a, b) => (b.items[0]?.severity ?? 0) - (a.items[0]?.severity ?? 0));
   }
 
+  private tabCounts(): { critical: number; errors: number; warnings: number; problems: number; totalLines: number } {
+    return this.counts ?? { critical: 0, errors: 0, warnings: 0, problems: 0, totalLines: 0 };
+  }
+
   render(): TemplateResult {
+    const tc = this.tabCounts();
+    const shown = this.tableLines.length;
+    const total = this.tableTotal;
     return html`
       <div class="toolbar">
-        <button @click=${() => postToHost({ type: 'analyzer.pause' })}>⏸ Pause</button>
-        <button @click=${() => postToHost({ type: 'analyzer.resume' })}>▶ Resume</button>
-        <button @click=${() => postToHost({ type: 'analyzer.clear' })}>⨯ Clear</button>
-        <button @click=${() => postToHost({ type: 'analyzer.openPatternEditor' })}>⚙ Patterns</button>
+        <button @click=${(): void => postToHost({ type: 'analyzer.pause' })}>⏸ Pause</button>
+        <button @click=${(): void => postToHost({ type: 'analyzer.resume' })}>▶ Resume</button>
+        <button @click=${(): void => postToHost({ type: 'analyzer.clear' })}>⨯ Clear</button>
+        <button @click=${(): void => postToHost({ type: 'analyzer.openPatternEditor' })}>⚙ Patterns</button>
       </div>
       ${this.errorBanner ? html`<div class="banner">${this.errorBanner}</div>` : ''}
       <div class="stack">
-        <summary-header
-          .counts=${this.counts}
-          .tags=${this.tags}
-          .sdkVersion=${this.sdkVersion}
-        ></summary-header>
-        <problems-list .groups=${this.problemGroups()}></problems-list>
-        <histograms-row .histograms=${this.histograms}></histograms-row>
-        <connection-timeline .sessions=${this.sessions} .reinits=${this.reinits}></connection-timeline>
-        <live-tail .lines=${this.liveLines}></live-tail>
+        <collapsible-section heading="Summary" ?open=${true}>
+          <summary-header
+            .counts=${this.counts}
+            .tags=${this.tags}
+            .sdkVersion=${this.sdkVersion}
+          ></summary-header>
+          <problems-list .groups=${this.problemGroups()}></problems-list>
+        </collapsible-section>
+        <collapsible-section heading="Histograms" ?open=${true}>
+          <histograms-row .histograms=${this.histograms}></histograms-row>
+        </collapsible-section>
+        <collapsible-section heading="Connection timeline" ?open=${true}>
+          <connection-timeline .sessions=${this.sessions} .reinits=${this.reinits}></connection-timeline>
+        </collapsible-section>
+
+        <filter-tabs .active=${this.activeFilter} .counts=${tc}></filter-tabs>
+        <div class="table-controls">
+          <input
+            class="search"
+            type="search"
+            placeholder="Filter the current tab (case-insensitive)…"
+            .value=${this.search}
+            @input=${this.onSearchInput}
+          />
+          <span class="result-info">${shown.toLocaleString()} / ${total.toLocaleString()}</span>
+        </div>
+        <log-table .lines=${this.tableLines} .selectedId=${this.selectedLineId}></log-table>
       </div>
+      <line-detail-drawer
+        ?hidden=${!this.drawerOpen}
+        .line=${this.drawerLine}
+        .beforeLines=${this.drawerBefore}
+        .afterLines=${this.drawerAfter}
+      ></line-detail-drawer>
     `;
   }
 }
