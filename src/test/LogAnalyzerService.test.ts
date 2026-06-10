@@ -133,3 +133,67 @@ test('Service: sessions update emits sessionsUpdated diff', () => {
   const sessions = diffs.filter(d => d.type === 'sessionsUpdated');
   assert.ok(sessions.length >= 1);
 });
+
+test('Service: queryLines filters by level=error', () => {
+  const { svc, sink } = makeSvc();
+  svc.start();
+  sink.write('error', '2026-06-09T14:00:00.000Z  ERROR  [sdk]  bad');
+  sink.write('info',  '2026-06-09T14:00:01.000Z  INFO   [sdk]  ok');
+  const r = svc.queryLines({ filter: 'error' });
+  assert.equal(r.items.length, 1);
+  assert.equal(r.total, 1);
+  assert.equal(r.items[0].level, 'error');
+});
+
+test('Service: queryLines applies case-insensitive search', () => {
+  const { svc, sink } = makeSvc();
+  svc.start();
+  sink.write('error', '2026-06-09T14:00:00.000Z  ERROR  [sdk]  Deadlock detected');
+  sink.write('info',  '2026-06-09T14:00:01.000Z  INFO   [sdk]  Healthy');
+  const r = svc.queryLines({ filter: 'all', search: 'deadLOCK' });
+  assert.equal(r.items.length, 1);
+});
+
+test('Service: queryLines returns newest first', () => {
+  const { svc, sink } = makeSvc();
+  svc.start();
+  sink.write('info', '2026-06-09T14:00:00.000Z  INFO   [sdk]  one');
+  sink.write('info', '2026-06-09T14:00:01.000Z  INFO   [sdk]  two');
+  sink.write('info', '2026-06-09T14:00:02.000Z  INFO   [sdk]  three');
+  const r = svc.queryLines({ filter: 'all' });
+  assert.equal(r.items[0].text, 'three');
+  assert.equal(r.items[2].text, 'one');
+});
+
+test('Service: queryLines respects limit and offset for pagination', () => {
+  const { svc, sink } = makeSvc();
+  svc.start();
+  for (let i = 0; i < 10; i++) sink.write('info', `2026-06-09T14:00:0${i}.000Z  INFO   [sdk]  msg ${i}`);
+  const page1 = svc.queryLines({ filter: 'all', limit: 3, offset: 0 });
+  assert.equal(page1.items.length, 3);
+  assert.equal(page1.total, 10);
+  const page2 = svc.queryLines({ filter: 'all', limit: 3, offset: 3 });
+  assert.equal(page2.items.length, 3);
+  assert.notEqual(page1.items[0].id, page2.items[0].id);
+});
+
+test('Service: queryLines problem filter returns lines that matched any pattern', () => {
+  const { svc, sink } = makeSvc();
+  svc.start();
+  sink.write('error', '2026-06-09T14:00:00.000Z  ERROR  [sdk]  deadlock here');
+  sink.write('info',  '2026-06-09T14:00:01.000Z  INFO   [sdk]  ok');
+  const r = svc.queryLines({ filter: 'problem' });
+  assert.equal(r.items.length, 1);
+  assert.match(r.items[0].text, /deadlock/);
+});
+
+test('Service: getLineDetail returns target line + before/after context', () => {
+  const { svc, sink } = makeSvc();
+  svc.start();
+  for (let i = 0; i < 5; i++) sink.write('info', `2026-06-09T14:00:0${i}.000Z  INFO   [sdk]  msg ${i}`);
+  const target = svc.queryLines({ filter: 'all', limit: 10 }).items.find(l => l.text === 'msg 2')!;
+  const d = svc.getLineDetail(target.id, 2, 2);
+  assert.equal(d.line?.text, 'msg 2');
+  assert.equal(d.before.length, 2);
+  assert.equal(d.after.length, 2);
+});

@@ -7,6 +7,7 @@ import { parseLine } from './LineParser.js';
 import { binVolumeByLevel, binProblemsOverTime, binDurations, pickBinWidth, type ProblemHit } from './Histograms.js';
 
 const PROBLEM_CAP = 1000;
+const LINE_BUFFER_CAP = 50_000;
 
 export type AnalyzerDiff =
   | { type: 'reset' }
@@ -34,6 +35,7 @@ export class LogAnalyzerService {
   private problemHits: ProblemHit[] = [];
   private lastFlush = 0;
   private throttleMs: number;
+  private lineBuffer: LogLine[] = [];
 
   constructor(private readonly opts: ServiceOptions) {
     this.throttleMs = opts.throttleMs ?? 250;
@@ -52,6 +54,7 @@ export class LogAnalyzerService {
   clear(): void {
     this.state = emptyState();
     this.problemHits = [];
+    this.lineBuffer = [];
     this.emit({ type: 'reset' });
   }
 
@@ -67,6 +70,88 @@ export class LogAnalyzerService {
 
   getStateForTesting(): AnalyzerState { return this.state; }
 
+  /** Filtered + searched view over the buffered lines. Returns newest first.
+   *
+   *  Filter rules:
+   *    - 'all'      → every line
+   *    - 'critical' → lines that match any problem with severity 5
+   *    - 'error'    → line.level === 'error'
+   *    - 'warn'     → line.level === 'warn'
+   *    - 'problem'  → line.id appears in any ProblemInstance across all pattern keys
+   *
+   *  `search` is a case-insensitive substring match against line.text + line.tag.
+   *  Returns newest-first, plus the TOTAL count (pre-pagination) so the UI can
+   *  show "1/12,403". */
+  public queryLines(opts: {
+    level?: 'critical' | 'error' | 'warn' | 'problem' | 'all';
+    filter?: 'critical' | 'error' | 'warn' | 'problem' | 'all';
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): { items: LogLine[]; total: number } {
+    // Accept both `level` and `filter` for flexibility — the IPC layer
+    // sends `filter`, but the original spec called it `level`.
+    const filter = opts.filter ?? opts.level ?? 'all';
+    const search = opts.search?.trim().toLowerCase() ?? '';
+    const limit = opts.limit ?? 1000;
+    const offset = opts.offset ?? 0;
+
+    // Build a set of "problem line ids" once when needed.
+    let problemIds: Set<number> | null = null;
+    let criticalIds: Set<number> | null = null;
+    if (filter === 'problem' || filter === 'critical') {
+      problemIds = new Set();
+      criticalIds = new Set();
+      for (const list of this.state.problems.values()) {
+        for (const p of list) {
+          problemIds.add(p.line.id);
+          if (p.severity === 5) criticalIds.add(p.line.id);
+        }
+      }
+    }
+
+    // Walk newest-first so we can paginate without sorting the whole buffer.
+    const matched: LogLine[] = [];
+    for (let i = this.lineBuffer.length - 1; i >= 0; i--) {
+      const line = this.lineBuffer[i];
+      let pass = false;
+      switch (filter) {
+        case 'all':      pass = true; break;
+        case 'error':    pass = line.level === 'error'; break;
+        case 'warn':     pass = line.level === 'warn'; break;
+        case 'problem':  pass = problemIds!.has(line.id); break;
+        case 'critical': pass = criticalIds!.has(line.id); break;
+      }
+      if (!pass) continue;
+      if (search.length > 0) {
+        const hay = (line.text + ' ' + (line.tag ?? '')).toLowerCase();
+        if (!hay.includes(search)) continue;
+      }
+      matched.push(line);
+    }
+
+    const total = matched.length;
+    const items = matched.slice(offset, offset + limit);
+    return { items, total };
+  }
+
+  /** Used by the detail-drawer to fetch surrounding context. Linear scan
+   *  on the bounded buffer (≤50k entries) — acceptable for on-demand use. */
+  public getLineDetail(lineId: number, contextBefore = 5, contextAfter = 5): {
+    line: LogLine | null;
+    before: LogLine[];
+    after: LogLine[];
+  } {
+    const idx = this.lineBuffer.findIndex(l => l.id === lineId);
+    if (idx < 0) return { line: null, before: [], after: [] };
+    const line = this.lineBuffer[idx];
+    const beforeStart = Math.max(0, idx - contextBefore);
+    const afterEnd = Math.min(this.lineBuffer.length, idx + 1 + contextAfter);
+    const before = this.lineBuffer.slice(beforeStart, idx);
+    const after = this.lineBuffer.slice(idx + 1, afterEnd);
+    return { line, before, after };
+  }
+
   private processBackfill(text: string): void {
     try {
       const lines = text.split('\n').filter(s => s.length > 0);
@@ -81,6 +166,8 @@ export class LogAnalyzerService {
   }
 
   private processLine(line: LogLine, isBackfill = false): void {
+    this.lineBuffer.push(line);
+    if (this.lineBuffer.length > LINE_BUFFER_CAP) this.lineBuffer.shift();
     this.state.counts.totalLines++;
     if (line.timestamp == null) this.state.counts.unparseableLines++;
     if (line.tag) this.state.tags.add(line.tag);
