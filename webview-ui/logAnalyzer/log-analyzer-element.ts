@@ -4,7 +4,6 @@ import { postToHost, onHostMessage } from '../shared/messaging.js';
 import './components/summary-header.js';
 import './components/problems-list.js';
 import './components/histograms-row.js';
-import './components/connection-timeline.js';
 import './components/collapsible-section.js';
 import './components/filter-tabs.js';
 import './components/log-table.js';
@@ -15,26 +14,25 @@ import type {
   AnalyzerState,
   LogLine,
   ProblemInstance,
-  Session,
 } from '../../src/logAnalyzer/types.js';
 
 /** Root element for the Log Analyzer panel. Owns the IPC message
  *  listener and the aggregate analyzer state derived from
  *  `AnalyzerOut` diffs. Child components (`summary-header`,
- *  `problems-list`, `histograms-row`, `connection-timeline`,
- *  `log-table`, `line-detail-drawer`) are pure presentation.
+ *  `problems-list`, `histograms-row`, `log-table`, `line-detail-drawer`)
+ *  are pure presentation.
  *
  *  Message wire-up: messages from the host are coalesced incremental
  *  diffs (`analyzer.summary`, `analyzer.problemsAdded`,
- *  `analyzer.histogramsUpdated`, `analyzer.sessionsUpdated`, …). The
- *  webview keeps its own grouped map of problems keyed by pattern.
- *  The log table is fed by on-demand `analyzer.queryLines` requests
- *  that the root element re-issues whenever the active filter, search
- *  text, or summary counts change.
+ *  `analyzer.histogramsUpdated`, …). The webview keeps its own grouped
+ *  map of problems keyed by pattern. The log table is fed by on-demand
+ *  `analyzer.queryLines` requests that the root element re-issues
+ *  whenever the active filter, search text, or summary counts change.
  *
- *  Note: `reinits` is not currently emitted as a separate message —
- *  it's kept as state so future versions can push reinit markers from
- *  the host without changing the component contract. */
+ *  Session data is still tracked on the host (the durations histogram
+ *  needs it) but no longer visualised here — the connection timeline
+ *  widget was removed because the per-peer lane labels were unreadable
+ *  and the Presence + Peer Listing panels already cover that ground. */
 @customElement('ditto-log-analyzer')
 export class DittoLogAnalyzer extends LitElement {
   static styles = css`
@@ -117,9 +115,6 @@ export class DittoLogAnalyzer extends LitElement {
     problemsOverTime: [],
     connectionDurations: [],
   };
-  @state() private sessions: Session[] = [];
-  @state() private reinits: Date[] = [];
-
   // Log-table state
   @state() private activeFilter: FilterKey = 'all';
   @state() private tableLines: LogLine[] = [];
@@ -239,8 +234,6 @@ export class DittoLogAnalyzer extends LitElement {
           problemsOverTime: [],
           connectionDurations: [],
         };
-        this.sessions = [];
-        this.reinits = [];
         this.tableLines = [];
         this.tableTotal = 0;
         this.selectedLineId = null;
@@ -259,7 +252,9 @@ export class DittoLogAnalyzer extends LitElement {
         this.histograms = m.histograms;
         break;
       case 'analyzer.sessionsUpdated':
-        this.sessions = m.sessions;
+        // No-op: the connection timeline widget was removed. The host
+        // still emits this so the IPC contract stays stable; sessions
+        // are derived from the durations histogram which we DO render.
         break;
       case 'analyzer.live':
         // Streaming live lines no longer feed a separate tail — the
@@ -320,9 +315,6 @@ export class DittoLogAnalyzer extends LitElement {
         </collapsible-section>
         <collapsible-section heading="Histograms" ?open=${true}>
           <histograms-row .histograms=${this.histograms}></histograms-row>
-        </collapsible-section>
-        <collapsible-section heading="Connection timeline" ?open=${true}>
-          <connection-timeline .sessions=${this.sessions} .reinits=${this.reinits}></connection-timeline>
         </collapsible-section>
 
         <filter-tabs .active=${this.activeFilter} .counts=${tc}></filter-tabs>
