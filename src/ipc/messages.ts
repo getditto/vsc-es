@@ -348,3 +348,36 @@ export type LogIn = { type: 'log'; level: LogLevel; message: string; ctx?: Recor
 
 /** Host → webview: notify of a channel-level change so the webview can short-circuit. */
 export type LogOut = { type: 'log.levelChanged'; level: LogLevel };
+
+// ─── Log Analyzer panel ────────────────────────────────────────
+/** Host → webview: state diffs from LogAnalyzerService. */
+export type AnalyzerOut =
+  | { type: 'analyzer.reset' }
+  | { type: 'analyzer.summary'; counts: import('../logAnalyzer/types.js').SummaryCounts }
+  | { type: 'analyzer.problemsAdded'; items: import('../logAnalyzer/types.js').ProblemInstance[] }
+  | { type: 'analyzer.sessionsUpdated'; sessions: import('../logAnalyzer/types.js').Session[] }
+  | { type: 'analyzer.histogramsUpdated'; histograms: import('../logAnalyzer/types.js').AnalyzerState['histograms'] }
+  | { type: 'analyzer.live'; lines: import('../logAnalyzer/types.js').LogLine[] }
+  | { type: 'analyzer.error'; stage: 'backfill' | 'live'; message: string };
+
+/** Webview → host: user controls + reveal requests. */
+export type AnalyzerIn =
+  | { type: 'analyzer.refresh' }
+  | { type: 'analyzer.clear' }
+  | { type: 'analyzer.pause' }
+  | { type: 'analyzer.resume' }
+  | { type: 'analyzer.revealLine'; lineId: number }
+  | { type: 'analyzer.openPatternEditor' };
+
+// ─── Pattern Editor panel ──────────────────────────────────────
+/** Host → webview: pattern catalog snapshot + save results.
+ *  (Distinct from EditorIn/EditorOut which belong to the database editor.) */
+export type PatternEditorOut =
+  | { type: 'patternEditor.snapshot'; bundled: import('../logAnalyzer/PatternEngine.js').KeyedRawPattern[]; user: import('../logAnalyzer/PatternEngine.js').KeyedRawPattern[] }
+  | { type: 'patternEditor.saveOk'; key: string }
+  | { type: 'patternEditor.saveFailed'; key: string; message: string };
+
+/** Webview → host: CRUD requests over user patterns. */
+export type PatternEditorIn =
+  | { type: 'patternEditor.save'; pattern: import('../logAnalyzer/PatternEngine.js').KeyedRawPattern; replaceKey?: string }
+  | { type: 'patternEditor.delete'; key: string };
