@@ -78,6 +78,7 @@ export class PatternForm extends LitElement {
   @state() private recommendation = '';
   @state() private levelFilter = '';
   @state() private tagFilter = '';
+  @state() private userTag = '';
   @state() private testInput = '';
 
   protected updated(changed: Map<string, unknown>): void {
@@ -89,6 +90,7 @@ export class PatternForm extends LitElement {
         this.recommendation = this.editing.recommendation;
         this.levelFilter = this.editing.level_filter ?? '';
         this.tagFilter = this.editing.tag_filter ?? '';
+        this.userTag = this.editing.user_tag ?? '';
       } else {
         // Reset to empty form when transitioning from editing → new.
         this.key = '';
@@ -97,6 +99,7 @@ export class PatternForm extends LitElement {
         this.recommendation = '';
         this.levelFilter = '';
         this.tagFilter = '';
+        this.userTag = '';
         this.testInput = '';
       }
     }
@@ -145,6 +148,7 @@ export class PatternForm extends LitElement {
     };
     if (this.levelFilter) { out.level_filter = this.levelFilter as LogLevel; }
     if (this.tagFilter) { out.tag_filter = this.tagFilter; }
+    if (this.userTag.trim()) { out.user_tag = this.userTag.trim(); }
     this.dispatchEvent(new CustomEvent('save', {
       detail: { pattern: out, replaceKey: this.editing?.key },
       bubbles: true,
@@ -216,6 +220,21 @@ export class PatternForm extends LitElement {
         <code>ext:DittoManager</code>, <code>ext:CollectionsRepository</code>, etc.
         Use <code>^sdk$</code> to scope this pattern to SDK lines only, or leave blank
         to match any tag. This is <em>not</em> a label applied to matching lines.
+      </div>
+      <label>User tag (optional)
+        <input
+          .value=${this.userTag}
+          @input=${(e: Event) => { this.userTag = (e.target as HTMLInputElement).value; }}
+          placeholder="e.g. query, auth, sync"
+        />
+      </label>
+      <div class="hint">
+        A label attached to every line this pattern matches. Shows up in the
+        log table's User Tag column and is included in the search box's
+        haystack so typing <code>${this.userTag.trim() || 'query'}</code> in
+        Search would filter to lines carrying this label. Unlike Tag filter
+        above, this WRITES a tag onto matching lines instead of matching
+        against the line's existing tag. Leave blank for no label.
       </div>
       <label>Test line
         <input

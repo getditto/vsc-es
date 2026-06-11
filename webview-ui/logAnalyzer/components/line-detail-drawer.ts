@@ -125,6 +125,16 @@ export class LineDetailDrawer extends LitElement {
       font-family: var(--vscode-editor-font-family);
       font-size: 12px;
     }
+    .user-tag-chip {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 3px;
+      background: var(--vscode-input-background);
+      color: #b08fff;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      margin-right: 4px;
+    }
     .tag-none {
       color: var(--vscode-descriptionForeground);
       font-style: italic;
@@ -178,6 +188,15 @@ export class LineDetailDrawer extends LitElement {
                       : html`<span class="tag-none">(no tag)</span>`}
                   </dd>
                 </div>
+                ${l.userTags && l.userTags.length > 0
+                  ? html`
+                      <div class="field">
+                        <dt>User tags</dt>
+                        <dd>
+                          ${l.userTags.map(t => html`<span class="user-tag-chip">${t}</span>`)}
+                        </dd>
+                      </div>`
+                  : ''}
                 <div class="field">
                   <dt>Message</dt>
                   <dd>${l.text}</dd>

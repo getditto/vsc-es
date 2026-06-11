@@ -124,7 +124,8 @@ export class LogAnalyzerService {
       }
       if (!pass) continue;
       if (search.length > 0) {
-        const hay = (line.text + ' ' + (line.tag ?? '')).toLowerCase();
+        const userTagsHay = line.userTags ? ' ' + line.userTags.join(' ') : '';
+        const hay = (line.text + ' ' + (line.tag ?? '') + userTagsHay).toLowerCase();
         if (!hay.includes(search)) continue;
       }
       matched.push(line);
@@ -192,6 +193,11 @@ export class LogAnalyzerService {
     let hits: CompiledPattern[];
     try { hits = this.opts.engine.scan(line); }
     catch { hits = []; }
+    // Collect user_tag values across all matched patterns. Multiple
+    // patterns can match a single line; each may contribute its own
+    // tag. Sorted + deduped so the UI gets a stable display order and
+    // the same tag from N patterns doesn't appear N times.
+    const userTagSet = new Set<string>();
     for (const h of hits) {
       const list = this.state.problems.get(h.key) ?? [];
       if (list.length < PROBLEM_CAP) {
@@ -207,6 +213,10 @@ export class LogAnalyzerService {
       this.state.counts.problems++;
       if (h.severity === 5) this.state.counts.critical++;
       if (line.timestamp) this.problemHits.push({ time: line.timestamp, severity: h.severity });
+      if (h.userTag) userTagSet.add(h.userTag);
+    }
+    if (userTagSet.size > 0) {
+      line.userTags = [...userTagSet].sort();
     }
 
     try { this.opts.tracker.consume(line); }

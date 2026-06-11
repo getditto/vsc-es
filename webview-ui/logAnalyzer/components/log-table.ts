@@ -35,17 +35,19 @@ export class LogTable extends LitElement {
       background: var(--vscode-editor-background);
       color: var(--vscode-foreground);
       position: relative;
-      /* Default widths: Timestamp / Level / Tag / Message. The Tag column
-         is wider than the original 140px because real-world ext-tagged
-         lines were getting truncated. Drag handles override at runtime. */
+      /* Default widths: Timestamp / Level / Tag / User Tag / Message. The
+         User Tag column carries pattern-applied labels (semantic
+         categories like 'query' or 'auth'); empty for lines no labeled
+         pattern matched. Drag handles override at runtime. */
       --col-ts: 110px;
       --col-lvl: 60px;
       --col-tag: 220px;
+      --col-utag: 120px;
       --col-msg: 1fr;
     }
     .head {
       display: grid;
-      grid-template-columns: var(--col-ts) var(--col-lvl) var(--col-tag) var(--col-msg);
+      grid-template-columns: var(--col-ts) var(--col-lvl) var(--col-tag) var(--col-utag) var(--col-msg);
       gap: 0;
       padding: 4px 8px;
       background: var(--vscode-editorGroupHeader-tabsBackground);
@@ -84,7 +86,7 @@ export class LogTable extends LitElement {
       left: 0;
       right: 0;
       display: grid;
-      grid-template-columns: var(--col-ts) var(--col-lvl) var(--col-tag) var(--col-msg);
+      grid-template-columns: var(--col-ts) var(--col-lvl) var(--col-tag) var(--col-utag) var(--col-msg);
       gap: 0;
       padding: 2px 8px;
       height: ${ROW_HEIGHT}px;
@@ -94,6 +96,9 @@ export class LogTable extends LitElement {
       box-sizing: border-box;
     }
     .row > * { padding-right: 8px; overflow: hidden; text-overflow: ellipsis; }
+    /* User tags render as a comma-separated chip strip; color picks the
+       eye between the SDK tag's blue and the message's body color. */
+    .utag { color: #b08fff; }
     .row:hover { background: var(--vscode-list-hoverBackground); }
     .row.selected {
       background: var(--vscode-list-activeSelectionBackground);
@@ -122,11 +127,11 @@ export class LogTable extends LitElement {
   @state() private _scrollTop = 0;
   @state() private viewportHeight = 500;
 
-  // Resizable column widths (Timestamp, Level, Tag, Message). Numbers
-  // are pixels for the first three; the last column flexes to fill
+  // Resizable column widths (Timestamp, Level, Tag, User Tag, Message).
+  // Numbers are pixels for the first four; the last column flexes to fill
   // remaining space (1fr). Drag handles update these on pointermove.
-  @state() private colWidths = { ts: 110, lvl: 60, tag: 220 };
-  private dragging: { col: 'ts' | 'lvl' | 'tag'; startX: number; startW: number } | null = null;
+  @state() private colWidths = { ts: 110, lvl: 60, tag: 220, utag: 120 };
+  private dragging: { col: 'ts' | 'lvl' | 'tag' | 'utag'; startX: number; startW: number } | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -153,7 +158,7 @@ export class LogTable extends LitElement {
   /** Drag-resize plumbing for the three sized columns. Listens on
    *  window (not the host) so the drag continues if the pointer slips
    *  outside the header strip. */
-  private onResizeStart(col: 'ts' | 'lvl' | 'tag', e: PointerEvent): void {
+  private onResizeStart(col: 'ts' | 'lvl' | 'tag' | 'utag', e: PointerEvent): void {
     e.preventDefault();
     this.dragging = { col, startX: e.clientX, startW: this.colWidths[col] };
     window.addEventListener('pointermove', this.onResizeMove);
@@ -179,11 +184,11 @@ export class LogTable extends LitElement {
    *  header and the rows. Stays as one inline assignment so a drag
    *  re-render touches only the host element, not every row. */
   private hostStyle(): string {
-    return `--col-ts:${this.colWidths.ts}px; --col-lvl:${this.colWidths.lvl}px; --col-tag:${this.colWidths.tag}px;`;
+    return `--col-ts:${this.colWidths.ts}px; --col-lvl:${this.colWidths.lvl}px; --col-tag:${this.colWidths.tag}px; --col-utag:${this.colWidths.utag}px;`;
   }
 
   private renderHead(): TemplateResult {
-    const draggingClass = (col: 'ts' | 'lvl' | 'tag'): string =>
+    const draggingClass = (col: 'ts' | 'lvl' | 'tag' | 'utag'): string =>
       this.dragging?.col === col ? 'resize dragging' : 'resize';
     return html`
       <div class="head" style=${this.hostStyle()}>
@@ -198,6 +203,10 @@ export class LogTable extends LitElement {
         <div class="cell">Tag
           <div class=${draggingClass('tag')}
                @pointerdown=${(e: PointerEvent) => this.onResizeStart('tag', e)}></div>
+        </div>
+        <div class="cell">User Tag
+          <div class=${draggingClass('utag')}
+               @pointerdown=${(e: PointerEvent) => this.onResizeStart('utag', e)}></div>
         </div>
         <div class="cell">Message</div>
       </div>
@@ -238,6 +247,7 @@ export class LogTable extends LitElement {
               <span class="ts">${ts}</span>
               <span class="lvl-${l.level}">${l.level.toUpperCase()}</span>
               <span class="tag">${l.tag ?? ''}</span>
+              <span class="utag">${l.userTags?.join(', ') ?? ''}</span>
               <span class="msg">${l.text}</span>
             </div>
           `;

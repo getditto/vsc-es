@@ -9,6 +9,12 @@ export interface LogLine {
   raw: string;
   /** Message body after the tag prefix; what patterns scan. */
   text: string;
+  /** User-defined tags attached when one or more patterns with a
+   *  `user_tag` matched this line. Lets the developer label lines with
+   *  semantic categories on top of the SDK/extension tag (e.g. "query",
+   *  "auth", "sync") for filtering. Undefined when no pattern with a
+   *  user_tag matched. Sorted + deduped. */
+  userTags?: string[];
 }
 
 export interface ProblemInstance {

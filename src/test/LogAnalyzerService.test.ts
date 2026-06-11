@@ -27,6 +27,50 @@ test('Service: scans live line and registers problem', () => {
   assert.equal(state.problems.get('deadlock_critical')?.length, 1);
 });
 
+test('Service: user_tag from matched pattern propagates to line.userTags', () => {
+  const sink = new AnalyzerSink({ capacity: 1000 });
+  const engine = new PatternEngine({
+    listAll: () => ({
+      bundled: [
+        { key: 'k1', pattern: 'foo', severity: 3, recommendation: 'r', user_tag: 'query' },
+        { key: 'k2', pattern: 'foo', severity: 3, recommendation: 'r', user_tag: 'auth' },
+        { key: 'k3', pattern: 'foo', severity: 3, recommendation: 'r' }, // no user_tag
+      ],
+      user: [],
+    }),
+  });
+  engine.load();
+  const svc = new LogAnalyzerService({ sink, engine, tracker: new ConnectionTracker(), throttleMs: 0 });
+  svc.start();
+  sink.write('info', '2026-06-09T14:00:00.000Z  INFO   [sdk]  foo something');
+  const lines = svc.queryLines({ filter: 'all' }).items;
+  assert.equal(lines.length, 1);
+  // Sorted + deduped; the no-user_tag pattern contributes nothing.
+  assert.deepEqual(lines[0].userTags, ['auth', 'query']);
+});
+
+test('Service: queryLines search matches against user tags', () => {
+  const sink = new AnalyzerSink({ capacity: 1000 });
+  const engine = new PatternEngine({
+    listAll: () => ({
+      bundled: [
+        { key: 'q', pattern: 'foo', severity: 3, recommendation: 'r', user_tag: 'query' },
+      ],
+      user: [],
+    }),
+  });
+  engine.load();
+  const svc = new LogAnalyzerService({ sink, engine, tracker: new ConnectionTracker(), throttleMs: 0 });
+  svc.start();
+  sink.write('info', '2026-06-09T14:00:00.000Z  INFO   [sdk]  foo happened');
+  sink.write('info', '2026-06-09T14:00:01.000Z  INFO   [sdk]  unrelated line');
+  const r = svc.queryLines({ filter: 'all', search: 'query' });
+  // 'query' substring matches via line.userTags (the user-applied label)
+  // on line 1, and does NOT match line 2 (no foo → no pattern hit → no tag).
+  assert.equal(r.items.length, 1);
+  assert.match(r.items[0].text, /foo/);
+});
+
 test('Service: backfill text is processed before live', () => {
   const { svc } = makeSvc();
   svc.start({

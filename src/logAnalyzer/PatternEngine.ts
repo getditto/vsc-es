@@ -7,6 +7,12 @@ export interface RawPattern {
   recommendation: string;
   level_filter?: LogLevel;
   tag_filter?: string;
+  /** Optional user-defined label attached to every line this pattern
+   *  matches. Distinct from `tag_filter` (which scopes when the pattern
+   *  fires by regex-matching the line's existing tag). Surfaces in the
+   *  log table's User Tag column and participates in free-text search.
+   *  Use to label lines with semantic categories ('query', 'auth', etc.). */
+  user_tag?: string;
 }
 
 export interface KeyedRawPattern extends RawPattern {
@@ -24,6 +30,9 @@ export interface CompiledPattern {
   recommendation: string;
   levelFilter?: LogLevel;
   tagFilter?: RegExp;
+  /** Trimmed, non-empty user tag to attach to matching lines, or
+   *  undefined when the pattern didn't supply one. */
+  userTag?: string;
   source: 'bundled' | 'user';
 }
 
@@ -40,6 +49,7 @@ function compileOne(raw: KeyedRawPattern, source: 'bundled' | 'user'): CompiledP
     try { tagFilter = new RegExp(raw.tag_filter); }
     catch { return null; }
   }
+  const userTag = raw.user_tag?.trim();
   return {
     key: raw.key,
     regex,
@@ -47,6 +57,7 @@ function compileOne(raw: KeyedRawPattern, source: 'bundled' | 'user'): CompiledP
     recommendation: raw.recommendation,
     levelFilter: raw.level_filter,
     tagFilter,
+    userTag: userTag && userTag.length > 0 ? userTag : undefined,
     source,
   };
 }
