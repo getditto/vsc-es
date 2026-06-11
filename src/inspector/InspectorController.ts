@@ -11,6 +11,8 @@ export type ActiveFeature =
   | { kind: 'query'; databaseId: string }
   | { kind: 'metrics'; databaseId: string }
   | { kind: 'databaseMetrics'; databaseId: string }
+  | { kind: 'logAnalyzer'; databaseId: string }
+  | { kind: 'patternEditor' }
   | { kind: 'observers'; databaseId: string; observerId: string; tab: 'json' | 'help' };
 
 export class InspectorController {
@@ -33,6 +35,11 @@ export class InspectorController {
         observerId: feat.observerId,
         tab: feat.tab,
       };
+    } else if (feat.kind === 'patternEditor') {
+      // The pattern editor is global — not tied to a database. Stays
+      // available even when no connection is active so the inspector's
+      // help tab can render the editor docs.
+      this.content = { kind: 'patternEditor' };
     } else {
       this.content = { kind: feat.kind, databaseId: feat.databaseId } as InspectorContent;
     }

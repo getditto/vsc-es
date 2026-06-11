@@ -3,6 +3,7 @@ import { panelHtml } from './webview-utils.js';
 import type { LogAnalyzerService, AnalyzerDiff } from '../logAnalyzer/LogAnalyzerService.js';
 import type { Logger } from '../logging/types.js';
 import type { AnalyzerIn, AnalyzerOut } from '../ipc/messages.js';
+import type { InspectorController } from '../inspector/InspectorController.js';
 
 /**
  * Webview wrapper for the Log Analyzer. **Singleton per databaseId** —
@@ -25,6 +26,7 @@ export class LogAnalyzerPanel {
     svc: LogAnalyzerService,
     backfillProvider: () => Promise<string>,
     logger: Logger,
+    inspector: InspectorController,
     /** Lines older than this are skipped during backfill so the panel
      *  shows only the current connection's logs, not weeks of history
      *  carried in the rotated log files. */
@@ -36,7 +38,7 @@ export class LogAnalyzerPanel {
       return;
     }
     const panel = new LogAnalyzerPanel(
-      context, databaseId, databaseName, svc, backfillProvider, logger, minTimestamp,
+      context, databaseId, databaseName, svc, backfillProvider, logger, inspector, minTimestamp,
     );
     LogAnalyzerPanel.panels.set(databaseId, panel);
   }
@@ -63,6 +65,7 @@ export class LogAnalyzerPanel {
     private readonly svc: LogAnalyzerService,
     private readonly backfillProvider: () => Promise<string>,
     private readonly logger: Logger,
+    private readonly inspector: InspectorController,
     private readonly minTimestamp?: Date,
   ) {
     this.panel = vscode.window.createWebviewPanel(
@@ -93,6 +96,19 @@ export class LogAnalyzerPanel {
       (m: AnalyzerIn) => { void this.handle(m); }, undefined, this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
+
+    // When the panel gains focus, route the Inspector to the
+    // logAnalyzer help so the docs render in the secondary sidebar.
+    this.disposables.push(
+      this.panel.onDidChangeViewState(e => {
+        if (e.webviewPanel.active) {
+          this.inspector.setActiveFeature({ kind: 'logAnalyzer', databaseId: this.databaseId });
+        }
+      }),
+    );
+    // Set the active feature immediately on construction so the help
+    // renders the first time the panel becomes visible too.
+    this.inspector.setActiveFeature({ kind: 'logAnalyzer', databaseId: this.databaseId });
 
     this.diffSub = this.svc.onDiff(d => this.forwardDiff(d));
 

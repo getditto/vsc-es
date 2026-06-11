@@ -3,6 +3,7 @@ import { panelHtml } from './webview-utils.js';
 import type { PatternStore } from '../logAnalyzer/PatternStore.js';
 import type { Logger } from '../logging/types.js';
 import type { PatternEditorIn, PatternEditorOut } from '../ipc/messages.js';
+import type { InspectorController } from '../inspector/InspectorController.js';
 
 /**
  * Webview wrapper for managing user-defined log analyzer patterns.
@@ -11,12 +12,21 @@ import type { PatternEditorIn, PatternEditorOut } from '../ipc/messages.js';
 export class PatternEditorPanel {
   private static current: PatternEditorPanel | undefined;
 
-  static show(context: vscode.ExtensionContext, store: PatternStore, logger: Logger): void {
+  static show(
+    context: vscode.ExtensionContext,
+    store: PatternStore,
+    logger: Logger,
+    inspector: InspectorController,
+  ): void {
     if (PatternEditorPanel.current) {
       PatternEditorPanel.current.panel.reveal();
+      // Re-assert the active feature on a reveal so the inspector
+      // re-renders the patternEditor help even if it had drifted to a
+      // different feature in the meantime.
+      inspector.setActiveFeature({ kind: 'patternEditor' });
       return;
     }
-    PatternEditorPanel.current = new PatternEditorPanel(context, store, logger);
+    PatternEditorPanel.current = new PatternEditorPanel(context, store, logger, inspector);
   }
 
   static dispose(): void {
@@ -31,6 +41,7 @@ export class PatternEditorPanel {
     context: vscode.ExtensionContext,
     private readonly store: PatternStore,
     private readonly logger: Logger,
+    private readonly inspector: InspectorController,
   ) {
     this.panel = vscode.window.createWebviewPanel(
       'dittoPatternEditor',
@@ -60,6 +71,19 @@ export class PatternEditorPanel {
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
     this.storeSub = this.store.onDidChange(() => this.sendSnapshot());
+
+    // Drive the Inspector help into 'patternEditor' mode whenever this
+    // panel gains focus so the docs render in the secondary sidebar.
+    this.disposables.push(
+      this.panel.onDidChangeViewState(e => {
+        if (e.webviewPanel.active) {
+          this.inspector.setActiveFeature({ kind: 'patternEditor' });
+        }
+      }),
+    );
+    // Set immediately so the help shows on first open too.
+    this.inspector.setActiveFeature({ kind: 'patternEditor' });
+
     void this.sendSnapshot();
   }
 

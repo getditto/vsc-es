@@ -900,11 +900,12 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         makeAnalyzerService(),
         () => logger.readAllLogs(),
         logger,
+        inspectorController,
         minTimestamp,
       );
     }),
     vscode.commands.registerCommand('dittoVsce.openLogPatternEditor', () => {
-      PatternEditorPanel.show(context, patternStore, logger);
+      PatternEditorPanel.show(context, patternStore, logger, inspectorController);
     }),
     vscode.commands.registerCommand('dittoVsce.toggleInspector', async () => {
       await vscode.commands.executeCommand('dittoVsce.inspector.focus');

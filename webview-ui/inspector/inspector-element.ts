@@ -23,7 +23,7 @@ export class DittoInspectorElement extends LitElement {
   @state() private content: InspectorContent = { kind: 'none' };
   @state() private history: QueryHistoryEntry[] = [];
   @state() private favorites: QueryFavoriteEntry[] = [];
-  @state() private helpUris: { subscription?: string; query?: string; presence?: string; metrics?: string; databaseMetrics?: string; observers?: string } = {};
+  @state() private helpUris: { subscription?: string; query?: string; presence?: string; metrics?: string; databaseMetrics?: string; observers?: string; logAnalyzer?: string; patternEditor?: string } = {};
   // Inspector preferences (per-installation, pushed by the host on
   // resolve and on every dismiss/reset). Defaults to "show all tips"
   // until the host's first push lands.
@@ -141,6 +141,10 @@ export class DittoInspectorElement extends LitElement {
         return html`<help-content-element .uri=${this.helpUris.metrics ?? ''}></help-content-element>`;
       case 'databaseMetrics':
         return html`<help-content-element .uri=${this.helpUris.databaseMetrics ?? ''}></help-content-element>`;
+      case 'logAnalyzer':
+        return html`<help-content-element .uri=${this.helpUris.logAnalyzer ?? ''}></help-content-element>`;
+      case 'patternEditor':
+        return html`<help-content-element .uri=${this.helpUris.patternEditor ?? ''}></help-content-element>`;
       case 'query': {
         // Filter the Metrics tab out when the workspace setting is off —
         // the user opted out of metrics collection entirely so the tab
