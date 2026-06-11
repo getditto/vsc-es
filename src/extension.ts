@@ -420,6 +420,28 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
           { kind: 'database', config, status: 'active' },
           { expand: 2, focus: false, select: false },
         );
+        // collectionsRepo.load() runs concurrently with this reveal — the
+        // first reveal happens before the cache is populated, so
+        // databaseDetails is rendered with no collection rows. The
+        // _changeEmitter.fire from the eventual load doesn't always
+        // re-render the children of an already-revealed node (the user has
+        // to disconnect+reconnect to see collections). Set up a one-shot
+        // listener on the next collections.onChange and re-reveal so the
+        // tree picks up the newly-loaded children. This is the
+        // first-connect equivalent of the parked-retry mechanism the
+        // restoreExpansion branch below already provides.
+        const targetId = state.configId;
+        const oneShot = collectionsRepo.onChange(() => {
+          if (manager.getActiveConfigId() !== targetId) { oneShot.dispose(); return; }
+          oneShot.dispose();
+          void treeView.reveal(
+            { kind: 'database', config, status: 'active' },
+            { expand: 2, focus: false, select: false },
+          ).then(undefined, () => { /* swallow refresh race */ });
+        });
+        // Make sure the listener is torn down on disconnect even if
+        // collections never fire (e.g. SDK error mid-hydrate).
+        context.subscriptions.push(oneShot);
         return;
       }
       const remaining = await restoreExpansion(state.configId, stored);
