@@ -32,6 +32,18 @@ export class PatternForm extends LitElement {
     textarea { font-family: var(--vscode-font-family); min-height: 60px; }
     .err { color: var(--vscode-errorForeground); font-size: 12px; margin-top: 2px; }
     .ok  { color: #5cb85c; font-size: 12px; margin-top: 2px; }
+    .hint {
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+    .hint code {
+      font-family: var(--vscode-editor-font-family);
+      background: var(--vscode-textCodeBlock-background);
+      padding: 0 4px;
+      border-radius: 2px;
+    }
     .row {
       display: flex;
       gap: 8px;
@@ -192,12 +204,19 @@ export class PatternForm extends LitElement {
           `)}
         </select>
       </label>
-      <label>Tag filter regex (optional)
+      <label>Tag filter — regex matched against the line's tag (optional)
         <input
           .value=${this.tagFilter}
           @input=${(e: Event) => { this.tagFilter = (e.target as HTMLInputElement).value; }}
+          placeholder="e.g. ^sdk$ or ^ext:"
         />
       </label>
+      <div class="hint">
+        Lines from the Ditto SDK have tag <code>sdk</code>; extension lines look like
+        <code>ext:DittoManager</code>, <code>ext:CollectionsRepository</code>, etc.
+        Use <code>^sdk$</code> to scope this pattern to SDK lines only, or leave blank
+        to match any tag. This is <em>not</em> a label applied to matching lines.
+      </div>
       <label>Test line
         <input
           .value=${this.testInput}
