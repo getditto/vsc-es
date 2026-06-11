@@ -6,9 +6,10 @@ import {
   DittoConfig,
   DittoError,
   Authenticator,
+  Differ,
+  type Diff,
   Logger as DittoLogger,
   type PresenceGraph,
-  type Attachment,
   type AttachmentFetcher,
   type AttachmentFetchEvent,
 } from '@dittolive/ditto';
@@ -464,6 +465,68 @@ export class DittoManager {
       try { callback(rows); }
       catch (err) {
         this.log.warn('Store observer callback threw', {
+          query, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+    return { cancel: () => { try { observer.cancel(); } catch { /* ignore */ } } };
+  }
+
+  /** Register a Ditto store observer for `query`, wrapping the SDK's
+   *  `Differ` so the callback receives both the materialized rows
+   *  AND the diff vs. the previous firing (insertions / updates /
+   *  moves / deletions as index arrays).
+   *
+   *  Each call constructs its own `Differ` instance so multiple
+   *  concurrent observer panels don't interfere with one another's
+   *  diff state. The first firing always reports every row as an
+   *  insertion (that's the SDK's documented `Differ` contract).
+   *
+   *  Returns a cancel handle the caller is responsible for invoking
+   *  on teardown. Returns `null` if there is no active session. */
+  registerObserver(
+    query: string,
+    callback: (event: {
+      rows: Record<string, unknown>[];
+      insertions: number[];
+      updates: number[];
+      deletions: number[];
+      moves: Array<{ from: number; to: number }>;
+    }) => void,
+  ): { cancel(): void } | null {
+    if (!this.session) { return null; }
+    // `let` (not const): if .diff() ever throws the differ's internal
+    // baseline is indeterminate — replace it with a fresh instance so
+    // the next firing reports everything as insertions (matching the
+    // SDK's documented "first call shows everything as inserted"
+    // behaviour) instead of silently emitting wrong diffs forever.
+    let differ = new Differ();
+    const observer = this.session.ditto.store.registerObserver(query, (queryResult) => {
+      let diff: Diff;
+      try {
+        diff = differ.diff(queryResult.items);
+      } catch (err) {
+        this.log.warn('Differ.diff threw — resetting differ and emitting empty diff', {
+          query, err: err instanceof Error ? err.message : String(err),
+        });
+        diff = { insertions: [], deletions: [], updates: [], moves: [] } as Diff;
+        differ = new Differ();
+      }
+      const rows: Record<string, unknown>[] = [];
+      for (const item of queryResult.items) {
+        rows.push(item.value as Record<string, unknown>);
+        try { item.dematerialize(); } catch { /* ignore */ }
+      }
+      try {
+        callback({
+          rows,
+          insertions: diff.insertions,
+          updates: diff.updates,
+          deletions: diff.deletions,
+          moves: diff.moves,
+        });
+      } catch (err) {
+        this.log.warn('Observer callback threw', {
           query, err: err instanceof Error ? err.message : String(err),
         });
       }

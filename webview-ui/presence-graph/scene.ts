@@ -336,7 +336,6 @@ export class PresenceGraphScene {
   tick(now: number, dt: number): boolean {
     this.stars.tick(now, dt);
 
-    let stillAnimating = false;
     for (const [key, anim] of [...this.transitions]) {
       const node = this.peers.get(key);
       if (!node) { this.transitions.delete(key); continue; }
@@ -350,8 +349,6 @@ export class PresenceGraphScene {
       };
       if (t >= 1) {
         this.transitions.delete(key);
-      } else {
-        stillAnimating = true;
       }
     }
     // Stars never settle, so we always need the loop running while

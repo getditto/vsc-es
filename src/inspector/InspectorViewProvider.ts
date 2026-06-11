@@ -1,7 +1,6 @@
 // src/inspector/InspectorViewProvider.ts
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from './InspectorController.js';
 import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
@@ -76,12 +75,18 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     const presenceHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'presence.html')).toString();
     const metricsHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'metrics.html')).toString();
     const databaseMetricsHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'databaseMetrics.html')).toString();
+    const observeHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'observe.html')).toString();
+    const logAnalyzerHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'logAnalyzer.html')).toString();
+    const patternEditorHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'patternEditor.html')).toString();
     const pushHelpUris = () => {
       this.post({ type: 'inspector.helpHtml', kind: 'subscription',     uri: subscriptionHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'query',            uri: queryHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'presence',         uri: presenceHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'metrics',          uri: metricsHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'databaseMetrics',  uri: databaseMetricsHelpUri });
+      this.post({ type: 'inspector.helpHtml', kind: 'observers',        uri: observeHelpUri });
+      this.post({ type: 'inspector.helpHtml', kind: 'logAnalyzer',      uri: logAnalyzerHelpUri });
+      this.post({ type: 'inspector.helpHtml', kind: 'patternEditor',    uri: patternEditorHelpUri });
     };
 
     this.disposables.push(
@@ -159,6 +164,9 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     switch (msg.type) {
       case 'inspector.tabSelected':
         if (cur.kind === 'query') { void this.controller.setQueryTab(msg.tab); }
+        else if (cur.kind === 'observers' && (msg.tab === 'json' || msg.tab === 'help')) {
+          void this.controller.setObserverTab(msg.tab);
+        }
         return;
       case 'inspector.loadQueryInEditor':
         try {

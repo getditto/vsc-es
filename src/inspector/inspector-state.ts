@@ -32,11 +32,24 @@ export type InspectorContent =
   | { kind: 'peers'; databaseId: string }
   | { kind: 'metrics'; databaseId: string }
   | { kind: 'databaseMetrics'; databaseId: string }
+  | { kind: 'logAnalyzer'; databaseId: string }
+  | { kind: 'patternEditor' }
   | {
       kind: 'query';
       databaseId: string;
       tab: QueryInspectorTab;
       lastResultMetadata?: QueryResultMetadata;
+      selectedRowJson?: string;
+    }
+  | {
+      /** Active feature = Observer panel for a specific observer.
+       *  The Inspector renders its help tab and a JSON tab showing
+       *  the currently-selected event's data (matches how the
+       *  Query Editor surfaces selected-row JSON). */
+      kind: 'observers';
+      databaseId: string;
+      observerId: string;
+      tab: 'json' | 'help';
       selectedRowJson?: string;
     };
 

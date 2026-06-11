@@ -45,7 +45,7 @@ export class SubscriptionEditorPanel {
   private databaseId: string;
 
   private constructor(
-    private readonly context: vscode.ExtensionContext,
+    context: vscode.ExtensionContext,
     private readonly subs: SubscriptionStore,
     private readonly manager: DittoManager,
     databaseId: string,

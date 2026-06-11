@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { postToHost, onHostMessage } from '../shared/messaging.js';
 import { assertNever } from '../shared/assert-never.js';
 import '../shared/json-viewer.js';
+import '../shared/result-table-element.js';
 import type { QueryProfile } from '../../src/ditto/QueryProfile.js';
 import type { QueryOut, QueryMode } from '../../src/ipc/messages.js';
 // Note: <ditto-profile-viewer> is registered by webview-ui/query/main.ts's
@@ -11,27 +12,6 @@ import type { QueryOut, QueryMode } from '../../src/ipc/messages.js';
 
 type View = 'table' | 'json' | 'profile';
 type RunState = 'idle' | 'running' | 'success' | 'error';
-
-const TRUNCATE_AT = 120;
-
-function renderCell(value: unknown): { display: string; full: string; nullish: boolean } {
-  if (value === null) { return { display: 'null', full: 'null', nullish: true }; }
-  if (value === undefined) { return { display: 'undefined', full: 'undefined', nullish: true }; }
-  if (typeof value === 'object') {
-    const json = JSON.stringify(value);
-    return {
-      display: json.length > TRUNCATE_AT ? json.slice(0, TRUNCATE_AT) + '…' : json,
-      full: json,
-      nullish: false,
-    };
-  }
-  const s = String(value);
-  return {
-    display: s.length > TRUNCATE_AT ? s.slice(0, TRUNCATE_AT) + '…' : s,
-    full: s,
-    nullish: false,
-  };
-}
 
 @customElement('ditto-query-editor')
 export class QueryEditor extends LitElement {
@@ -257,45 +237,6 @@ export class QueryEditor extends LitElement {
       text-align: center;
       color: var(--vscode-descriptionForeground);
     }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-    }
-    th, td {
-      text-align: left;
-      padding: 6px 8px;
-      border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
-      vertical-align: top;
-    }
-    th {
-      background: var(--vscode-editorWidget-background);
-      font-family: var(--vscode-editor-font-family);
-      font-weight: 600;
-      font-size: 11px;
-      position: sticky;
-      top: 0;
-    }
-    td {
-      font-family: var(--vscode-editor-font-family);
-      max-width: 480px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    td.nullish {
-      color: var(--vscode-descriptionForeground);
-      font-style: italic;
-    }
-    tbody tr { cursor: pointer; }
-    tbody tr.selected {
-      background: var(--vscode-list-activeSelectionBackground);
-      color: var(--vscode-list-activeSelectionForeground);
-    }
-    tbody tr.selected td.nullish {
-      color: var(--vscode-list-activeSelectionForeground);
-    }
-
     pre.json {
       margin: 0;
       padding: 8px;
@@ -859,37 +800,20 @@ export class QueryEditor extends LitElement {
     if (this.rows.length === 0) {
       return html`<div class="empty">Query returned no rows.</div>`;
     }
-    const paged = this.pagedRows;
-    const offset = this.pageOffset;
-    return html`
-      <table>
-        <thead>
-          <tr>
-            ${this.columns.map(c => html`<th scope="col">${c}</th>`)}
-          </tr>
-        </thead>
-        <tbody>
-          ${paged.map((row, i) => {
-            const abs = offset + i;
-            const isSelected = this.selectedRowIndex === abs;
-            return html`
-              <tr
-                class=${isSelected ? 'selected' : ''}
-                aria-selected=${isSelected ? 'true' : 'false'}
-                @click=${() => this.setSelected(i)}
-                @dblclick=${() => this.activateSelected()}
-                @contextmenu=${(e: MouseEvent) => this.openContextMenu(e, abs)}
-              >
-                ${this.columns.map(c => {
-                  const cell = renderCell(row[c]);
-                  return html`<td class=${cell.nullish ? 'nullish' : ''} title=${cell.full}>${cell.display}</td>`;
-                })}
-              </tr>
-            `;
-          })}
-        </tbody>
-      </table>
-    `;
+    // The shared <ditto-result-table> emits absolute indices in its
+    // event details (computed as pageOffset + page-local index), so
+    // we translate back to page-local when calling setSelected (which
+    // expects page-local) and pass absIndex straight through to
+    // openContextMenu (which expects absolute).
+    return html`<ditto-result-table
+      .rows=${this.pagedRows}
+      .columns=${this.columns}
+      .selectedRowIndex=${this.selectedRowIndex}
+      .pageOffset=${this.pageOffset}
+      @row-selected=${(e: CustomEvent<{ absIndex: number }>) => this.setSelected(e.detail.absIndex - this.pageOffset)}
+      @row-activated=${() => this.activateSelected()}
+      @row-context-menu=${(e: CustomEvent<{ absIndex: number; event: MouseEvent }>) => this.openContextMenu(e.detail.event, e.detail.absIndex)}
+    ></ditto-result-table>`;
   }
 
   /** Stringifies the CURRENT PAGE's rows (not the full result set) so

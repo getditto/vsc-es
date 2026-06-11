@@ -450,3 +450,16 @@ The Query Editor's "Profile" view tab captures Ditto's `PROFILE` execution-plan 
 - The Profile tab has two sub-modes: **Card** (recursive nested operator cards) and **Plan** (top-down boxes-and-lines tree). Both consume the same parsed `QueryProfile`.
 - Hotspot tint threshold: an operator's box turns orange when its `execNs` share of the plan-total exec exceeds 50% (see `HOTSPOT_THRESHOLD` in `webview-ui/query/profile-plan-tree.ts`).
 - See `docs/profile-card.png` and `docs/profile-plan.png` for the expected visual layout.
+
+---
+
+## 13. Observers
+
+The Observers feature lets users register a DQL query and watch it fire in real time, showing diffs (insertions / updates / moves / deletes) between firings.
+
+- **Persistence:** observer metadata (name + query) lives in `ObserverStore`, a per-database VS Code memento (`dittoObservers.v1.<databaseId>`). Live SDK observers are NOT persisted — observers always start inactive when a panel opens.
+- **SDK integration:** `DittoManager.registerObserver(query, callback)` wraps `ditto.store.registerObserver` and the SDK's `Differ` to produce `{rows, insertions, updates, deletions, moves}` per firing.
+- **Panel:** `ObserverPanel` owns the SDK observer's lifetime — disposing the panel cancels the observer. Each panel maintains an `ObserverEventStore` ring buffer (500 events, FIFO eviction).
+- **Coalescing:** events are batched on the host with a 100ms flush window before being posted to the webview. Matches the SwiftUI app's `observedEventFlushInterval`.
+- **UI reuse:** the bottom-pane detail view uses the existing `<json-viewer>` and the new shared `<ditto-result-table>` (also consumed by the Query Editor). No bespoke detail-view code.
+- **Help:** `resources/help/observe.md` → rendered to `dist/webview-ui/help/observe.html` → loaded into the Inspector via `inspector.helpHtml`.

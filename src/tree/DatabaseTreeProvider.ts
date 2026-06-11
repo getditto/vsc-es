@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
+import type { ObserverStore } from '../storage/ObserverStore.js';
 import type { DatabaseTreeNode } from './DatabaseTreeItem.js';
 import type { LifecycleState } from '../ditto/lifecycle-state.js';
 import type { DittoCollection } from '../models/DittoCollection.js';
@@ -48,11 +49,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     private readonly configs: ConfigStore,
     private readonly statusFor: StatusResolver,
     private readonly subs: SubscriptionStore,
+    private readonly observers: ObserverStore,
     private readonly lifecycleFor?: LifecycleResolver,
     private readonly collections?: CollectionsSource,
   ) {
     configs.onDidChange(() => this._changeEmitter.fire(undefined));
     subs.onDidChange(() => this._changeEmitter.fire(undefined));
+    observers.onDidChange(() => this._changeEmitter.fire(undefined));
     collections?.onChange(() => this._changeEmitter.fire(undefined));
   }
 
@@ -96,6 +99,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       return [
         { kind: 'subscriptionsParent', databaseId: dbId },
         ...collectionRows,
+        // Observers sit below collections — they're a debugging /
+        // diagnostics feature, less important than the data drill-ins
+        // above them, but still part of the same logical "data" group
+        // (above the Features divider).
+        { kind: 'observersParent', databaseId: dbId },
         // Blank divider visually separates the data drill-ins above from the
         // feature shortcuts below (rendered as a thin rule, no label).
         { kind: 'sectionHeader', databaseId: dbId, id: 'features', label: 'Features' },
@@ -103,6 +111,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         { kind: 'queryEditor', databaseId: dbId },
         ...(collectMetrics ? [{ kind: 'queryMetrics' as const, databaseId: dbId }] : []),
         { kind: 'databaseMetrics', databaseId: dbId },
+        // Log Analyzer is scoped to the active database — it lives here
+        // next to Database Metrics rather than in the global Logging
+        // sidebar so it's clear which connection's logs you're viewing.
+        { kind: 'logAnalyzer', databaseId: dbId },
         // Second thin divider so Import Data reads as a distinct
         // bulk-action group rather than another "feature shortcut".
         { kind: 'sectionHeader', databaseId: dbId, id: 'importGroup', label: 'Import' },
@@ -122,6 +134,16 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       // long subscriptions unreadable. The chevron lets the user choose
       // whether to see the body.
       return [{ kind: 'subscriptionQuery', databaseId: node.databaseId, sub: node.sub }];
+    }
+    if (node.kind === 'observersParent') {
+      return this.observers.list(node.databaseId).map(o => ({
+        kind: 'observer' as const,
+        databaseId: node.databaseId,
+        observer: o,
+      }));
+    }
+    if (node.kind === 'observer') {
+      return [{ kind: 'observerQuery', databaseId: node.databaseId, observer: node.observer }];
     }
     if (node.kind === 'collection') {
       // Collections expand to a Documents leaf (right-click → query
@@ -196,11 +218,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     if (!config) { return undefined; }
     if (element.kind === 'sectionHeader'
       || element.kind === 'subscriptionsParent'
+      || element.kind === 'observersParent'
       || element.kind === 'collection'
       || element.kind === 'peerListing'
       || element.kind === 'queryEditor'
       || element.kind === 'queryMetrics'
       || element.kind === 'databaseMetrics'
+      || element.kind === 'logAnalyzer'
       || element.kind === 'importData') {
       return { kind: 'databaseDetails', config };
     }
@@ -209,6 +233,12 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     }
     if (element.kind === 'subscriptionQuery') {
       return { kind: 'subscription', databaseId: element.databaseId, sub: element.sub };
+    }
+    if (element.kind === 'observer') {
+      return { kind: 'observersParent', databaseId: element.databaseId };
+    }
+    if (element.kind === 'observerQuery') {
+      return { kind: 'observer', databaseId: element.databaseId, observer: element.observer };
     }
     if (element.kind === 'documentsLeaf' || element.kind === 'indexesParent') {
       return { kind: 'collection', databaseId: element.databaseId, collection: element.collection };
@@ -344,6 +374,40 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.id = `subQ.${node.databaseId}.${node.sub.id}`;
         return item;
       }
+      case 'observersParent': {
+        const count = this.observers.list(node.databaseId).length;
+        const item = new vscode.TreeItem(
+          count > 0 ? labelWithCountChip('Observers', count) : 'Observers',
+          vscode.TreeItemCollapsibleState.Collapsed,
+        );
+        item.iconPath = new vscode.ThemeIcon('eye');
+        item.contextValue = 'observersParent';
+        item.id = `obs.${node.databaseId}`;
+        return item;
+      }
+      case 'observer': {
+        const item = new vscode.TreeItem(
+          node.observer.name,
+          vscode.TreeItemCollapsibleState.Collapsed,
+        );
+        item.iconPath = new vscode.ThemeIcon('eye');
+        item.contextValue = 'observer';
+        item.id = `obs.${node.databaseId}.${node.observer.id}`;
+        item.command = {
+          command: 'dittoVsce.openObserver',
+          title: 'Open Observer',
+          arguments: [node],
+        };
+        return item;
+      }
+      case 'observerQuery': {
+        const item = new vscode.TreeItem(node.observer.query, vscode.TreeItemCollapsibleState.None);
+        item.iconPath = new vscode.ThemeIcon('note');
+        item.contextValue = 'observerQuery';
+        item.id = `obsQ.${node.databaseId}.${node.observer.id}`;
+        item.tooltip = node.observer.query;
+        return item;
+      }
       case 'collection': {
         // Collections always Collapsible — even with zero indexes, the
         // Documents leaf is always present underneath, so the chevron is
@@ -443,6 +507,18 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.contextValue = 'databaseMetrics';
         item.id = `dbmetrics.${node.databaseId}`;
         item.command = { command: 'dittoVsce.openDatabaseMetrics', title: 'Open Database Metrics', arguments: [node.databaseId] };
+        return item;
+      }
+      case 'logAnalyzer': {
+        // Per-database log analyzer — scoped to the current connection.
+        // 'search' codicon since the panel is primarily a log-search tool;
+        // distinct from pie-chart (Database Metrics) and dashboard
+        // (Query Metrics) that flank it.
+        const item = new vscode.TreeItem('Log Analyzer');
+        item.iconPath = new vscode.ThemeIcon('search');
+        item.contextValue = 'logAnalyzer';
+        item.id = `logAnalyzer.${node.databaseId}`;
+        item.command = { command: 'dittoVsce.openLogAnalyzer', title: 'Open Log Analyzer', arguments: [node.databaseId] };
         return item;
       }
       case 'importData': {

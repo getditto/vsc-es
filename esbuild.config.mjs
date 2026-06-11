@@ -29,12 +29,15 @@ const webviewCtx = await esbuild.context({
     peers: 'webview-ui/peers/main.ts',
     query: 'webview-ui/query/main.ts',
     inspector: 'webview-ui/inspector/main.ts',
+    observer: 'webview-ui/observer/main.ts',
     addIndex: 'webview-ui/addIndex/main.ts',
     importSubscriptions: 'webview-ui/import-subscriptions/main.ts',
     queryMetrics: 'webview-ui/queryMetrics/main.ts',
     databaseMetrics: 'webview-ui/databaseMetrics/main.ts',
     importData: 'webview-ui/importData/main.ts',
     welcome: 'webview-ui/welcome/main.ts',
+    logAnalyzer: 'webview-ui/logAnalyzer/main.ts',
+    patternEditor: 'webview-ui/patternEditor/main.ts',
   },
   bundle: true,
   outdir: 'dist/webview-ui',
@@ -51,6 +54,7 @@ const integrationCtx = await esbuild.context({
     'src/test/integration/index.ts',
     'src/test/integration/activation.test.ts',
     'src/test/integration/e2e.test.ts',
+    'src/test/integration/log-analyzer.test.ts',
   ],
   bundle: true,
   outdir: 'dist/test/integration',
@@ -74,6 +78,13 @@ const webviewUiDir = path.join(distDir, 'webview-ui');
 fs.mkdirSync(webviewUiDir, { recursive: true });
 fs.copyFileSync(path.join(codiconSrc, 'codicon.css'), path.join(webviewUiDir, 'codicon.css'));
 fs.copyFileSync(path.join(codiconSrc, 'codicon.ttf'), path.join(webviewUiDir, 'codicon.ttf'));
+
+// Copy the bundled log analyzer pattern catalog into dist so the extension
+// host can load it via context.asAbsolutePath('dist/patterns/...').
+const patternsSrc = path.join(__dirname, 'src', 'logAnalyzer', 'patterns', 'problem_patterns.json');
+const patternsDstDir = path.join(distDir, 'patterns');
+fs.mkdirSync(patternsDstDir, { recursive: true });
+fs.copyFileSync(patternsSrc, path.join(patternsDstDir, 'problem_patterns.json'));
 
 if (watch) {
   await Promise.all([extensionCtx.watch(), webviewCtx.watch(), integrationCtx.watch()]);

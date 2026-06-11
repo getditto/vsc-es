@@ -1,5 +1,6 @@
 import type { StoredDittoConfig, StoredSubscription } from '../models/DittoConfig.js';
 import type { DittoCollection, DittoIndex } from '../models/DittoCollection.js';
+import type { StoredObserver } from '../models/StoredObserver.js';
 
 /** Visual section header inside an active database — non-clickable, dimmed.
  *  `id` makes the section unique per DB so VS Code's per-id tree state doesn't
@@ -8,7 +9,7 @@ import type { DittoCollection, DittoIndex } from '../models/DittoCollection.js';
  *  from the feature shortcuts (Presence, Query Editor, Metrics).
  *  `importGroup` divides the metrics feature rows from the
  *  bulk-actions group below them (currently just Import Data). */
-export type SectionHeaderId = 'data' | 'features' | 'importGroup';
+export type SectionHeaderId = 'features' | 'importGroup';
 
 export type DatabaseTreeNode =
   | { kind: 'database'; config: StoredDittoConfig; status: 'idle' | 'activating' | 'active' | 'error' }
@@ -17,6 +18,9 @@ export type DatabaseTreeNode =
   | { kind: 'subscriptionsParent'; databaseId: string }
   | { kind: 'subscription'; databaseId: string; sub: StoredSubscription }
   | { kind: 'subscriptionQuery'; databaseId: string; sub: StoredSubscription }
+  | { kind: 'observersParent'; databaseId: string }
+  | { kind: 'observer'; databaseId: string; observer: StoredObserver }
+  | { kind: 'observerQuery'; databaseId: string; observer: StoredObserver }
   | { kind: 'collection'; databaseId: string; collection: DittoCollection }
   | { kind: 'documentsLeaf'; databaseId: string; collection: DittoCollection }
   | { kind: 'indexesParent'; databaseId: string; collection: DittoCollection }
@@ -26,4 +30,5 @@ export type DatabaseTreeNode =
   | { kind: 'queryEditor'; databaseId: string }
   | { kind: 'queryMetrics'; databaseId: string }
   | { kind: 'databaseMetrics'; databaseId: string }
+  | { kind: 'logAnalyzer'; databaseId: string }
   | { kind: 'importData'; databaseId: string };

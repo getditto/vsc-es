@@ -66,6 +66,14 @@ export interface SwitchPanels {
    *  while that buffer is alive would let the user import into the
    *  wrong store. Same per-DB reasoning as the metrics closes. */
   closeImportData(): void;
+  /** Dispose all Observer panels. Each panel holds a live SDK observer
+   *  registered against the previous DB — leaving them open across a
+   *  switch would keep those observers running against a torn-down
+   *  store and surface stale data under the wrong DB name. */
+  closeObserver(): void;
+  /** Close any open ObserverEditorPanel. Same DB-switch teardown
+   *  reasoning as closeSubscription. */
+  closeObserverEditor(): void;
   /** Open a Query Editor on `databaseId`. The optional `queryText`
    *  preloads the editor — used during restore to bring back the
    *  user's saved query body. */
@@ -133,6 +141,8 @@ export async function performSwitch(
         panels.closeQueryMetrics();
         panels.closeDatabaseMetrics();
         panels.closeImportData();
+        panels.closeObserver();
+        panels.closeObserverEditor();
         await manager.disconnect();
       }
 

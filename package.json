@@ -109,6 +109,24 @@
         "icon": "$(edit)"
       },
       {
+        "command": "dittoVsce.newObserver",
+        "title": "New Observer…",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dittoVsce.editObserver",
+        "title": "Edit Observer"
+      },
+      {
+        "command": "dittoVsce.deleteObserver",
+        "title": "Delete Observer",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dittoVsce.openObserver",
+        "title": "Open Observer"
+      },
+      {
         "command": "dittoVsce.importSubscriptionsFromServer",
         "title": "Ditto: Import Subscriptions from Server…",
         "icon": "$(cloud-download)"
@@ -190,6 +208,16 @@
         "command": "dittoVsce.deleteIndex",
         "title": "Delete Index",
         "icon": "$(trash)"
+      },
+      {
+        "command": "dittoVsce.openLogAnalyzer",
+        "title": "Ditto: Open Log Analyzer",
+        "icon": "$(search)"
+      },
+      {
+        "command": "dittoVsce.openLogPatternEditor",
+        "title": "Ditto: Manage Log Patterns",
+        "icon": "$(settings-gear)"
       }
     ],
     "keybindings": [
@@ -266,6 +294,31 @@
           "group": "1@1"
         },
         {
+          "command": "dittoVsce.newObserver",
+          "when": "view == dittoDatabases && viewItem == observersParent",
+          "group": "inline"
+        },
+        {
+          "command": "dittoVsce.newObserver",
+          "when": "view == dittoDatabases && viewItem == observersParent",
+          "group": "1_new@1"
+        },
+        {
+          "command": "dittoVsce.editObserver",
+          "when": "view == dittoDatabases && viewItem == observer",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "dittoVsce.deleteObserver",
+          "when": "view == dittoDatabases && viewItem == observer",
+          "group": "9_destructive@1"
+        },
+        {
+          "command": "dittoVsce.deleteObserver",
+          "when": "view == dittoDatabases && viewItem == observer",
+          "group": "inline"
+        },
+        {
           "command": "dittoVsce.refreshCollections",
           "when": "view == dittoDatabases && viewItem == databaseDetails",
           "group": "inline"
@@ -329,6 +382,11 @@
           "type": "boolean",
           "default": true,
           "description": "Capture EXPLAIN plans and duration metrics for queries. When off, the Metrics tab in the Inspector and the Query Metrics panel are hidden, and queries run without the EXPLAIN side-trip (no metrics overhead)."
+        },
+        "dittoVsce.logAnalyzer.customPatternsFile": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a JSON file containing user-defined log analyzer patterns. Leave empty to use the editor's default location (globalStorage/log-analyzer/user_patterns.json)."
         }
       }
     }
@@ -337,7 +395,7 @@
     "build": "node esbuild.config.mjs",
     "build:integration": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
-    "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/**/*.test.ts'",
+    "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/*.test.ts' 'src/test/webview/*.test.ts'",
     "test:integration:load": "DITTO_CI_DEPTH=load node dist/test/integration/runTests.js",
     "test:integration:e2e": "DITTO_CI_DEPTH=e2e DITTO_CI_MODE=1 node dist/test/integration/runTests.js",
     "vscode:prepublish": "npm run build",
@@ -348,6 +406,7 @@
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.42.1",
     "@types/glob": "^8.1.0",
+    "@types/jsdom": "^21.1.7",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.95.0",
@@ -357,6 +416,7 @@
     "codemirror": "^6.0.2",
     "esbuild": "^0.23.0",
     "glob": "^13.0.6",
+    "jsdom": "^25.0.1",
     "lit": "^3.3.2",
     "markdown-it": "^14.1.1",
     "mocha": "^11.7.5",
@@ -365,5 +425,8 @@
   },
   "dependencies": {
     "@dittolive/ditto": "^5.0.0"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
   }
 }

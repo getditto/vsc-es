@@ -1,5 +1,3 @@
-import { fileURLToPath } from 'node:url';
-
 const stubUrl = new URL('./vscode-stub.mjs', import.meta.url).href;
 
 export async function resolve(specifier, context, nextResolve) {

@@ -47,11 +47,11 @@ export class PeerListingPanel {
   private databaseId: string;
 
   private constructor(
-    private readonly context: vscode.ExtensionContext,
+    context: vscode.ExtensionContext,
     private readonly manager: DittoManager,
     private readonly configs: ConfigStore,
     databaseId: string,
-    private readonly tracker: OpenPanelsTracker,
+    tracker: OpenPanelsTracker,
     inspector: InspectorController,
     private readonly logger: Logger,
   ) {

@@ -4,6 +4,7 @@ import { ConfigStore } from '../storage/ConfigStore.js';
 import { DatabaseTreeProvider } from '../tree/DatabaseTreeProvider.js';
 import { newConfig } from '../models/DittoConfig.js';
 import { SubscriptionStore } from '../storage/SubscriptionStore.js';
+import { ObserverStore } from '../storage/ObserverStore.js';
 
 class FakeMemento {
   private map = new Map<string, unknown>();
@@ -16,10 +17,11 @@ class FakeMemento {
 
 function makeStore(): ConfigStore { return new ConfigStore(new FakeMemento() as any); }
 function emptySubs(): SubscriptionStore { return new SubscriptionStore(new FakeMemento() as any); }
+function emptyObservers(): ObserverStore { return new ObserverStore(new FakeMemento() as any); }
 
 test('getRootChildren returns [] when no configs', async () => {
   const cfg = makeStore();
-  const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs());
+  const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs(), emptyObservers());
   assert.deepEqual(await provider.getRootChildren(), []);
 });
 
@@ -27,7 +29,7 @@ test('getRootChildren returns one database node per stored config (idle by defau
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
   await cfg.save({ ...newConfig(), id: '2', name: 'B', databaseId: 'dbB' });
-  const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs());
+  const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs(), emptyObservers());
   const roots = await provider.getRootChildren();
   assert.equal(roots.length, 2);
   assert.equal(roots[0].kind, 'database');
@@ -38,7 +40,7 @@ test('getRootChildren returns one database node per stored config (idle by defau
 test('idle database has no children', async () => {
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
-  const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs());
+  const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs(), emptyObservers());
   const [root] = await provider.getRootChildren();
   const children = await provider.getNodeChildren(root);
   assert.deepEqual(children, []);
@@ -47,7 +49,7 @@ test('idle database has no children', async () => {
 test('active database has a single databaseDetails wrapper child', async () => {
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
-  const provider = new DatabaseTreeProvider(cfg, () => 'active', emptySubs());
+  const provider = new DatabaseTreeProvider(cfg, () => 'active', emptySubs(), emptyObservers());
   const [root] = await provider.getRootChildren();
   const children = await provider.getNodeChildren(root);
   assert.deepEqual(children.map(c => c.kind), ['databaseDetails']);
@@ -64,7 +66,7 @@ test('databaseDetails expands to subs + inline collections + section + peers + q
     onChange: () => ({ dispose: () => {} }),
   };
   const provider = new DatabaseTreeProvider(
-    cfg, () => 'active', emptySubs(), undefined, collections as any,
+    cfg, () => 'active', emptySubs(), emptyObservers(), undefined, collections as any,
   );
   const [root] = await provider.getRootChildren();
   const [details] = await provider.getNodeChildren(root);
@@ -75,6 +77,7 @@ test('databaseDetails expands to subs + inline collections + section + peers + q
     'subscriptionsParent',
     'collection',
     'collection',
+    'observersParent',
     'sectionHeader',
     'peerListing',
     'queryEditor',
@@ -94,7 +97,7 @@ test('collection expands to documentsLeaf + indexesParent', async () => {
     onChange: () => ({ dispose: () => {} }),
   };
   const provider = new DatabaseTreeProvider(
-    cfg, () => 'active', emptySubs(), undefined, collections as any,
+    cfg, () => 'active', emptySubs(), emptyObservers(), undefined, collections as any,
   );
   const [root] = await provider.getRootChildren();
   const [details] = await provider.getNodeChildren(root);
@@ -116,7 +119,7 @@ test('indexesParent expands to one index node per declared index', async () => {
     onChange: () => ({ dispose: () => {} }),
   };
   const provider = new DatabaseTreeProvider(
-    cfg, () => 'active', emptySubs(), undefined, collections as any,
+    cfg, () => 'active', emptySubs(), emptyObservers(), undefined, collections as any,
   );
   const [root] = await provider.getRootChildren();
   const [details] = await provider.getNodeChildren(root);
@@ -135,7 +138,7 @@ test('Subscriptions parent expands to leaves from SubscriptionStore', async () =
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
   const subs = new SubscriptionStore(new FakeMemento() as any);
   await subs.save('1', { id: 's1', name: 'tasks-all', query: 'SELECT * FROM tasks' });
-  const provider = new DatabaseTreeProvider(cfg, () => 'active', subs);
+  const provider = new DatabaseTreeProvider(cfg, () => 'active', subs, emptyObservers());
   const [root] = await provider.getRootChildren();
   const [details] = await provider.getNodeChildren(root);
   const dbChildren = await provider.getNodeChildren(details);
@@ -151,7 +154,7 @@ test('Subscription expands to a single subscriptionQuery leaf carrying the full 
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
   const subs = new SubscriptionStore(new FakeMemento() as any);
   await subs.save('1', { id: 's1', name: 'tasks-all', query: 'SELECT * FROM tasks WHERE done = false' });
-  const provider = new DatabaseTreeProvider(cfg, () => 'active', subs);
+  const provider = new DatabaseTreeProvider(cfg, () => 'active', subs, emptyObservers());
   const [root] = await provider.getRootChildren();
   const [details] = await provider.getNodeChildren(root);
   const dbChildren = await provider.getNodeChildren(details);

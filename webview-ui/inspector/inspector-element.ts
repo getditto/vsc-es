@@ -3,7 +3,7 @@
 // Router element for the Inspector view. Switches on the active
 // `InspectorContent.kind` pushed from the host and hosts the right child.
 
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost } from '../shared/messaging.js';
 import { assertNever } from '../shared/assert-never.js';
@@ -23,7 +23,7 @@ export class DittoInspectorElement extends LitElement {
   @state() private content: InspectorContent = { kind: 'none' };
   @state() private history: QueryHistoryEntry[] = [];
   @state() private favorites: QueryFavoriteEntry[] = [];
-  @state() private helpUris: { subscription?: string; query?: string; presence?: string; metrics?: string; databaseMetrics?: string } = {};
+  @state() private helpUris: { subscription?: string; query?: string; presence?: string; metrics?: string; databaseMetrics?: string; observers?: string; logAnalyzer?: string; patternEditor?: string } = {};
   // Inspector preferences (per-installation, pushed by the host on
   // resolve and on every dismiss/reset). Defaults to "show all tips"
   // until the host's first push lands.
@@ -128,46 +128,69 @@ export class DittoInspectorElement extends LitElement {
     postToHost({ type: 'inspector.tabSelected', tab });
   }
 
-  render() {
+  render(): TemplateResult {
     const c = this.content;
-    if (c.kind === 'none') {
-      return html`<div class="empty">No active database.</div>`;
+    switch (c.kind) {
+      case 'none':
+        return html`<div class="empty">No active database.</div>`;
+      case 'subscriptions':
+        return html`<help-content-element .uri=${this.helpUris.subscription ?? ''}></help-content-element>`;
+      case 'peers':
+        return html`<help-content-element .uri=${this.helpUris.presence ?? ''}></help-content-element>`;
+      case 'metrics':
+        return html`<help-content-element .uri=${this.helpUris.metrics ?? ''}></help-content-element>`;
+      case 'databaseMetrics':
+        return html`<help-content-element .uri=${this.helpUris.databaseMetrics ?? ''}></help-content-element>`;
+      case 'logAnalyzer':
+        return html`<help-content-element .uri=${this.helpUris.logAnalyzer ?? ''}></help-content-element>`;
+      case 'patternEditor':
+        return html`<help-content-element .uri=${this.helpUris.patternEditor ?? ''}></help-content-element>`;
+      case 'query': {
+        // Filter the Metrics tab out when the workspace setting is off —
+        // the user opted out of metrics collection entirely so the tab
+        // has nothing to show.
+        const tabs: QueryInspectorTab[] = this.settings.collectMetrics
+          ? ['history', 'favorites', 'json', 'metrics', 'help']
+          : ['history', 'favorites', 'json', 'help'];
+        return html`
+          <div class="tabs" role="tablist">
+            ${tabs.map(t => html`
+              <button
+                class="tab"
+                role="tab"
+                aria-selected=${c.tab === t}
+                title=${t}
+                @click=${() => this.switchTab(t)}
+              >${this.tabIcon(t)}</button>
+            `)}
+          </div>
+          <div class="body">${this.renderTab(c)}</div>
+        `;
+      }
+      case 'observers': {
+        const tabs: Array<'json' | 'help'> = ['json', 'help'];
+        return html`
+          <div class="tabs" role="tablist">
+            ${tabs.map(t => html`
+              <button
+                class="tab"
+                role="tab"
+                aria-selected=${c.tab === t}
+                title=${t}
+                @click=${() => this.switchObserverTab(t)}
+              >${this.tabIcon(t)}</button>
+            `)}
+          </div>
+          <div class="body">${this.renderObserverTab(c)}</div>
+        `;
+      }
+      default: {
+        // Exhaustiveness — adding a new InspectorContent variant
+        // without handling it here fails typechecking.
+        assertNever(c);
+        return html``;
+      }
     }
-    if (c.kind === 'subscriptions') {
-      return html`<help-content-element .uri=${this.helpUris.subscription ?? ''}></help-content-element>`;
-    }
-    if (c.kind === 'peers') {
-      return html`<help-content-element .uri=${this.helpUris.presence ?? ''}></help-content-element>`;
-    }
-    if (c.kind === 'metrics') {
-      return html`<help-content-element .uri=${this.helpUris.metrics ?? ''}></help-content-element>`;
-    }
-    if (c.kind === 'databaseMetrics') {
-      return html`<help-content-element .uri=${this.helpUris.databaseMetrics ?? ''}></help-content-element>`;
-    }
-    if (c.kind === 'query') {
-      // Filter the Metrics tab out when the workspace setting is off —
-      // the user opted out of metrics collection entirely so the tab
-      // has nothing to show.
-      const tabs: QueryInspectorTab[] = this.settings.collectMetrics
-        ? ['history', 'favorites', 'json', 'metrics', 'help']
-        : ['history', 'favorites', 'json', 'help'];
-      return html`
-        <div class="tabs" role="tablist">
-          ${tabs.map(t => html`
-            <button
-              class="tab"
-              role="tab"
-              aria-selected=${c.tab === t}
-              title=${t}
-              @click=${() => this.switchTab(t)}
-            >${this.tabIcon(t)}</button>
-          `)}
-        </div>
-        <div class="body">${this.renderTab(c)}</div>
-      `;
-    }
-    return html``;
   }
 
   private tabIcon(t: QueryInspectorTab) {
@@ -193,6 +216,21 @@ export class DittoInspectorElement extends LitElement {
         return html`<query-metrics-element .metadata=${c.lastResultMetadata} .hideLimitHint=${this.prefs.hideLimitHint}></query-metrics-element>`;
       case 'help':
         return html`<help-content-element .uri=${this.helpUris.query ?? ''}></help-content-element>`;
+      default:
+        return html``;
+    }
+  }
+
+  private switchObserverTab(tab: 'json' | 'help'): void {
+    postToHost({ type: 'inspector.tabSelected', tab });
+  }
+
+  private renderObserverTab(c: Extract<InspectorContent, { kind: 'observers' }>) {
+    switch (c.tab) {
+      case 'json':
+        return html`<query-json-element .json=${c.selectedRowJson}></query-json-element>`;
+      case 'help':
+        return html`<help-content-element .uri=${this.helpUris.observers ?? ''}></help-content-element>`;
       default:
         return html``;
     }

@@ -12,6 +12,7 @@ import type {
 import type { QueryHistoryEntry } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoriteEntry } from '../storage/QueryFavoritesStore.js';
 import type { ImportableSubscription } from '../ditto/import-subscription-parser.js';
+import type { ObserverEvent } from '../ditto/ObserverEventStore.js';
 
 // ─── Welcome / first-run onboarding panel ──────────────────────
 /** Webview → host. The welcome panel has two action buttons: a primary
@@ -236,6 +237,34 @@ export type QueryOut =
   | { type: 'query.exportCancelled' }
   | { type: 'query.exportError'; message: string };
 
+// ─── Observer panel ────────────────────────────────────────────
+/** Webview → host. */
+export type ObserverIn =
+  // User clicked Activate in the panel toolbar.
+  | { type: 'observer.activate' }
+  // User clicked Stop in the panel toolbar.
+  | { type: 'observer.stop' }
+  // User selected an event in the events table; surface the
+  // currently-selected event's row JSON to the Inspector.
+  | { type: 'observer.eventSelected'; eventId: string | null }
+  // User selected a single row inside the bottom-pane detail view.
+  // The Inspector's JSON tab shows this row.
+  | { type: 'observer.rowSelected'; rowJson: string | null };
+
+/** Host → webview. */
+export type ObserverOut =
+  // Pushed on resolve and after every save — name + query for the
+  // panel title/toolbar.
+  | { type: 'observer.init'; observer: { id: string; name: string; query: string } }
+  // Pushed when the observer is activated or stopped.
+  | { type: 'observer.statusChanged'; active: boolean }
+  // Coalesced batch of events from the host's 100ms flush window.
+  // The webview appends them to its ring buffer.
+  | { type: 'observer.events'; events: ObserverEvent[] }
+  // Pushed when the user clicks Stop or when the observer is
+  // cancelled programmatically — clears the webview's event store.
+  | { type: 'observer.cleared' };
+
 // ─── Query Metrics panel ───────────────────────────────────────
 /** A single record in the Query Metrics history. The shape is the
  *  same as QueryResultMetadata with a stable id minted by the store. */
@@ -299,7 +328,7 @@ export type InspectorOut =
   | { type: 'inspector.contentChanged'; content: InspectorContent }
   | { type: 'inspector.historyChanged'; databaseId: string; entries: QueryHistoryEntry[] }
   | { type: 'inspector.favoritesChanged'; databaseId: string; entries: QueryFavoriteEntry[] }
-  | { type: 'inspector.helpHtml'; kind: 'subscription' | 'query' | 'presence' | 'metrics' | 'databaseMetrics'; uri: string }
+  | { type: 'inspector.helpHtml'; kind: 'subscription' | 'query' | 'presence' | 'metrics' | 'databaseMetrics' | 'observers' | 'logAnalyzer' | 'patternEditor'; uri: string }
   | { type: 'inspector.attachmentProgress'; tokenId: string; pct: number }
   | { type: 'inspector.attachmentLoaded'; tokenId: string; mimeType: string; webviewUri: string }
   | { type: 'inspector.attachmentSaved'; tokenId: string; path: string }
@@ -319,3 +348,53 @@ export type LogIn = { type: 'log'; level: LogLevel; message: string; ctx?: Recor
 
 /** Host → webview: notify of a channel-level change so the webview can short-circuit. */
 export type LogOut = { type: 'log.levelChanged'; level: LogLevel };
+
+// ─── Log Analyzer panel ────────────────────────────────────────
+/** Host → webview: state diffs from LogAnalyzerService. */
+export type AnalyzerOut =
+  | { type: 'analyzer.reset' }
+  | { type: 'analyzer.summary'; counts: import('../logAnalyzer/types.js').SummaryCounts }
+  | { type: 'analyzer.problemsAdded'; items: import('../logAnalyzer/types.js').ProblemInstance[] }
+  | { type: 'analyzer.sessionsUpdated'; sessions: import('../logAnalyzer/types.js').Session[] }
+  | { type: 'analyzer.histogramsUpdated'; histograms: import('../logAnalyzer/types.js').AnalyzerState['histograms'] }
+  | { type: 'analyzer.live'; lines: import('../logAnalyzer/types.js').LogLine[] }
+  | { type: 'analyzer.error'; stage: 'backfill' | 'live'; message: string }
+  | { type: 'analyzer.linesResult'; requestId: string; items: import('../logAnalyzer/types.js').LogLine[]; total: number }
+  | {
+      type: 'analyzer.lineDetail';
+      requestId: string;
+      line: import('../logAnalyzer/types.js').LogLine | null;
+      before: import('../logAnalyzer/types.js').LogLine[];
+      after: import('../logAnalyzer/types.js').LogLine[];
+    };
+
+/** Webview → host: user controls + reveal requests. */
+export type AnalyzerIn =
+  | { type: 'analyzer.refresh' }
+  | { type: 'analyzer.clear' }
+  | { type: 'analyzer.pause' }
+  | { type: 'analyzer.resume' }
+  | { type: 'analyzer.revealLine'; lineId: number }
+  | { type: 'analyzer.openPatternEditor' }
+  | {
+      type: 'analyzer.queryLines';
+      filter: 'all' | 'critical' | 'error' | 'warn' | 'problem';
+      search?: string;
+      limit?: number;
+      offset?: number;
+      requestId: string;
+    }
+  | { type: 'analyzer.requestLineDetail'; lineId: number; requestId: string };
+
+// ─── Pattern Editor panel ──────────────────────────────────────
+/** Host → webview: pattern catalog snapshot + save results.
+ *  (Distinct from EditorIn/EditorOut which belong to the database editor.) */
+export type PatternEditorOut =
+  | { type: 'patternEditor.snapshot'; bundled: import('../logAnalyzer/PatternEngine.js').KeyedRawPattern[]; user: import('../logAnalyzer/PatternEngine.js').KeyedRawPattern[] }
+  | { type: 'patternEditor.saveOk'; key: string }
+  | { type: 'patternEditor.saveFailed'; key: string; message: string };
+
+/** Webview → host: CRUD requests over user patterns. */
+export type PatternEditorIn =
+  | { type: 'patternEditor.save'; pattern: import('../logAnalyzer/PatternEngine.js').KeyedRawPattern; replaceKey?: string }
+  | { type: 'patternEditor.delete'; key: string };
