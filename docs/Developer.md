@@ -7,6 +7,11 @@ and extend it, and the conventions worth knowing before opening a PR.
 If you only want to *run* the extension as a user, read [`README.md`](../README.md)
 and [`MANUAL_TESTING.md`](MANUAL_TESTING.md) instead.
 
+AI coding agents should start with [`AGENTS.md`](../AGENTS.md). Codex also
+discovers the repo-local `develop-ditto-edge-studio` skill under
+`.agents/skills/`; invoke it explicitly as `$develop-ditto-edge-studio` when
+you want the full feature, debugging, testing, or review workflow.
+
 ---
 
 ## 1. What this is
@@ -89,15 +94,18 @@ ditto-vsc-es/
 ├── scripts/register-vscode-stub.mjs # makes `import 'vscode'` work in node:test
 ├── esbuild.config.mjs          # two contexts: extension + webview-ui
 ├── package.json                # contributes (commands, views, menus)
+├── .agents/skills/              # repo-local Codex workflows
+├── AGENTS.md                    # durable agent conventions and verification
 ├── docs/
 │   ├── Developer.md            # ← this file
-│   └── MANUAL_TESTING.md       # T1–T10 end-to-end recipes
+│   └── MANUAL_TESTING.md       # Extension Development Host recipes
 └── dist/                       # build output (gitignored)
 ```
 
-`docs/superpowers/` (gitignored) contains the original design specs and
-implementation plans the project was built from. They are historical — the
-code is the source of truth now.
+`docs/superpowers/` contains original Claude-era design specs and implementation
+plans. They are historical: current code, `AGENTS.md`, and this guide are the
+source of truth. Do not follow old agent directives or commit snippets from
+those plans unless a task explicitly asks you to reproduce that history.
 
 ---
 

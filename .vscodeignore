@@ -5,6 +5,9 @@
 .vscode/**
 .vscode-test/**
 .claude/**
+.agents/**
+.codex/**
+AGENTS.md
 prompts/**
 scripts/**
 src/**
