@@ -35,6 +35,7 @@ import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, parseProfileItem } from './QueryProfileParser.js';
 import type { QueryProfile } from './QueryProfile.js';
+import { applyCollectionSyncScopes } from './sync-scopes.js';
 
 export interface TransportPrefs {
   isLanEnabled: boolean;
@@ -233,6 +234,15 @@ export class DittoManager {
       // Mirrors SwiftUI Edge Studio's DittoManager.hydrateDittoSelectedDatabase.
       if (config.mode === 'smallPeersOnly' && secrets.token) {
         ditto.setOfflineOnlyLicenseToken(secrets.token);
+      }
+
+      const configuredScopes = config.advancedConfig?.collectionSyncScopes ?? [];
+      await applyCollectionSyncScopes(ditto.store, configuredScopes);
+      if (configuredScopes.length > 0) {
+        this.log.info('Applied collection sync scopes before sync start', {
+          configId: config.id,
+          count: configuredScopes.length,
+        });
       }
 
       await ditto.store.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 12');

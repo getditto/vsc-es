@@ -50,3 +50,14 @@ export const Uri = {
   },
   file(p) { return { scheme: 'file', path: p, query: '', fsPath: p }; },
 };
+
+// Default-only configuration surface used by tree/provider unit tests. Tests
+// that need explicit values should supply their own seam rather than teaching
+// this shared stub about product settings.
+export const workspace = {
+  getConfiguration() {
+    return {
+      get(_key, defaultValue) { return defaultValue; },
+    };
+  },
+};

@@ -28,6 +28,16 @@ test('save() then list() round-trips a config', async () => {
   assert.deepEqual(store.list(), [cfg]);
 });
 
+test('legacy configs without advancedConfig remain readable', async () => {
+  const memento = new FakeMemento();
+  const legacy = makeConfig({ name: 'Legacy', databaseId: 'legacy-db' });
+  delete legacy.advancedConfig;
+  await memento.update('dittoConfigs.v1', [legacy]);
+  const store = new ConfigStore(memento as any);
+  assert.deepEqual(store.get(legacy.id), legacy);
+  assert.equal(store.get(legacy.id)?.advancedConfig, undefined);
+});
+
 test('save() updates an existing config by id', async () => {
   const store = new ConfigStore(new FakeMemento() as any);
   const cfg = makeConfig({ name: 'A' });

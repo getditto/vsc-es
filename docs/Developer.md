@@ -143,6 +143,12 @@ The merge of these three sources into a `PeerListSnapshot` is pure logic in
 `src/ditto/peer-info.ts` — fully unit-testable, no `vscode` import. See
 `mergePeerList()` and `dominantConnectionType()`.
 
+Before `sync.start()`, `DittoManager.connect()` applies configured collection
+sync scopes through `src/ditto/sync-scopes.ts`. Keep that call after the SDK is
+opened and authenticated/licensed, but before sync starts and before persisted
+subscriptions are registered. Ditto resets this system setting on every new
+instance, so it must be reapplied on every connection.
+
 ### 4.3 Storage layers
 
 | Key | Where | Why |
@@ -154,6 +160,12 @@ The merge of these three sources into a `PeerListSnapshot` is pure logic in
 
 Versioning is handled by the `.v1` suffix on the keys — bump it and add a
 migration function inside the relevant store if the shape ever changes.
+
+Connection records may include an optional `advancedConfig`. Collection sync
+scopes live there as an ordered list of collection/scope pairs so the database
+editor can add and remove rows without losing the user's ordering. The field is
+optional for backward compatibility; an absent value means the SDK default
+(`AllPeers`) applies to every collection.
 
 ### 4.4 IPC contract
 

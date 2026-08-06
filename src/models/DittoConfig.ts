@@ -9,6 +9,24 @@ export type AuthMode = 'server' | 'smallPeersOnly';
  */
 export type SdkLogLevel = 'error' | 'warning' | 'info' | 'debug' | 'verbose';
 
+export type CollectionSyncScope =
+  | 'AllPeers'
+  | 'BigPeerOnly'
+  | 'SmallPeersOnly'
+  | 'LocalPeerOnly';
+
+export interface CollectionSyncScopeEntry {
+  collection: string;
+  scope: CollectionSyncScope;
+}
+
+/** Container for connection settings that are intentionally hidden from the
+ *  default registration flow. Keep this extensible as more advanced SDK
+ *  configuration is exposed by the editor. */
+export interface AdvancedConfig {
+  collectionSyncScopes?: CollectionSyncScopeEntry[];
+}
+
 export interface StoredDittoConfig {
   id: string;
   name: string;
@@ -27,6 +45,8 @@ export interface StoredDittoConfig {
   allowUntrustedCerts: boolean;
   logLevel: SdkLogLevel;
   isStrictModeEnabled: boolean;
+  /** Optional for backward compatibility with configs saved before DA-198. */
+  advancedConfig?: AdvancedConfig;
   /**
    * Per-DB transport prefs. Optional so previously-stored configs read
    * back transparently with `?? defaults` at the call site. Defaults are
@@ -60,6 +80,7 @@ export function newConfig(): StoredDittoConfig {
     allowUntrustedCerts: false,
     logLevel: 'info',
     isStrictModeEnabled: false,
+    advancedConfig: { collectionSyncScopes: [] },
     isLanEnabled: true,
     isBluetoothLeEnabled: support.bluetoothLE,
     isAwdlEnabled: support.awdl,

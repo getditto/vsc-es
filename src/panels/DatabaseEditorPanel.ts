@@ -5,6 +5,10 @@ import type { SecretStore } from '../storage/SecretStore.js';
 import { newConfig, type StoredDittoConfig, type SecretSet } from '../models/DittoConfig.js';
 import type { EditorIn, EditorOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
+import {
+  normalizeCollectionSyncScopes,
+  validateCollectionSyncScopes,
+} from '../ditto/sync-scopes.js';
 
 export class DatabaseEditorPanel {
   private static current: DatabaseEditorPanel | undefined;
@@ -96,6 +100,13 @@ export class DatabaseEditorPanel {
         this.post({ type: 'editor.validationError', message: err });
         return;
       }
+      const scopes = normalizeCollectionSyncScopes(
+        msg.config.advancedConfig?.collectionSyncScopes,
+      );
+      msg.config.advancedConfig = {
+        ...msg.config.advancedConfig,
+        collectionSyncScopes: scopes,
+      };
       try {
         await this.configs.save(msg.config);
       } catch (saveErr) {
@@ -137,6 +148,10 @@ function validate(
   }
   if (!secrets.token.trim()) { return 'Token is required.'; }
   if (config.mode === 'server' && !config.authUrl.trim()) { return 'URL is required for Server mode.'; }
+  const syncScopeError = validateCollectionSyncScopes(
+    config.advancedConfig?.collectionSyncScopes,
+  );
+  if (syncScopeError) { return syncScopeError; }
   return null;
 }
 
