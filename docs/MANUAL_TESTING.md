@@ -105,6 +105,46 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 8. Run `SHOW USER_COLLECTION_SYNC_SCOPES` again; it still reports Local Peer Only for the live instance.
 9. Disconnect and reconnect, then rerun the command; it now reports All Peers.
 
+### T4b · Startup system settings
+
+**Pre-conditions:** A registered database with valid credentials (T4).
+
+**Disconnected/create behavior:**
+1. Open the database editor while disconnected and expand **Advanced Configuration**.
+2. Add `DQL_CONCURRENT_REQUEST_LIMIT` as Integer with value `10`.
+3. Confirm no reconnect warning appears, save, reopen, and confirm the row persists.
+4. Connect and run `SHOW DQL_CONCURRENT_REQUEST_LIMIT` in Query Editor.
+
+**Expected:**
+- The parameter reports `10` and was applied before sync started.
+- Output logs the parameter name but not its configured value.
+
+**Connected edit and warning behavior:**
+5. Edit the active connection and confirm **Add startup setting** uses parameters loaded from `SHOW ALL`.
+6. Add a setting and confirm an inline **Reconnect required** warning reports one addition.
+7. Remove an existing setting and confirm the warning reports the addition and removal.
+8. Restore the settings to their original state and confirm the warning disappears.
+9. Change a setting again and save.
+
+**Expected:**
+- A VS Code warning says the connection must be disconnected and reconnected.
+- `SHOW` still reports the old live value immediately after saving.
+- After disconnecting and reconnecting, `SHOW` reports the saved value.
+- Canceling instead of saving discards additions, edits, and removals.
+
+**Validation and failure:**
+10. Confirm blank, duplicate, reserved (`DQL_STRICT_MODE`), malformed JSON, and invalid parameter names disable Save with an actionable error.
+11. Save a syntactically valid but unsupported parameter, then attempt to connect.
+12. From the active editor, capture representative Boolean, Integer, String, and JSON rows from the real `SHOW ALL` result and apply one supported value of each type.
+13. Configure two supported settings followed by one unsupported setting; connect and confirm startup aborts after the failure without starting sync or subscriptions.
+14. Remove a previously applied setting, disconnect, and reconnect using the same database entry and persistence directory; use `SHOW` to confirm the removed setting returns to its SDK default.
+
+**Expected:**
+- The connection fails before sync and subscriptions start, and the error identifies the failing parameter without logging its value.
+- `SHOW ALL` rows materialize into the expected parameter/value document shape, all four bound value types apply successfully, and duplicate or non-safe-integer rows do not create ambiguous editor options.
+- A partial startup-setting failure never crosses the sync-start boundary.
+- Removed settings are not retained accidentally when the same on-disk Ditto store is reopened.
+
 ### T5 · Connect & disconnect
 
 **Pre-conditions:** A registered database with valid credentials (T4).

@@ -157,6 +157,19 @@ opened and authenticated/licensed, but before sync starts and before persisted
 subscriptions are registered. Ditto resets this system setting on every new
 instance, so it must be reapplied on every connection.
 
+The same pre-sync boundary applies startup system settings stored in
+`advancedConfig.systemSettings`. Each entry is a typed parameter/value pair;
+parameter names are validated before being interpolated and values are passed
+as DQL query arguments. The database editor uses `SHOW ALL` to offer typed
+choices only when editing the active connection. New and disconnected
+connections use the same structured rows with a manually selected type. Saving
+changes for an active connection never mutates the live SDK instance: the UI
+and save notification direct the user to disconnect and reconnect.
+
+System-setting names and values are stored with the database config in
+`globalState`, not `SecretStorage`. They must never contain tokens, keys,
+passwords, or other credentials.
+
 ### 4.3 Storage layers
 
 | Key | Where | Why |
@@ -174,6 +187,11 @@ scopes live there as an ordered list of collection/scope pairs so the database
 editor can add and remove rows without losing the user's ordering. The field is
 optional for backward compatibility; an absent value means the SDK default
 (`AllPeers`) applies to every collection.
+
+Startup system settings are another optional ordered list under
+`advancedConfig`. Supported value types are boolean, integer, string, and JSON.
+An absent list means no user overrides. `USER_COLLECTION_SYNC_SCOPES` and
+`DQL_STRICT_MODE` are reserved because dedicated editor controls own them.
 
 ### 4.4 IPC contract
 

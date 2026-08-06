@@ -36,6 +36,8 @@ import type { ConfigStore } from '../storage/ConfigStore.js';
 import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, parseProfileItem } from './QueryProfileParser.js';
 import type { QueryProfile } from './QueryProfile.js';
 import { startSyncWithCollectionScopes } from './sync-scopes.js';
+import { applySystemSettings, parseShowAllOptions } from './system-settings.js';
+import { withConnectionPersistenceLock } from '../storage/connection-persistence-lock.js';
 
 export interface TransportPrefs {
   isLanEnabled: boolean;
@@ -95,6 +97,13 @@ export class DittoManager {
   }
 
   getActiveConfigId(): string | null { return this.session?.configId ?? null; }
+  async getSystemSettingOptions(configId: string) {
+    if (!this.session || this.session.configId !== configId) {
+      throw new Error('Connect this database to load its current system settings.');
+    }
+    const result = await this.session.ditto.store.execute('SHOW ALL');
+    return parseShowAllOptions(result);
+  }
   getLatestSnapshot(): PeerListSnapshot { return this.latestSnapshot; }
   getSyncState(): SyncState { return this.syncState; }
 
@@ -244,8 +253,20 @@ export class DittoManager {
             count: configuredScopes.length,
           });
         }
+        await ditto.store.execute(
+          'ALTER SYSTEM SET DQL_STRICT_MODE TO :value',
+          { value: config.isStrictModeEnabled },
+        );
         await ditto.store.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 12');
         this.log.info('Set mesh_chooser_max_wlan_clients to 12 to improve amount of peers connectivity.');
+        const systemSettings = config.advancedConfig?.systemSettings ?? [];
+        await applySystemSettings(ditto.store, systemSettings);
+        if (systemSettings.length > 0) {
+          this.log.info('Applied startup system settings before sync start', {
+            configId: config.id,
+            parameters: systemSettings.map(setting => setting.parameter),
+          });
+        }
       });
 
       this.session = {
@@ -655,8 +676,12 @@ export class DittoManager {
    *
    * On error in any phase we still attempt to restart sync + reattach observers
    * inside the finally block so the user isn't left with a stranded session.
-   */
+  */
   async applyTransportConfig(opts: TransportPrefs): Promise<void> {
+    await withConnectionPersistenceLock(() => this.applyTransportConfigLocked(opts));
+  }
+
+  private async applyTransportConfigLocked(opts: TransportPrefs): Promise<void> {
     if (!this.session) { throw new Error('No active database.'); }
     if (this.applyingTransports) { throw new Error('Transport change already in progress.'); }
     const session = this.session;

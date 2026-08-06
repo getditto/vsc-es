@@ -20,11 +20,32 @@ export interface CollectionSyncScopeEntry {
   scope: CollectionSyncScope;
 }
 
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type SystemSetting =
+  | { parameter: string; type: 'boolean'; value: boolean }
+  | { parameter: string; type: 'integer'; value: number }
+  | { parameter: string; type: 'string'; value: string }
+  | { parameter: string; type: 'json'; value: JsonValue };
+
+export interface SystemSettingOption {
+  parameter: string;
+  type: SystemSetting['type'];
+  value: SystemSetting['value'];
+}
+
 /** Container for connection settings that are intentionally hidden from the
  *  default registration flow. Keep this extensible as more advanced SDK
  *  configuration is exposed by the editor. */
 export interface AdvancedConfig {
   collectionSyncScopes?: CollectionSyncScopeEntry[];
+  systemSettings?: SystemSetting[];
 }
 
 export interface StoredDittoConfig {
@@ -80,7 +101,7 @@ export function newConfig(): StoredDittoConfig {
     allowUntrustedCerts: false,
     logLevel: 'info',
     isStrictModeEnabled: false,
-    advancedConfig: { collectionSyncScopes: [] },
+    advancedConfig: { collectionSyncScopes: [], systemSettings: [] },
     isLanEnabled: true,
     isBluetoothLeEnabled: support.bluetoothLE,
     isAwdlEnabled: support.awdl,
