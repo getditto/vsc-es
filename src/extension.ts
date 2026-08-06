@@ -49,6 +49,11 @@ import { ConnectionTracker } from './logAnalyzer/ConnectionTracker.js';
 import { LogAnalyzerService } from './logAnalyzer/LogAnalyzerService.js';
 import { LogAnalyzerPanel } from './panels/LogAnalyzerPanel.js';
 import { PatternEditorPanel } from './panels/PatternEditorPanel.js';
+import {
+  waitForConnectionPersistence,
+  withConnectionPersistenceLock,
+} from './storage/connection-persistence-lock.js';
+import { deleteConnectionAtomically } from './panels/save-connection.js';
 
 let logger: Logger;
 
@@ -477,45 +482,64 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('dittoVsce.registerDatabase', () => {
-      DatabaseEditorPanel.show(context, configStore, secretStore, logger);
+      DatabaseEditorPanel.show(context, configStore, secretStore, logger, manager);
     }),
     vscode.commands.registerCommand('dittoVsce.editDatabase', (node) => {
       if (node?.kind !== 'database') { return; }
-      DatabaseEditorPanel.show(context, configStore, secretStore, logger, node.config);
+      DatabaseEditorPanel.show(context, configStore, secretStore, logger, manager, node.config);
     }),
     vscode.commands.registerCommand('dittoVsce.deleteDatabase', async (node) => {
       if (node?.kind !== 'database') { return; }
-      if (manager.getActiveConfigId() === node.config.id) {
-        // Mirror the disconnect command's panel teardown — without
-        // this, deleting the active database leaves stale Query /
-        // Peer / Subscription / Observer panels pointing at a
-        // session that's about to vanish.
-        QueryEditorPanel.dispose();
-        PeerListingPanel.dispose();
-        SubscriptionEditorPanel.dispose();
-        ObserverEditorPanel.dispose();
-        ObserverPanel.disposeAll();
-        await manager.disconnect();
+      if (manager.isApplyingTransports()) {
+        vscode.window.showInformationMessage('Transport change in progress — please wait.');
+        return;
       }
       const ok = await vscode.window.showWarningMessage(
         `Delete connection "${node.config.name}"?`, { modal: true }, 'Delete'
       );
-      if (ok === 'Delete') {
-        await configStore.delete(node.config.id);
-        await secretStore.deleteAll(node.config.id);
-        await subscriptionStore.deleteAll(node.config.id);
-        await observerStore.deleteAll(node.config.id);
-        await tracker.deleteAll(node.config.id);
-        await historyStore.deleteAll(node.config.id);
-        await favoritesStore.deleteAll(node.config.id);
-        await inspectorController.clearForDatabase(node.config.id);
-        await treeExpansionStore.clearAll(node.config.id);
-        const dir = vscode.Uri.joinPath(context.globalStorageUri, 'dittoData', node.config.id);
-        try { await vscode.workspace.fs.delete(dir, { recursive: true, useTrash: false }); } catch { /* fine if missing */ }
+      if (ok !== 'Delete') { return; }
+      try {
+        await withConnectionPersistenceLock(async () => {
+          if (manager.getActiveConfigId() === node.config.id) {
+            // Mirror the disconnect command's panel teardown — without
+            // this, deleting the active database leaves stale panels.
+            QueryEditorPanel.dispose();
+            PeerListingPanel.dispose();
+            SubscriptionEditorPanel.dispose();
+            ObserverEditorPanel.dispose();
+            ObserverPanel.disposeAll();
+            await manager.disconnect();
+          }
+          const cleanup = await Promise.allSettled([
+            subscriptionStore.deleteAll(node.config.id),
+            observerStore.deleteAll(node.config.id),
+            tracker.deleteAll(node.config.id),
+            historyStore.deleteAll(node.config.id),
+            favoritesStore.deleteAll(node.config.id),
+            inspectorController.clearForDatabase(node.config.id),
+            treeExpansionStore.clearAll(node.config.id),
+          ]);
+          if (cleanup.some(result => result.status === 'rejected')) {
+            throw new Error('Associated connection data could not be removed.');
+          }
+          const dir = vscode.Uri.joinPath(context.globalStorageUri, 'dittoData', node.config.id);
+          try {
+            await vscode.workspace.fs.delete(dir, { recursive: true, useTrash: false });
+          } catch (error) {
+            if (!(error instanceof vscode.FileSystemError) || error.code !== 'FileNotFound') { throw error; }
+          }
+          await deleteConnectionAtomically(configStore, secretStore, node.config.id);
+        });
+      } catch {
+        vscode.window.showErrorMessage('Connection deletion did not complete. Retry to finish removing any remaining connection data.');
       }
     }),
     vscode.commands.registerCommand('dittoVsce.connect', async (node) => {
       if (node?.kind !== 'database') { return; }
+      if (manager.isApplyingTransports()) {
+        vscode.window.showInformationMessage('Transport change in progress — please wait.');
+        return;
+      }
       if (manager.isSwitchInProgress()) {
         vscode.window.showInformationMessage('Switch in progress — please wait.');
         return;
@@ -529,9 +553,20 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         return;
       }
       const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger);
-      await performSwitch(deps, fromActive, node.config);
+      await withConnectionPersistenceLock(async () => {
+        const currentTarget = configStore.get(node.config.id);
+        if (!currentTarget) {
+          vscode.window.showErrorMessage('This connection no longer exists. Refresh the database list and try again.');
+          return;
+        }
+        await performSwitch(deps, fromActive, currentTarget);
+      });
     }),
     vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
+      if (manager.isApplyingTransports()) {
+        vscode.window.showInformationMessage('Transport change in progress — please wait.');
+        return;
+      }
       if (manager.isSwitchInProgress()) {
         vscode.window.showInformationMessage('Switch in progress — please wait.');
         return;
@@ -539,7 +574,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       const cur = manager.getCurrentLifecycleState();
       if (cur.kind !== 'active') { return; }
       const name = configStore.get(cur.configId)?.name ?? 'Unknown';
-      await vscode.window.withProgress(
+      await withConnectionPersistenceLock(async () => vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Disconnecting from "${name}"`, cancellable: false },
         async () => {
           const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1000);
@@ -556,7 +591,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
             statusItem.dispose();
           }
         }
-      );
+      ));
     }),
     vscode.commands.registerCommand('dittoVsce.deleteSubscription', async (node) => {
       if (node?.kind !== 'subscription') { return; }
@@ -1008,6 +1043,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   return undefined;
 }
 
-export function deactivate() {
+export async function deactivate() {
+  await waitForConnectionPersistence();
   // logger.dispose() runs via context.subscriptions
 }

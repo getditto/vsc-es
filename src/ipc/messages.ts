@@ -2,6 +2,7 @@ import type {
   StoredDittoConfig,
   SecretSet,
   PeerListSnapshot,
+  SystemSettingOption,
 } from '../models/DittoConfig.js';
 import type { LogLevel } from '../logging/types.js';
 import type {
@@ -36,7 +37,11 @@ export type EditorIn =
   | { type: 'editor.cancel' };
 
 export type EditorOut =
-  | { type: 'editor.init'; config: StoredDittoConfig; secrets: SecretSet }
+  | { type: 'editor.init'; config: StoredDittoConfig; secrets: SecretSet; isActiveConnection: boolean }
+  | { type: 'editor.initError'; message: string }
+  | { type: 'editor.activeConnectionChanged'; isActiveConnection: boolean }
+  | { type: 'editor.systemSettingsLoaded'; options: SystemSettingOption[] }
+  | { type: 'editor.systemSettingsLoadError'; message: string }
   | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' };
 
 // ─── Subscription editor panel ─────────────────────────────────
