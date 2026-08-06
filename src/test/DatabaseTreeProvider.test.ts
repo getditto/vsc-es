@@ -83,6 +83,7 @@ test('databaseDetails expands to subs + inline collections + section + peers + q
     'queryEditor',
     'queryMetrics',
     'databaseMetrics',
+    'logAnalyzer',
     // Second blank-rule divider, then the Import Data bulk action.
     'sectionHeader',
     'importData',

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Develop Ditto Edge Studio"
+  short_description: "Build and debug the VS Code extension"
+  default_prompt: "Use $develop-ditto-edge-studio to implement and verify this Ditto Edge Studio change."

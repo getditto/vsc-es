@@ -13,19 +13,28 @@ interface StoredDittoConfig {
   allowUntrustedCerts: boolean;
   logLevel: 'error' | 'warning' | 'info' | 'debug' | 'verbose';
   isStrictModeEnabled: boolean;
+  advancedConfig?: {
+    collectionSyncScopes?: CollectionSyncScopeEntry[];
+  };
 }
+
+interface CollectionSyncScopeEntry { collection: string; scope: string; }
+const COLLECTION_SYNC_SCOPES = new Set<string>([
+  'AllPeers', 'BigPeerOnly', 'SmallPeersOnly', 'LocalPeerOnly',
+]);
 
 interface SecretSet { token: string; secretKey?: string; httpApiKey?: string; }
 
 type In =
   | { type: 'editor.init'; config: StoredDittoConfig; secrets: SecretSet }
-  | { type: 'editor.validationError'; message: string };
+  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' };
 
 @customElement('ditto-database-editor')
 export class DatabaseEditor extends LitElement {
   @state() private config: StoredDittoConfig | null = null;
   @state() private secrets: SecretSet = { token: '' };
   @state() private validationError: string | null = null;
+  @state() private advancedOpen = false;
 
   static styles = css`
     :host { display: block; padding: 24px; max-width: 720px; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
@@ -49,13 +58,39 @@ export class DatabaseEditor extends LitElement {
     .footer .cancel { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
     .error-banner { background: var(--vscode-inputValidation-errorBackground); color: var(--vscode-inputValidation-errorForeground); border: 1px solid var(--vscode-inputValidation-errorBorder); padding: 8px 12px; margin-bottom: 16px; border-radius: 2px; }
     .checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+    details.advanced { margin-top: 28px; border-top: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); }
+    details.advanced > summary { padding: 12px 0; cursor: pointer; font-weight: 600; }
+    details.advanced > summary::marker { color: var(--vscode-descriptionForeground); }
+    .scope-count { float: right; color: var(--vscode-descriptionForeground); font-size: 11px; font-weight: normal; }
+    .advanced-content { padding-bottom: 20px; }
+    .advanced-content h2:first-child { margin-top: 12px; }
+    .scope-list { display: grid; gap: 8px; margin-top: 12px; }
+    .scope-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, 0.8fr) auto; gap: 8px; align-items: end; }
+    .scope-field label { margin-top: 0; }
+    .scope-remove { padding: 6px 10px; border: none; cursor: pointer; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+    .add-scope { margin-top: 12px; padding: 6px 12px; border: none; cursor: pointer; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+    .scope-error { color: var(--vscode-inputValidation-errorForeground); font-size: 11px; margin-top: 8px; }
+    .scope-help { margin: 10px 0 0 18px; padding: 0; color: var(--vscode-descriptionForeground); font-size: 11px; }
+    .scope-help li { margin: 3px 0; }
+    @media (max-width: 520px) {
+      :host { padding: 16px; }
+      .scope-row { grid-template-columns: 1fr; }
+      .scope-remove { justify-self: start; }
+    }
   `;
 
   connectedCallback(): void {
     super.connectedCallback();
     onHostMessage<In>(msg => {
-      if (msg.type === 'editor.init') { this.config = msg.config; this.secrets = msg.secrets; }
-      if (msg.type === 'editor.validationError') { this.validationError = msg.message; }
+      if (msg.type === 'editor.init') {
+        this.config = msg.config;
+        this.secrets = msg.secrets;
+        this.advancedOpen = this.scopeError() !== null;
+      }
+      if (msg.type === 'editor.validationError') {
+        this.validationError = msg.message;
+        if (msg.field === 'advancedConfig') { this.advancedOpen = true; }
+      }
     });
   }
 
@@ -68,15 +103,87 @@ export class DatabaseEditor extends LitElement {
     this.secrets = { ...this.secrets, [field]: value };
   }
 
+  private scopes(): CollectionSyncScopeEntry[] {
+    const raw = this.config?.advancedConfig?.collectionSyncScopes as unknown;
+    if (!Array.isArray(raw)) { return []; }
+    return raw.map(entry => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return { collection: '', scope: '' };
+      }
+      const candidate = entry as Record<string, unknown>;
+      return {
+        collection: typeof candidate.collection === 'string' ? candidate.collection : '',
+        scope: typeof candidate.scope === 'string' ? candidate.scope : '',
+      };
+    });
+  }
+
+  private setScopes(collectionSyncScopes: CollectionSyncScopeEntry[]) {
+    if (!this.config) { return; }
+    this.config = {
+      ...this.config,
+      advancedConfig: { ...this.config.advancedConfig, collectionSyncScopes },
+    };
+    this.validationError = null;
+  }
+
+  private addScope() {
+    this.advancedOpen = true;
+    this.setScopes([...this.scopes(), { collection: '', scope: 'AllPeers' }]);
+  }
+
+  private updateScope(index: number, patch: Partial<CollectionSyncScopeEntry>) {
+    this.setScopes(this.scopes().map((entry, i) => i === index ? { ...entry, ...patch } : entry));
+  }
+
+  private removeScope(index: number) {
+    this.setScopes(this.scopes().filter((_, i) => i !== index));
+  }
+
+  private scopeError(): string | null {
+    const raw = this.config?.advancedConfig?.collectionSyncScopes as unknown;
+    if (raw !== undefined && !Array.isArray(raw)) {
+      return 'Collection sync scopes must be a list.';
+    }
+    const seen = new Set<string>();
+    for (const entry of this.scopes()) {
+      const name = entry.collection.trim();
+      if (!name) { return 'Enter a collection name for every scope.'; }
+      if (name.startsWith('__')) { return 'System collections beginning with “__” cannot be scoped.'; }
+      if (seen.has(name)) { return `Collection “${name}” is listed more than once.`; }
+      if (!COLLECTION_SYNC_SCOPES.has(entry.scope)) {
+        return `Collection “${name}” has an unsupported sync scope.`;
+      }
+      seen.add(name);
+    }
+    return null;
+  }
+
+  private scopeEntryInvalid(index: number): boolean {
+    const entries = this.scopes();
+    const entry = entries[index];
+    if (!entry || !entry.collection.trim() || entry.collection.trim().startsWith('__')) { return true; }
+    if (!COLLECTION_SYNC_SCOPES.has(entry.scope)) { return true; }
+    return entries.some((other, otherIndex) =>
+      otherIndex !== index && other.collection.trim() === entry.collection.trim(),
+    );
+  }
+
   private isValid(): boolean {
     const c = this.config;
     if (!c) { return false; }
     if (!c.name.trim() || !c.databaseId.trim() || !this.secrets.token.trim()) { return false; }
-    return true;
+    return this.scopeError() === null;
   }
 
   private save() {
     if (!this.config) { return; }
+    const scopeError = this.scopeError();
+    if (scopeError) {
+      this.validationError = scopeError;
+      this.advancedOpen = true;
+      return;
+    }
     postToHost({ type: 'editor.save', config: this.config, secrets: this.secrets });
   }
 
@@ -85,8 +192,10 @@ export class DatabaseEditor extends LitElement {
   render() {
     if (!this.config) { return html`<p>Loading…</p>`; }
     const c = this.config;
+    const scopes = this.scopes();
+    const scopeError = this.scopeError();
     return html`
-      ${this.validationError ? html`<div class="error-banner">${this.validationError}</div>` : nothing}
+      ${this.validationError ? html`<div class="error-banner" role="alert">${this.validationError}</div>` : nothing}
 
       <div class="mode-picker" role="tablist">
         <button class=${c.mode === 'server' ? 'active' : ''} @click=${() => this.update_('mode', 'server')}>Server</button>
@@ -128,22 +237,72 @@ export class DatabaseEditor extends LitElement {
         <div class="help">Optional secret key for shared key identity encryption. Leave empty if not using Shared Key.</div>
       ` : nothing}
 
-      <h2>Developer Options</h2>
-      <label>SDK Log Level</label>
-      <select .value=${c.logLevel} @change=${(e: Event) => this.update_('logLevel', (e.target as HTMLSelectElement).value)}>
-        <option value="error">Error</option>
-        <option value="warning">Warning</option>
-        <option value="info">Info (Default)</option>
-        <option value="debug">Debug</option>
-        <option value="verbose">Verbose</option>
-      </select>
-      <div class="help">Controls DittoLogger.minimumLogLevel when this database is activated.</div>
+      <details class="advanced" .open=${this.advancedOpen}
+        @toggle=${(e: Event) => { this.advancedOpen = (e.currentTarget as HTMLDetailsElement).open; }}>
+        <summary>
+          Advanced Configuration
+          <span class="scope-count">${scopes.length} ${scopes.length === 1 ? 'scope' : 'scopes'}</span>
+        </summary>
+        <div class="advanced-content">
+          <h2>Collection Sync Scopes</h2>
+          <div class="help">Control where each user collection may synchronize. Changes apply the next time this connection starts.</div>
 
-      <div class="checkbox-row">
-        <input type="checkbox" id="cb-strict" .checked=${c.isStrictModeEnabled} @change=${(e: Event) => this.update_('isStrictModeEnabled', (e.target as HTMLInputElement).checked)} />
-        <label for="cb-strict" style="margin: 0">Enable DQL Strict Mode</label>
-      </div>
-      <div class="warn">⚠️ For most users of Ditto SDK 5.0+, strict mode should remain disabled. Enable only if you require SDK 4.x compatibility.</div>
+          <div class="scope-list">
+            ${scopes.map((entry, index) => html`
+              <div class="scope-row">
+                <div class="scope-field">
+                  <label for=${`scope-collection-${index}`}>Collection</label>
+                  <input id=${`scope-collection-${index}`} type="text" .value=${entry.collection}
+                    aria-invalid=${this.scopeEntryInvalid(index) ? 'true' : 'false'}
+                    aria-describedby=${this.scopeEntryInvalid(index) ? 'scope-error' : nothing}
+                    @input=${(e: Event) => this.updateScope(index, { collection: (e.target as HTMLInputElement).value })} />
+                </div>
+                <div class="scope-field">
+                  <label for=${`scope-value-${index}`}>Scope</label>
+                  <select id=${`scope-value-${index}`} .value=${entry.scope}
+                    aria-invalid=${COLLECTION_SYNC_SCOPES.has(entry.scope) ? 'false' : 'true'}
+                    aria-describedby=${COLLECTION_SYNC_SCOPES.has(entry.scope) ? nothing : 'scope-error'}
+                    @change=${(e: Event) => this.updateScope(index, { scope: (e.target as HTMLSelectElement).value })}>
+                    ${COLLECTION_SYNC_SCOPES.has(entry.scope) ? nothing : html`
+                      <option value=${entry.scope}>Unsupported scope (${entry.scope || 'missing'})</option>
+                    `}
+                    <option value="AllPeers">All Peers</option>
+                    <option value="BigPeerOnly">Big Peer Only</option>
+                    <option value="SmallPeersOnly">Small Peers Only</option>
+                    <option value="LocalPeerOnly">Local Peer Only</option>
+                  </select>
+                </div>
+                <button class="scope-remove" type="button" @click=${() => this.removeScope(index)} aria-label=${`Remove sync scope for ${entry.collection || 'new collection'}`}>Remove</button>
+              </div>
+            `)}
+          </div>
+          ${scopeError ? html`<div id="scope-error" class="scope-error" role="alert">${scopeError}</div>` : nothing}
+          <button class="add-scope" type="button" @click=${this.addScope}>+ Add collection</button>
+          <ul class="scope-help">
+            <li><strong>All Peers</strong> — Ditto Server and Small Peers</li>
+            <li><strong>Big Peer Only</strong> — Ditto Server only</li>
+            <li><strong>Small Peers Only</strong> — Small Peers only</li>
+            <li><strong>Local Peer Only</strong> — never leaves this device</li>
+          </ul>
+
+          <h2>Developer Options</h2>
+          <label>SDK Log Level</label>
+          <select .value=${c.logLevel} @change=${(e: Event) => this.update_('logLevel', (e.target as HTMLSelectElement).value)}>
+            <option value="error">Error</option>
+            <option value="warning">Warning</option>
+            <option value="info">Info (Default)</option>
+            <option value="debug">Debug</option>
+            <option value="verbose">Verbose</option>
+          </select>
+          <div class="help">Controls DittoLogger.minimumLogLevel when this database is activated.</div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="cb-strict" .checked=${c.isStrictModeEnabled} @change=${(e: Event) => this.update_('isStrictModeEnabled', (e.target as HTMLInputElement).checked)} />
+            <label for="cb-strict" style="margin: 0">Enable DQL Strict Mode</label>
+          </div>
+          <div class="warn">⚠️ For most users of Ditto SDK 5.0+, strict mode should remain disabled. Enable only if you require SDK 4.x compatibility.</div>
+        </div>
+      </details>
 
       <div class="footer">
         <button class="cancel" @click=${this.cancel}>Cancel</button>

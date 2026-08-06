@@ -83,6 +83,28 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 **Small Peers Only mode:**
 10. Repeat with Small Peers Only — confirm only the Optional Shared Secret Key section is visible (no URL field).
 
+### T4a · Advanced configuration and collection sync scopes
+
+**Pre-conditions:** A registered database with valid credentials (T4).
+
+**Steps:**
+1. Edit the database and confirm **Advanced Configuration** starts collapsed.
+2. Expand it. Confirm SDK Log Level and DQL Strict Mode are inside the section.
+3. Add these collection rows: `mesh_orders` → Small Peers Only, `audit_logs` → Big Peer Only, and `drafts` → Local Peer Only.
+4. Confirm a blank row, a duplicate collection, and a name beginning with `__` disable Save and show an actionable validation message.
+5. Remove the invalid row, save, reopen the editor, and confirm all valid rows and their order persist.
+6. Connect, open Query Editor, and run `SHOW USER_COLLECTION_SYNC_SCOPES`.
+
+**Expected:**
+- The advanced summary reports `3 scopes`.
+- `SHOW USER_COLLECTION_SYNC_SCOPES` returns the three configured values.
+- Output logs that three collection sync scopes were applied before sync started.
+
+**Reconnect behavior:**
+7. While connected, edit `drafts` to All Peers and save.
+8. Run `SHOW USER_COLLECTION_SYNC_SCOPES` again; it still reports Local Peer Only for the live instance.
+9. Disconnect and reconnect, then rerun the command; it now reports All Peers.
+
 ### T5 · Connect & disconnect
 
 **Pre-conditions:** A registered database with valid credentials (T4).

@@ -1,6 +1,6 @@
 # Get Quickstarts Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical plan:** This document records the original Claude-era implementation approach. For current work, follow the repository `AGENTS.md`, the `develop-ditto-edge-studio` skill, and the codebase. The unchecked boxes and commit snippets below are archival, not current instructions.
 
 **Goal:** Add a one-click "Get Quickstarts" feature that clones the `getditto/quickstart` repo into a user-chosen folder and pre-fills `.env` files (and the Edge Server YAML) from the currently active connection. Reachable from the Help tree, Welcome card, and Command Palette.
 
