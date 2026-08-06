@@ -97,18 +97,21 @@ export class DatabaseEditorPanel {
     if (msg.type === 'editor.save') {
       const err = validate(msg.config, msg.secrets, this.configs.list());
       if (err) {
-        this.post({ type: 'editor.validationError', message: err });
+        this.post({ type: 'editor.validationError', message: err.message, field: err.field });
         return;
       }
       const scopes = normalizeCollectionSyncScopes(
         msg.config.advancedConfig?.collectionSyncScopes,
       );
-      msg.config.advancedConfig = {
-        ...msg.config.advancedConfig,
-        collectionSyncScopes: scopes,
+      const normalizedConfig: StoredDittoConfig = {
+        ...msg.config,
+        advancedConfig: {
+          ...msg.config.advancedConfig,
+          collectionSyncScopes: scopes,
+        },
       };
       try {
-        await this.configs.save(msg.config);
+        await this.configs.save(normalizedConfig);
       } catch (saveErr) {
         // Surface store-level invariant failures (e.g. duplicate databaseId
         // racing in via parallel writes) the same way as form validation.
@@ -118,8 +121,8 @@ export class DatabaseEditorPanel {
         });
         return;
       }
-      await this.secrets.write(msg.config.id, msg.secrets);
-      vscode.window.showInformationMessage(`Saved connection "${msg.config.name}".`);
+      await this.secrets.write(normalizedConfig.id, msg.secrets);
+      vscode.window.showInformationMessage(`Saved connection "${normalizedConfig.name}".`);
       this.panel.dispose();
     }
   }
@@ -131,27 +134,38 @@ export class DatabaseEditorPanel {
   }
 }
 
+interface ValidationFailure {
+  message: string;
+  field?: 'advancedConfig';
+}
+
 function validate(
   config: StoredDittoConfig,
   secrets: SecretSet,
   existingConfigs: StoredDittoConfig[],
-): string | null {
-  if (!config.name.trim()) { return 'Name is required.'; }
+): ValidationFailure | null {
+  if (!config.name.trim()) { return { message: 'Name is required.' }; }
   const dbId = config.databaseId.trim();
-  if (!dbId) { return 'Database ID is required.'; }
+  if (!dbId) { return { message: 'Database ID is required.' }; }
   // Block duplicate databaseIds before they reach the store. Two connections
   // pointing at the same Ditto database can race for the working-directory
   // lock and confuse users about which local store they're looking at.
   const conflict = existingConfigs.find(c => c.id !== config.id && c.databaseId.trim() === dbId);
   if (conflict) {
-    return `Database ID "${dbId}" is already used by connection "${conflict.name}". Each connection must use a unique Database ID.`;
+    return { message: `Database ID "${dbId}" is already used by connection "${conflict.name}". Each connection must use a unique Database ID.` };
   }
-  if (!secrets.token.trim()) { return 'Token is required.'; }
-  if (config.mode === 'server' && !config.authUrl.trim()) { return 'URL is required for Server mode.'; }
+  if (!secrets.token.trim()) { return { message: 'Token is required.' }; }
+  if (config.mode === 'server' && !config.authUrl.trim()) { return { message: 'URL is required for Server mode.' }; }
+  const advanced = config.advancedConfig as unknown;
+  if (advanced !== undefined && (
+    !advanced || typeof advanced !== 'object' || Array.isArray(advanced)
+  )) {
+    return { message: 'Advanced configuration is invalid.', field: 'advancedConfig' };
+  }
   const syncScopeError = validateCollectionSyncScopes(
     config.advancedConfig?.collectionSyncScopes,
   );
-  if (syncScopeError) { return syncScopeError; }
+  if (syncScopeError) { return { message: syncScopeError, field: 'advancedConfig' }; }
   return null;
 }
 

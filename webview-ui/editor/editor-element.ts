@@ -18,14 +18,16 @@ interface StoredDittoConfig {
   };
 }
 
-type CollectionSyncScope = 'AllPeers' | 'BigPeerOnly' | 'SmallPeersOnly' | 'LocalPeerOnly';
-interface CollectionSyncScopeEntry { collection: string; scope: CollectionSyncScope; }
+interface CollectionSyncScopeEntry { collection: string; scope: string; }
+const COLLECTION_SYNC_SCOPES = new Set<string>([
+  'AllPeers', 'BigPeerOnly', 'SmallPeersOnly', 'LocalPeerOnly',
+]);
 
 interface SecretSet { token: string; secretKey?: string; httpApiKey?: string; }
 
 type In =
   | { type: 'editor.init'; config: StoredDittoConfig; secrets: SecretSet }
-  | { type: 'editor.validationError'; message: string };
+  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' };
 
 @customElement('ditto-database-editor')
 export class DatabaseEditor extends LitElement {
@@ -80,8 +82,15 @@ export class DatabaseEditor extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     onHostMessage<In>(msg => {
-      if (msg.type === 'editor.init') { this.config = msg.config; this.secrets = msg.secrets; }
-      if (msg.type === 'editor.validationError') { this.validationError = msg.message; }
+      if (msg.type === 'editor.init') {
+        this.config = msg.config;
+        this.secrets = msg.secrets;
+        this.advancedOpen = this.scopeError() !== null;
+      }
+      if (msg.type === 'editor.validationError') {
+        this.validationError = msg.message;
+        if (msg.field === 'advancedConfig') { this.advancedOpen = true; }
+      }
     });
   }
 
@@ -95,7 +104,18 @@ export class DatabaseEditor extends LitElement {
   }
 
   private scopes(): CollectionSyncScopeEntry[] {
-    return this.config?.advancedConfig?.collectionSyncScopes ?? [];
+    const raw = this.config?.advancedConfig?.collectionSyncScopes as unknown;
+    if (!Array.isArray(raw)) { return []; }
+    return raw.map(entry => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return { collection: '', scope: '' };
+      }
+      const candidate = entry as Record<string, unknown>;
+      return {
+        collection: typeof candidate.collection === 'string' ? candidate.collection : '',
+        scope: typeof candidate.scope === 'string' ? candidate.scope : '',
+      };
+    });
   }
 
   private setScopes(collectionSyncScopes: CollectionSyncScopeEntry[]) {
@@ -121,15 +141,32 @@ export class DatabaseEditor extends LitElement {
   }
 
   private scopeError(): string | null {
+    const raw = this.config?.advancedConfig?.collectionSyncScopes as unknown;
+    if (raw !== undefined && !Array.isArray(raw)) {
+      return 'Collection sync scopes must be a list.';
+    }
     const seen = new Set<string>();
     for (const entry of this.scopes()) {
       const name = entry.collection.trim();
       if (!name) { return 'Enter a collection name for every scope.'; }
       if (name.startsWith('__')) { return 'System collections beginning with “__” cannot be scoped.'; }
       if (seen.has(name)) { return `Collection “${name}” is listed more than once.`; }
+      if (!COLLECTION_SYNC_SCOPES.has(entry.scope)) {
+        return `Collection “${name}” has an unsupported sync scope.`;
+      }
       seen.add(name);
     }
     return null;
+  }
+
+  private scopeEntryInvalid(index: number): boolean {
+    const entries = this.scopes();
+    const entry = entries[index];
+    if (!entry || !entry.collection.trim() || entry.collection.trim().startsWith('__')) { return true; }
+    if (!COLLECTION_SYNC_SCOPES.has(entry.scope)) { return true; }
+    return entries.some((other, otherIndex) =>
+      otherIndex !== index && other.collection.trim() === entry.collection.trim(),
+    );
   }
 
   private isValid(): boolean {
@@ -158,7 +195,7 @@ export class DatabaseEditor extends LitElement {
     const scopes = this.scopes();
     const scopeError = this.scopeError();
     return html`
-      ${this.validationError ? html`<div class="error-banner">${this.validationError}</div>` : nothing}
+      ${this.validationError ? html`<div class="error-banner" role="alert">${this.validationError}</div>` : nothing}
 
       <div class="mode-picker" role="tablist">
         <button class=${c.mode === 'server' ? 'active' : ''} @click=${() => this.update_('mode', 'server')}>Server</button>
@@ -216,12 +253,19 @@ export class DatabaseEditor extends LitElement {
                 <div class="scope-field">
                   <label for=${`scope-collection-${index}`}>Collection</label>
                   <input id=${`scope-collection-${index}`} type="text" .value=${entry.collection}
+                    aria-invalid=${this.scopeEntryInvalid(index) ? 'true' : 'false'}
+                    aria-describedby=${this.scopeEntryInvalid(index) ? 'scope-error' : nothing}
                     @input=${(e: Event) => this.updateScope(index, { collection: (e.target as HTMLInputElement).value })} />
                 </div>
                 <div class="scope-field">
                   <label for=${`scope-value-${index}`}>Scope</label>
                   <select id=${`scope-value-${index}`} .value=${entry.scope}
-                    @change=${(e: Event) => this.updateScope(index, { scope: (e.target as HTMLSelectElement).value as CollectionSyncScope })}>
+                    aria-invalid=${COLLECTION_SYNC_SCOPES.has(entry.scope) ? 'false' : 'true'}
+                    aria-describedby=${COLLECTION_SYNC_SCOPES.has(entry.scope) ? nothing : 'scope-error'}
+                    @change=${(e: Event) => this.updateScope(index, { scope: (e.target as HTMLSelectElement).value })}>
+                    ${COLLECTION_SYNC_SCOPES.has(entry.scope) ? nothing : html`
+                      <option value=${entry.scope}>Unsupported scope (${entry.scope || 'missing'})</option>
+                    `}
                     <option value="AllPeers">All Peers</option>
                     <option value="BigPeerOnly">Big Peer Only</option>
                     <option value="SmallPeersOnly">Small Peers Only</option>
@@ -232,7 +276,7 @@ export class DatabaseEditor extends LitElement {
               </div>
             `)}
           </div>
-          ${scopeError && scopes.length > 0 ? html`<div class="scope-error">${scopeError}</div>` : nothing}
+          ${scopeError ? html`<div id="scope-error" class="scope-error" role="alert">${scopeError}</div>` : nothing}
           <button class="add-scope" type="button" @click=${this.addScope}>+ Add collection</button>
           <ul class="scope-help">
             <li><strong>All Peers</strong> — Ditto Server and Small Peers</li>

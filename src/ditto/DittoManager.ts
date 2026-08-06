@@ -35,7 +35,7 @@ import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, parseProfileItem } from './QueryProfileParser.js';
 import type { QueryProfile } from './QueryProfile.js';
-import { applyCollectionSyncScopes } from './sync-scopes.js';
+import { startSyncWithCollectionScopes } from './sync-scopes.js';
 
 export interface TransportPrefs {
   isLanEnabled: boolean;
@@ -237,17 +237,16 @@ export class DittoManager {
       }
 
       const configuredScopes = config.advancedConfig?.collectionSyncScopes ?? [];
-      await applyCollectionSyncScopes(ditto.store, configuredScopes);
-      if (configuredScopes.length > 0) {
-        this.log.info('Applied collection sync scopes before sync start', {
-          configId: config.id,
-          count: configuredScopes.length,
-        });
-      }
-
-      await ditto.store.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 12');
-      this.log.info('Set mesh_chooser_max_wlan_clients to 12 to improve amount of peers connectivity.');
-      ditto.sync.start();
+      await startSyncWithCollectionScopes(ditto, configuredScopes, async () => {
+        if (configuredScopes.length > 0) {
+          this.log.info('Applied collection sync scopes before sync start', {
+            configId: config.id,
+            count: configuredScopes.length,
+          });
+        }
+        await ditto.store.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 12');
+        this.log.info('Set mesh_chooser_max_wlan_clients to 12 to improve amount of peers connectivity.');
+      });
 
       this.session = {
         configId: config.id,

@@ -86,6 +86,37 @@ test('DatabaseEditor: invalid system collections disable save and show an error'
   assert.equal(el.shadowRoot.querySelector('.save').disabled, true);
   el.advancedOpen = true;
   await el.updateComplete;
-  assert.match(el.shadowRoot.querySelector('.scope-error').textContent, /System collections/);
+  const error = el.shadowRoot.querySelector('.scope-error');
+  assert.match(error.textContent, /System collections/);
+  assert.equal(error.getAttribute('role'), 'alert');
+  assert.equal(el.shadowRoot.querySelector('.scope-row input').getAttribute('aria-invalid'), 'true');
+  el.remove();
+});
+
+test('DatabaseEditor: exposes an unknown persisted scope instead of visually defaulting it', async () => {
+  const el = await mount({
+    collectionSyncScopes: [{ collection: 'orders', scope: 'Unknown' }],
+  });
+  assert.equal(el.shadowRoot.querySelector('details.advanced').open, true);
+  assert.equal(el.shadowRoot.querySelector('.save').disabled, true);
+  const select = el.shadowRoot.querySelector('.scope-row select');
+  assert.equal(select.value, 'Unknown');
+  assert.match(select.selectedOptions[0].textContent, /Unsupported scope/);
+  assert.equal(select.getAttribute('aria-invalid'), 'true');
+  el.remove();
+});
+
+test('DatabaseEditor: host advanced validation errors expand the section and announce', async () => {
+  const el = await mount({ collectionSyncScopes: [] });
+  window.dispatchEvent(new window.MessageEvent('message', {
+    data: {
+      type: 'editor.validationError',
+      message: 'Advanced configuration is invalid.',
+      field: 'advancedConfig',
+    },
+  }));
+  await el.updateComplete;
+  assert.equal(el.shadowRoot.querySelector('details.advanced').open, true);
+  assert.equal(el.shadowRoot.querySelector('.error-banner').getAttribute('role'), 'alert');
   el.remove();
 });

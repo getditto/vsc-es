@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applyCollectionSyncScopes,
   normalizeCollectionSyncScopes,
+  startSyncWithCollectionScopes,
   validateCollectionSyncScopes,
 } from '../ditto/sync-scopes.js';
 import type { CollectionSyncScopeEntry } from '../models/DittoConfig.js';
@@ -66,6 +67,14 @@ test('validateCollectionSyncScopes rejects blank, duplicate, system, and unknown
   ]) ?? '', /unsupported/);
 });
 
+test('validateCollectionSyncScopes rejects malformed runtime payloads without throwing', () => {
+  assert.match(validateCollectionSyncScopes({}) ?? '', /must be a list/);
+  assert.match(validateCollectionSyncScopes([null]) ?? '', /must be an object/);
+  assert.match(validateCollectionSyncScopes([
+    { collection: null, scope: 'AllPeers' },
+  ]) ?? '', /must be text/);
+});
+
 test('applyCollectionSyncScopes propagates SDK execution failures', async () => {
   await assert.rejects(
     applyCollectionSyncScopes({
@@ -73,4 +82,29 @@ test('applyCollectionSyncScopes propagates SDK execution failures', async () => 
     }, [{ collection: 'orders', scope: 'LocalPeerOnly' }]),
     /scope rejected/,
   );
+});
+
+test('startSyncWithCollectionScopes preserves scope, other config, then start ordering', async () => {
+  const calls: string[] = [];
+  const target = {
+    store: {
+      async execute(query: string) { calls.push(query.includes('USER_COLLECTION') ? 'scopes' : 'other'); },
+    },
+    sync: { start() { calls.push('start'); } },
+  };
+  await startSyncWithCollectionScopes(
+    target,
+    [{ collection: 'orders', scope: 'SmallPeersOnly' }],
+    async () => { await target.store.execute('ALTER SYSTEM SET mesh = 12'); },
+  );
+  assert.deepEqual(calls, ['scopes', 'other', 'start']);
+});
+
+test('startSyncWithCollectionScopes does not start sync when scope application fails', async () => {
+  let started = false;
+  await assert.rejects(startSyncWithCollectionScopes({
+    store: { async execute() { throw new Error('rejected'); } },
+    sync: { start() { started = true; } },
+  }, [{ collection: 'orders', scope: 'LocalPeerOnly' }], async () => {}), /rejected/);
+  assert.equal(started, false);
 });

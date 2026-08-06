@@ -37,7 +37,7 @@ export type EditorIn =
 
 export type EditorOut =
   | { type: 'editor.init'; config: StoredDittoConfig; secrets: SecretSet }
-  | { type: 'editor.validationError'; message: string };
+  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' };
 
 // ─── Subscription editor panel ─────────────────────────────────
 export type SubIn =
