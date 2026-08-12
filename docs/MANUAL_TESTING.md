@@ -268,6 +268,26 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
     - Removing a selected peer clears focus without leaving other peers dimmed.
     - Resize the panel narrow and wide; controls remain usable and do not obscure recovery actions.
     - Close the panel during or after a drag and reopen it; the cursor and graph interaction are not stuck.
+    - Clicking the local **Me** peer selects nothing — no peer dims and no connection thickens.
+13. Verify state survives the tab round-trip (each of these was a real defect):
+    - Uncheck **Direct**, switch to *Connected Peers*, switch back. The box is
+      still unchecked **and** multi-hop peers are still shown — the two must agree.
+    - Hide the controls with the eye, round-trip the tabs, and confirm they are
+      still hidden.
+14. Verify the graph never gets stuck dimmed:
+    - Hover a peer (unrelated peers dim), then move the pointer onto the Direct
+      switch, the zoom controls, and off the panel entirely. Full opacity returns
+      each time; the graph never stays dimmed once the pointer is away.
+    - Start dragging a peer, release the mouse button outside the VS Code window,
+      then move back over the canvas. The peer stops following the cursor, and a
+      peer joining afterwards animates to its ring position instead of being
+      stranded on top of **Me**.
+    - Start dragging a peer, then press and release the right mouse button while
+      still holding the left. The drag continues and no peer becomes selected.
+15. Switch VS Code to a **light** theme and reopen the Presence Graph:
+    - The legend, Direct/zoom groups, and the center/eye buttons are all legible
+      against their own backgrounds — check especially with the controls hidden,
+      when the two icon buttons are the only thing on screen.
 
 ### T10 · DQL Query Editor
 

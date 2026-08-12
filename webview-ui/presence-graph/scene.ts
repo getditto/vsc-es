@@ -282,6 +282,11 @@ export class PresenceGraphScene {
           offset,
           arcOutward: isPeerToPeer,
           alpha: this.lines.get(id)?.alpha ?? 1,
+          // Carried over with alpha: hover state lives on the peer, so
+          // rebuilding the line map on every presence tick would otherwise
+          // strip the hovered peer's links of their emphasis while the peer
+          // itself stayed hovered.
+          highlighted: this.lines.get(id)?.highlighted,
         });
       });
     }
@@ -297,6 +302,7 @@ export class PresenceGraphScene {
         offset: 0,
         arcOutward: false,
         alpha: this.lines.get(id)?.alpha ?? 1,
+        highlighted: this.lines.get(id)?.highlighted,
       });
     }
 
@@ -438,9 +444,15 @@ export class PresenceGraphScene {
     }
   }
 
-  /** Toggle persistent peer focus. Selection is intentionally Direct-mode only. */
+  /** Toggle persistent peer focus. Selection is intentionally Direct-mode only.
+   *
+   *  The local peer is not selectable: in Direct mode every line touches it by
+   *  construction, so focusing it would exempt the whole graph from dimming
+   *  and only thicken every stroke at once — which reads as a glitch, not a
+   *  focus treatment. */
   selectPeer(key: string | undefined): void {
-    if (!this.showDirectConnectedOnly || (key !== undefined && !this.peers.has(key))) {
+    const invalid = key !== undefined && (!this.peers.has(key) || key === this.localKey);
+    if (!this.showDirectConnectedOnly || invalid) {
       this.selectedPeerKey = undefined;
       return;
     }

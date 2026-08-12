@@ -13,15 +13,27 @@ export class PresenceGraphElement extends LitElement {
   /** Pushed by the parent every time the host's peer.state IPC fires. */
   @property({ attribute: false }) input: PresenceGraphInput | undefined;
 
-  /** Bound from the toggle in the parent panel. */
-  @property({ type: Boolean, attribute: 'direct-connected-only' })
-  directConnectedOnly = true;
+  /** Bound from the toggle in the parent panel.
+   *
+   *  Property-bound, never an attribute. A boolean attribute binding
+   *  (`?direct-connected-only=${false}`) cannot express `false` on a
+   *  freshly-created element: Lit commits it as `removeAttribute()`, which
+   *  is a no-op when the attribute was never set, so no
+   *  `attributeChangedCallback` fires and the class-field default silently
+   *  wins. The graph tab is destroyed and rebuilt on every tab switch, so
+   *  that case is the common one, not the edge case. */
+  @property({ attribute: false }) directConnectedOnly = true;
+
+  /** Also parent-owned, for the same reason: the element is torn down on
+   *  every tab switch, so element-local state would not survive one. */
+  @property({ attribute: false }) controlsVisible = true;
 
   /** Surfaced state for the zoom indicator overlay. */
   @state() private zoomLabel = '100%';
   /** True while a peer is being dragged (only used to set CSS cursor). */
   @state() private dragging = false;
-  @state() private controlsVisible = true;
+  /** True while the pointer is over a peer pill (cursor affordance). */
+  @state() private hoveringNode = false;
 
   @query('canvas') private canvasEl!: HTMLCanvasElement;
 
@@ -69,12 +81,12 @@ export class PresenceGraphElement extends LitElement {
       left: 12px;
       bottom: 12px;
       padding: 10px 12px;
-      background: rgba(30, 30, 30, 0.85);
+      background: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.85));
       border: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
       border-radius: 6px;
       backdrop-filter: blur(8px);
       font-size: 11px;
-      color: var(--vscode-foreground);
+      color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
       pointer-events: none;
     }
     .legend h3 {
@@ -93,7 +105,10 @@ export class PresenceGraphElement extends LitElement {
       letter-spacing: 0.5px;
     }
 
-    /* Bottom-right zoom controls + filter toggle. */
+    /* Bottom-right zoom controls + filter toggle. The container is
+       transparent to the pointer so the gaps between control groups don't
+       steal mousemove from the canvas underneath (which would strand the
+       graph in a hover-focus state); the groups themselves opt back in. */
     .controls {
       position: absolute;
       right: 12px;
@@ -102,18 +117,20 @@ export class PresenceGraphElement extends LitElement {
       flex-direction: column;
       align-items: flex-end;
       gap: 8px;
+      pointer-events: none;
     }
+    .controls > * { pointer-events: auto; }
     .control-group {
       display: flex;
       align-items: center;
       gap: 6px;
       padding: 6px 10px;
-      background: rgba(30, 30, 30, 0.85);
+      background: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.85));
       border: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
       border-radius: 6px;
       backdrop-filter: blur(8px);
       font-size: 11px;
-      color: var(--vscode-foreground);
+      color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
     }
     .control-group button {
       width: 22px; height: 22px;
@@ -140,6 +157,9 @@ export class PresenceGraphElement extends LitElement {
       display: flex;
       gap: 8px;
     }
+    /* Theme tokens rather than a hardcoded dark surface: these two are the
+       only controls left on screen once the eye hides the rest, so a light
+       theme must not leave them at ~1.7:1 against their own background. */
     .icon-button {
       display: grid;
       place-items: center;
@@ -148,8 +168,8 @@ export class PresenceGraphElement extends LitElement {
       padding: 7px;
       border: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
       border-radius: 6px;
-      background: rgba(30, 30, 30, 0.85);
-      color: var(--vscode-foreground);
+      background: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.85));
+      color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
       backdrop-filter: blur(8px);
       cursor: pointer;
     }
@@ -172,8 +192,13 @@ export class PresenceGraphElement extends LitElement {
     this.resizeObserver?.disconnect();
     this.resizeObserver = undefined;
     this.scene = undefined;
-    window.removeEventListener('mousemove', this.onMouseMove);
-    window.removeEventListener('mouseup', this.onMouseUp);
+    this.detachDragListeners();
+    this.dragNodeKey = null;
+    this.isPanning = false;
+    this.dragging = false;
+    this.hoveringNode = false;
+    this.pointerStart = undefined;
+    this.pointerMoved = false;
     super.disconnectedCallback();
   }
 
@@ -292,6 +317,12 @@ export class PresenceGraphElement extends LitElement {
 
   private onMouseMove = (e: MouseEvent): void => {
     if (!this.scene || !this.canvasEl) { return; }
+    // The mouseup can be swallowed entirely — released over a native menu,
+    // outside the VS Code window, or into a context menu. Without this the
+    // interaction never ends: `isUserInteracting` stays true, every later
+    // layout pass early-returns, and peers that join afterwards are stranded
+    // at the origin. Recover as soon as we see the button is no longer down.
+    if (e.buttons === 0) { this.endDrag(); return; }
     if (this.pointerStart && Math.hypot(
       e.clientX - this.pointerStart.x,
       e.clientY - this.pointerStart.y,
@@ -311,9 +342,29 @@ export class PresenceGraphElement extends LitElement {
     }
   };
 
-  private onMouseUp = (): void => {
-    if (!this.scene) { return; }
+  private onMouseUp = (e?: MouseEvent): void => {
+    // `onMouseDown` only starts an interaction for the primary button, so a
+    // non-primary release during a drag must not tear it down — otherwise a
+    // right-click mid-drag toggles the selection and detaches the listeners
+    // while the left button is still held.
+    if (e && e.button !== 0) { return; }
+    this.endDrag();
+  };
+
+  /** Finish the current interaction and, if the pointer never travelled far
+   *  enough to count as a drag, treat it as a click. */
+  private endDrag(): void {
+    this.detachDragListeners();
+    if (!this.scene) {
+      this.pointerStart = undefined;
+      this.pointerMoved = false;
+      this.dragNodeKey = null;
+      this.isPanning = false;
+      this.dragging = false;
+      return;
+    }
     const clickedKey = this.pointerStart?.nodeKey;
+    const wasInteracting = this.pointerStart !== undefined;
     if (this.dragNodeKey) {
       this.scene.unpin(this.dragNodeKey);
       this.dragNodeKey = null;
@@ -321,14 +372,17 @@ export class PresenceGraphElement extends LitElement {
     this.isPanning = false;
     this.dragging = false;
     this.scene.endInteraction();
-    if (!this.pointerMoved) {
+    if (wasInteracting && !this.pointerMoved) {
       this.scene.selectPeer(clickedKey);
     }
     this.pointerStart = undefined;
     this.pointerMoved = false;
+  }
+
+  private detachDragListeners(): void {
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('mouseup', this.onMouseUp);
-  };
+  }
 
   private onMouseHover = (e: MouseEvent): void => {
     // Only updates hover state — the drag listeners take over while
@@ -341,7 +395,18 @@ export class PresenceGraphElement extends LitElement {
     const world = this.scene.canvasToWorld(local.x, local.y);
     const node = this.scene.nodeAt(ctx, world);
     this.scene.setHovered(node);
-    this.canvasEl.classList.toggle('hover-node', !!node);
+    this.hoveringNode = !!node;
+  };
+
+  /** Hover drives the same dimming treatment as a click selection, so it
+   *  must be released when the pointer leaves the canvas — including onto
+   *  the controls overlay. Without this the graph stays dimmed at 8–25%
+   *  indefinitely. */
+  private onMouseOut = (): void => {
+    if (!this.scene) { return; }
+    if (this.dragNodeKey || this.isPanning) { return; }
+    this.scene.setHovered(undefined);
+    this.hoveringNode = false;
   };
 
   private onWheel = (e: WheelEvent): void => {
@@ -375,11 +440,20 @@ export class PresenceGraphElement extends LitElement {
   }
 
   private toggleControls(): void {
+    // Update locally as well as notifying the owner: the control must stay
+    // self-consistent even if the parent drops the event, and the parent
+    // writing back the same value is a no-op.
     this.controlsVisible = !this.controlsVisible;
+    this.dispatchEvent(new CustomEvent<boolean>('controls-visible-change', {
+      detail: this.controlsVisible,
+      bubbles: true,
+      composed: true,
+    }));
   }
 
   private onDirectConnectedOnlyChange(e: Event): void {
     const value = (e.target as HTMLInputElement).checked;
+    this.directConnectedOnly = value;
     this.dispatchEvent(new CustomEvent<boolean>('direct-connected-only-change', {
       detail: value,
       bubbles: true,
@@ -392,9 +466,11 @@ export class PresenceGraphElement extends LitElement {
   render(): TemplateResult {
     return html`
       <canvas
-        class=${this.dragging ? 'dragging' : ''}
+        class=${[this.dragging ? 'dragging' : '', this.hoveringNode ? 'hover-node' : '']
+          .filter(Boolean).join(' ')}
         @mousedown=${this.onMouseDown}
         @mousemove=${this.onMouseHover}
+        @mouseout=${this.onMouseOut}
         @wheel=${this.onWheel}
       ></canvas>
       ${this.controlsVisible ? this.renderLegend() : null}
@@ -447,12 +523,15 @@ export class PresenceGraphElement extends LitElement {
           <button class="icon-button" @click=${this.resetView} title="Reset zoom and center local device" aria-label="Reset zoom and center local device">
             ${this.centerIcon()}
           </button>
+          <!-- The accessible name states the action and flips with the
+               state, so no aria-pressed: pairing a flipping label with a
+               pressed state announces "Show graph controls, pressed" while
+               the controls are hidden, which contradicts itself. -->
           <button
             class="icon-button"
             @click=${this.toggleControls}
             title=${this.controlsVisible ? 'Hide graph controls' : 'Show graph controls'}
             aria-label=${this.controlsVisible ? 'Hide graph controls' : 'Show graph controls'}
-            aria-pressed=${!this.controlsVisible}
           >${this.eyeIcon()}</button>
         </div>
       </div>

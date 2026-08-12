@@ -193,6 +193,9 @@ export class PeerListing extends LitElement {
    *  (only direct neighbours of local), but we offer the toggle so
    *  multi-hop topology debugging works too. */
   @state() private directConnectedOnly = true;
+  /** Owned here rather than in the graph element so the choice survives the
+   *  graph tab being torn down and rebuilt on every tab switch. */
+  @state() private graphControlsVisible = true;
   /** Local network interfaces pushed by the host. Empty until the
    *  initial post arrives (typically within ~50ms of webview reveal). */
   @state() private localInterfaces: LocalNetworkInterface[] = [];
@@ -1114,11 +1117,19 @@ export class PeerListing extends LitElement {
     }
     return html`
       <div class="graph-host">
+        <!-- Property bindings, not boolean-attribute ones: switching tabs
+             destroys and rebuilds this element, and a boolean attribute
+             binding cannot deliver false to a fresh one (Lit commits false
+             as removeAttribute, which fires no callback). -->
         <ditto-presence-graph
           .input=${input}
-          ?direct-connected-only=${this.directConnectedOnly}
+          .directConnectedOnly=${this.directConnectedOnly}
+          .controlsVisible=${this.graphControlsVisible}
           @direct-connected-only-change=${(e: CustomEvent<boolean>) => {
             this.directConnectedOnly = e.detail;
+          }}
+          @controls-visible-change=${(e: CustomEvent<boolean>) => {
+            this.graphControlsVisible = e.detail;
           }}
         ></ditto-presence-graph>
       </div>
