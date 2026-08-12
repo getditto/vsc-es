@@ -81,14 +81,19 @@ export function drawConnectionLine(
   line: ConnectionLineData,
   fromPos: Point,
   toPos: Point,
+  focusAlpha = 1,
+  selected = false,
 ): void {
   const style = CONNECTION_STYLES[line.type];
   const { from, to, control } = buildPath(fromPos, toPos, line.offset, line.arcOutward);
 
   ctx.save();
-  ctx.globalAlpha = Math.max(0, Math.min(1, line.alpha));
+  ctx.globalAlpha = Math.max(0, Math.min(1, line.alpha * focusAlpha));
   ctx.strokeStyle = style.color;
-  ctx.lineWidth = line.highlighted ? 3 : 2;
+  // A stale/transient hover must not visually compete with persistent
+  // peer focus. Only full-opacity hovered lines or selected-peer lines
+  // receive the emphasized stroke.
+  ctx.lineWidth = selected || (focusAlpha === 1 && line.highlighted) ? 3 : 2;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.setLineDash(style.dash);

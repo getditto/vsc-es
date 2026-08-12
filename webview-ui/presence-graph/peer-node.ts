@@ -81,7 +81,12 @@ export function pillContainsPoint(
 /** Render the pill at its current position. The scene is responsible
  *  for clearing the canvas and applying the camera transform; this
  *  function only draws the pill in world coordinates. */
-export function drawPeerNode(ctx: CanvasRenderingContext2D, node: PeerNodeData): void {
+export function drawPeerNode(
+  ctx: CanvasRenderingContext2D,
+  node: PeerNodeData,
+  focusAlpha = 1,
+  selected = false,
+): void {
   const text = node.isLocal ? 'Me' : node.label;
   const fillBase = node.isLocal ? NODE_LOCAL_FILL : NODE_REMOTE_FILL;
   const w = measurePillWidth(ctx, node);
@@ -89,7 +94,7 @@ export function drawPeerNode(ctx: CanvasRenderingContext2D, node: PeerNodeData):
   const r = h / 2;
 
   ctx.save();
-  ctx.globalAlpha = Math.max(0, Math.min(1, node.alpha));
+  ctx.globalAlpha = Math.max(0, Math.min(1, node.alpha * focusAlpha));
   ctx.translate(node.position.x, node.position.y);
   ctx.scale(node.scale, node.scale);
 
@@ -105,17 +110,19 @@ export function drawPeerNode(ctx: CanvasRenderingContext2D, node: PeerNodeData):
 
   ctx.fillStyle = fillBase;
   // Hover bumps fill alpha to 1.0; idle is 0.9 (matches SwiftUI).
-  ctx.globalAlpha *= node.highlighted ? 1.0 : 0.9;
+  ctx.globalAlpha *= node.highlighted || selected ? 1.0 : 0.9;
   ctx.fill();
 
   // Stroke at 80% of the fill alpha (matches SwiftUI). lineWidth 2.
-  ctx.globalAlpha = (node.highlighted ? 1.0 : 0.9) * NODE_STROKE_ALPHA;
+  ctx.globalAlpha = Math.max(0, Math.min(1, node.alpha * focusAlpha))
+    * (node.highlighted || selected ? 1.0 : 0.9)
+    * NODE_STROKE_ALPHA;
   ctx.strokeStyle = fillBase;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = selected ? 3 : 2;
   ctx.stroke();
 
   // Label — white bold text, vertically and horizontally centred.
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = Math.max(0, Math.min(1, node.alpha * focusAlpha));
   ctx.fillStyle = NODE_TEXT_COLOR;
   ctx.font = FONT;
   ctx.textAlign = 'center';

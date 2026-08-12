@@ -248,6 +248,26 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 5. Restart it → card animates back in. Position is preserved across re-renders for already-known peers.
 6. Click Stop Sync → sync session status transitions through `Disconnected`. Cards stay visible (presence still observed). Click Start Sync → resumes.
 7. Double-click any peer ID → it briefly flashes green (copied to clipboard).
+8. Open the **Presence Graph** tab with at least two reachable peers:
+   - The connection legend, Direct switch, zoom controls, center button, and eye button are visible.
+   - Tab through the controls. Each interactive control has a visible focus indicator and an understandable accessible label/tooltip in both light and dark themes.
+9. Click the eye button:
+   - The legend, Direct switch, and zoom controls disappear, leaving more room for the graph.
+   - The center and eye buttons remain available.
+   - Click the eye button again → every hidden control returns.
+10. Zoom and pan the graph, then click the center button:
+    - Zoom returns to 100%.
+    - The local **Me** peer is centered, including after manually dragging it away from its original position.
+11. With **Direct** enabled, click a remote peer without dragging it:
+    - That peer, the local peer, and every connection between them stay at full opacity.
+    - Unrelated peers and connections become semi-transparent.
+    - Clicking the selected peer again or clicking open canvas space restores normal opacity everywhere.
+12. Verify interaction and live-update edge cases:
+    - Dragging a peer moves it without being mistaken for a selection click.
+    - Turning **Direct** off clears any selection and shows the full graph normally.
+    - Removing a selected peer clears focus without leaving other peers dimmed.
+    - Resize the panel narrow and wide; controls remain usable and do not obscure recovery actions.
+    - Close the panel during or after a drag and reopen it; the cursor and graph interaction are not stuck.
 
 ### T10 · DQL Query Editor
 

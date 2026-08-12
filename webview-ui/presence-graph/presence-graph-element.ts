@@ -21,6 +21,7 @@ export class PresenceGraphElement extends LitElement {
   @state() private zoomLabel = '100%';
   /** True while a peer is being dragged (only used to set CSS cursor). */
   @state() private dragging = false;
+  @state() private controlsVisible = true;
 
   @query('canvas') private canvasEl!: HTMLCanvasElement;
 
@@ -36,6 +37,10 @@ export class PresenceGraphElement extends LitElement {
   private panLastX = 0;
   private panLastY = 0;
   private isPanning = false;
+  private pointerStart: { x: number; y: number; nodeKey?: string } | undefined;
+  private pointerMoved = false;
+
+  private static readonly DRAG_THRESHOLD = 4;
 
   static styles = css`
     :host {
@@ -126,6 +131,40 @@ export class PresenceGraphElement extends LitElement {
       text-align: center;
       font-family: var(--vscode-editor-font-family);
     }
+    .direct-control {
+      cursor: pointer;
+      user-select: none;
+    }
+    .direct-control input { cursor: pointer; }
+    .action-row {
+      display: flex;
+      gap: 8px;
+    }
+    .icon-button {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      padding: 7px;
+      border: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+      border-radius: 6px;
+      background: rgba(30, 30, 30, 0.85);
+      color: var(--vscode-foreground);
+      backdrop-filter: blur(8px);
+      cursor: pointer;
+    }
+    .icon-button:hover {
+      background: var(--vscode-toolbar-hoverBackground, rgba(90, 90, 90, 0.5));
+    }
+    .icon-button:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: 2px;
+    }
+    .icon-button svg {
+      width: 100%;
+      height: 100%;
+      fill: currentColor;
+    }
   `;
 
   disconnectedCallback(): void {
@@ -133,6 +172,8 @@ export class PresenceGraphElement extends LitElement {
     this.resizeObserver?.disconnect();
     this.resizeObserver = undefined;
     this.scene = undefined;
+    window.removeEventListener('mousemove', this.onMouseMove);
+    window.removeEventListener('mouseup', this.onMouseUp);
     super.disconnectedCallback();
   }
 
@@ -147,7 +188,7 @@ export class PresenceGraphElement extends LitElement {
   protected updated(changed: Map<string, unknown>): void {
     if (!this.scene) { return; }
     if (changed.has('directConnectedOnly')) {
-      this.scene.showDirectConnectedOnly = this.directConnectedOnly;
+      this.scene.setShowDirectConnectedOnly(this.directConnectedOnly);
       this.applyInputAndStartRaf(true);
     }
     if (changed.has('input')) {
@@ -229,6 +270,8 @@ export class PresenceGraphElement extends LitElement {
     const local = this.localCoords(e);
     const world = this.scene.canvasToWorld(local.x, local.y);
     const node = this.scene.nodeAt(ctx, world);
+    this.pointerStart = { x: e.clientX, y: e.clientY, nodeKey: node?.key };
+    this.pointerMoved = false;
     this.scene.beginInteraction();
     if (node) {
       this.dragNodeKey = node.key;
@@ -249,6 +292,12 @@ export class PresenceGraphElement extends LitElement {
 
   private onMouseMove = (e: MouseEvent): void => {
     if (!this.scene || !this.canvasEl) { return; }
+    if (this.pointerStart && Math.hypot(
+      e.clientX - this.pointerStart.x,
+      e.clientY - this.pointerStart.y,
+    ) >= PresenceGraphElement.DRAG_THRESHOLD) {
+      this.pointerMoved = true;
+    }
     if (this.dragNodeKey) {
       const local = this.localCoords(e);
       const world = this.scene.canvasToWorld(local.x, local.y);
@@ -264,6 +313,7 @@ export class PresenceGraphElement extends LitElement {
 
   private onMouseUp = (): void => {
     if (!this.scene) { return; }
+    const clickedKey = this.pointerStart?.nodeKey;
     if (this.dragNodeKey) {
       this.scene.unpin(this.dragNodeKey);
       this.dragNodeKey = null;
@@ -271,6 +321,11 @@ export class PresenceGraphElement extends LitElement {
     this.isPanning = false;
     this.dragging = false;
     this.scene.endInteraction();
+    if (!this.pointerMoved) {
+      this.scene.selectPeer(clickedKey);
+    }
+    this.pointerStart = undefined;
+    this.pointerMoved = false;
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('mouseup', this.onMouseUp);
   };
@@ -313,6 +368,25 @@ export class PresenceGraphElement extends LitElement {
     this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
   }
 
+  private resetView(): void {
+    if (!this.scene) { return; }
+    this.scene.resetViewToLocal();
+    this.zoomLabel = '100%';
+  }
+
+  private toggleControls(): void {
+    this.controlsVisible = !this.controlsVisible;
+  }
+
+  private onDirectConnectedOnlyChange(e: Event): void {
+    const value = (e.target as HTMLInputElement).checked;
+    this.dispatchEvent(new CustomEvent<boolean>('direct-connected-only-change', {
+      detail: value,
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   // ─── Render ───────────────────────────────────────────────
 
   render(): TemplateResult {
@@ -323,7 +397,7 @@ export class PresenceGraphElement extends LitElement {
         @mousemove=${this.onMouseHover}
         @wheel=${this.onWheel}
       ></canvas>
-      ${this.renderLegend()}
+      ${this.controlsVisible ? this.renderLegend() : null}
       ${this.renderControls()}
     `;
   }
@@ -354,12 +428,44 @@ export class PresenceGraphElement extends LitElement {
     const z = this.scene?.zoom ?? 1;
     return html`
       <div class="controls">
-        <div class="control-group">
+        ${this.controlsVisible ? html`
+        <label class="control-group direct-control">
+          <span>Direct</span>
+          <input
+            type="checkbox"
+            .checked=${this.directConnectedOnly}
+            @change=${this.onDirectConnectedOnlyChange}
+          />
+        </label>
+        <div class="control-group" aria-label="Zoom controls">
           <button @click=${this.zoomOut} ?disabled=${z <= 0.5} title="Zoom out">−</button>
           <span class="zoom-label">${this.zoomLabel}</span>
           <button @click=${this.zoomIn} ?disabled=${z >= 2.0} title="Zoom in">+</button>
         </div>
+        ` : null}
+        <div class="action-row">
+          <button class="icon-button" @click=${this.resetView} title="Reset zoom and center local device" aria-label="Reset zoom and center local device">
+            ${this.centerIcon()}
+          </button>
+          <button
+            class="icon-button"
+            @click=${this.toggleControls}
+            title=${this.controlsVisible ? 'Hide graph controls' : 'Show graph controls'}
+            aria-label=${this.controlsVisible ? 'Hide graph controls' : 'Show graph controls'}
+            aria-pressed=${!this.controlsVisible}
+          >${this.eyeIcon()}</button>
+        </div>
       </div>
     `;
+  }
+
+  private centerIcon(): TemplateResult {
+    return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3H3v6h2V5h4V3Zm6 0v2h4v4h2V3h-6ZM5 15H3v6h6v-2H5v-4Zm16 0h-2v4h-4v2h6v-6Zm-9-5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>`;
+  }
+
+  private eyeIcon(): TemplateResult {
+    return this.controlsVisible
+      ? html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5c5.5 0 9.5 5.4 9.7 5.6l.9 1.4-.9 1.4C21.5 13.6 17.5 19 12 19S2.5 13.6 2.3 13.4L1.4 12l.9-1.4C2.5 10.4 6.5 5 12 5Zm0 2c-4.4 0-7.8 4.4-8 5 .2.6 3.6 5 8 5s7.8-4.4 8-5c-.2-.6-3.6-5-8-5Zm0 2.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z"/></svg>`
+      : html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3.3 2 18.7 18.7-1.3 1.3-3.2-3.2A10.7 10.7 0 0 1 12 20c-5.5 0-9.5-5.4-9.7-5.6L1.4 13l.9-1.4a18 18 0 0 1 3.1-3.3L2 3.3 3.3 2Zm3.5 7.7A16 16 0 0 0 4 13c.2.6 3.6 5 8 5 1.4 0 2.7-.4 3.8-.9l-2-2a3.5 3.5 0 0 1-4.9-4.9l-2.1-2.1v1.6ZM12 6c5.5 0 9.5 5.4 9.7 5.6l.9 1.4-.9 1.4c-.3.4-1.2 1.6-2.6 2.8l-1.4-1.4A16 16 0 0 0 20 13c-.2-.6-3.6-5-8-5-.7 0-1.4.1-2 .3L8.4 6.7A11 11 0 0 1 12 6Z"/></svg>`;
   }
 }

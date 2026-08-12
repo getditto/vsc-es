@@ -341,36 +341,14 @@ export class PeerListing extends LitElement {
       word-break: break-all;
     }
 
-    /* Graph tab: canvas fills the available area; the small filter
-       toggle floats above it on the top-left mirroring the SwiftUI
-       layout (zoom controls live inside the graph element on the
-       bottom-right). */
+    /* Graph tab: canvas fills the available area. Graph-specific
+       controls live inside the graph component. */
     .graph-host {
       position: relative;
       width: 100%;
       height: calc(100vh - 140px);
       min-height: 400px;
     }
-    .graph-toggle {
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      z-index: 10;
-      padding: 6px 10px;
-      background: rgba(30, 30, 30, 0.85);
-      border: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
-      border-radius: 6px;
-      font-size: 11px;
-      color: var(--vscode-foreground);
-      backdrop-filter: blur(8px);
-    }
-    .graph-toggle label {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      cursor: pointer;
-    }
-    .graph-toggle input { cursor: pointer; }
     ditto-presence-graph { width: 100%; height: 100%; display: block; }
 
     .grid {
@@ -1136,19 +1114,12 @@ export class PeerListing extends LitElement {
     }
     return html`
       <div class="graph-host">
-        <div class="graph-toggle">
-          <label>
-            <input
-              type="checkbox"
-              .checked=${this.directConnectedOnly}
-              @change=${(e: Event) => this.directConnectedOnly = (e.target as HTMLInputElement).checked}
-            />
-            Direct Connected only
-          </label>
-        </div>
         <ditto-presence-graph
           .input=${input}
           ?direct-connected-only=${this.directConnectedOnly}
+          @direct-connected-only-change=${(e: CustomEvent<boolean>) => {
+            this.directConnectedOnly = e.detail;
+          }}
         ></ditto-presence-graph>
       </div>
     `;

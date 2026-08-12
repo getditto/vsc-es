@@ -46,6 +46,12 @@ const CLOUD_KEY = 'ditto-cloud-node';
  *  that ring-1↔ring-1 chords stop overlapping the centre, while still
  *  fitting comfortably inside a typical panel viewport at zoom 100%. */
 const EXPANDED_RADIUS_SCALE = 1.75;
+const UNRELATED_PEER_ALPHA = 0.25;
+// Keep unrelated links barely visible for topology context while making
+// the selected peer's links visually dominant. Connection colours are
+// intentionally bright, so a stronger reduction than peer dimming is
+// needed for the focus treatment to read clearly.
+const UNRELATED_LINE_ALPHA = 0.08;
 
 export interface SceneOptions {
   /** Initial scale (1.0 = 100%). Clamped 0.5–2.0 by zoom helpers. */
@@ -76,6 +82,11 @@ export class PresenceGraphScene {
    *  commit to drive position transitions. */
   layout: LayoutResult | undefined;
   localKey = '';
+  /** Persistent click selection. Hover remains transient and independent. */
+  selectedPeerKey: string | undefined;
+  /** Transient pointer focus. Used for the same dimming treatment until
+   *  a click selection takes precedence. */
+  hoveredPeerKey: string | undefined;
   /** Drives scale/alpha for newly-added peers — rendered by drawPeer. */
 
   /** Star field is owned here so the same RAF loop ticks both. */
@@ -120,6 +131,12 @@ export class PresenceGraphScene {
     this.handleCloudPeer(input);
     this.upsertLines(input);
     this.localKey = input.localPeerKey;
+    if (this.selectedPeerKey && !this.peers.has(this.selectedPeerKey)) {
+      this.selectedPeerKey = undefined;
+    }
+    if (this.hoveredPeerKey && !this.peers.has(this.hoveredPeerKey)) {
+      this.hoveredPeerKey = undefined;
+    }
     if (topologyChanged) {
       this.recalculateLayout();
     }
@@ -386,7 +403,8 @@ export class PresenceGraphScene {
   /** Set hover state on at-most one node. The previously-hovered node
    *  (if any) is un-highlighted. Returns true if hover changed. */
   setHovered(node: PeerNodeData | undefined): boolean {
-    let changed = false;
+    let changed = this.hoveredPeerKey !== node?.key;
+    this.hoveredPeerKey = node?.key;
     for (const n of this.peers.values()) {
       const wantHighlighted = n === node;
       if (!!n.highlighted !== wantHighlighted) {
@@ -409,6 +427,64 @@ export class PresenceGraphScene {
       }
     }
     return changed;
+  }
+
+  /** Enable/disable Direct mode and discard focus when it is not applicable. */
+  setShowDirectConnectedOnly(value: boolean): void {
+    this.showDirectConnectedOnly = value;
+    if (!value) {
+      this.selectedPeerKey = undefined;
+      this.hoveredPeerKey = undefined;
+    }
+  }
+
+  /** Toggle persistent peer focus. Selection is intentionally Direct-mode only. */
+  selectPeer(key: string | undefined): void {
+    if (!this.showDirectConnectedOnly || (key !== undefined && !this.peers.has(key))) {
+      this.selectedPeerKey = undefined;
+      return;
+    }
+    this.selectedPeerKey = this.selectedPeerKey === key ? undefined : key;
+  }
+
+  /** Reset magnification and place the actual local-node position at canvas centre. */
+  resetViewToLocal(): void {
+    this.zoom = 1;
+    const local = this.peers.get(this.localKey)?.position ?? { x: 0, y: 0 };
+    this.camera = { x: -local.x, y: -local.y };
+  }
+
+  /** Exposed for focused tests and renderer decisions. */
+  focusForPeer(key: string): { selected: boolean; alpha: number } {
+    const focused = this.activeFocusKey();
+    if (!focused) { return { selected: false, alpha: 1 }; }
+    if (key === focused) {
+      return { selected: this.selectedPeerKey === key, alpha: 1 };
+    }
+    for (const line of this.lines.values()) {
+      if ((line.fromKey === focused && line.toKey === key)
+        || (line.toKey === focused && line.fromKey === key)) {
+        return { selected: false, alpha: 1 };
+      }
+    }
+    return { selected: false, alpha: UNRELATED_PEER_ALPHA };
+  }
+
+  /** Exposed for focused tests and renderer decisions. */
+  focusForLine(line: ConnectionLineData): { selected: boolean; alpha: number } {
+    const focused = this.activeFocusKey();
+    if (!focused) { return { selected: false, alpha: 1 }; }
+    const touchesFocus = line.fromKey === focused || line.toKey === focused;
+    return {
+      selected: touchesFocus && this.selectedPeerKey === focused,
+      alpha: touchesFocus ? 1 : UNRELATED_LINE_ALPHA,
+    };
+  }
+
+  /** A click selection is sticky and wins over incidental hover. */
+  private activeFocusKey(): string | undefined {
+    if (!this.showDirectConnectedOnly) { return undefined; }
+    return this.selectedPeerKey ?? this.hoveredPeerKey;
   }
 
   /** Pin a peer's position (drag start) so transitions can't move it. */
@@ -476,12 +552,14 @@ export class PresenceGraphScene {
       const from = this.peers.get(line.fromKey)?.position;
       const to = this.peers.get(line.toKey)?.position;
       if (!from || !to) { continue; }
-      drawConnectionLine(ctx, line, from, to);
+      const focus = this.focusForLine(line);
+      drawConnectionLine(ctx, line, from, to, focus.alpha, focus.selected);
     }
 
     // Nodes on top.
     for (const node of this.peers.values()) {
-      drawPeerNode(ctx, node);
+      const focus = this.focusForPeer(node.key);
+      drawPeerNode(ctx, node, focus.alpha, focus.selected);
     }
 
     ctx.restore();
