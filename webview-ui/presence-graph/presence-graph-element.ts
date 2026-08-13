@@ -51,6 +51,9 @@ export class PresenceGraphElement extends LitElement {
   private isPanning = false;
   private pointerStart: { x: number; y: number; nodeKey?: string } | undefined;
   private pointerMoved = false;
+  /** Whether the pointer is currently over the canvas. Maintained even while
+   *  dragging, when hover updates themselves are suppressed. */
+  private pointerOverCanvas = false;
 
   private static readonly DRAG_THRESHOLD = 4;
 
@@ -70,8 +73,11 @@ export class PresenceGraphElement extends LitElement {
       display: block;
       cursor: grab;
     }
-    canvas.dragging { cursor: grabbing; }
+    /* Order matters: equal specificity, so the later rule wins. A drag in
+       progress must show grabbing even though the pointer is still over
+       the peer that put hover-node on the canvas. */
     canvas.hover-node { cursor: pointer; }
+    canvas.dragging { cursor: grabbing; }
 
     /* Bottom-left connection-type legend. Plain HTML so it never
        lives at the mercy of canvas redraws and respects VS Code theme
@@ -199,6 +205,7 @@ export class PresenceGraphElement extends LitElement {
     this.hoveringNode = false;
     this.pointerStart = undefined;
     this.pointerMoved = false;
+    this.pointerOverCanvas = false;
     super.disconnectedCallback();
   }
 
@@ -322,7 +329,11 @@ export class PresenceGraphElement extends LitElement {
     // interaction never ends: `isUserInteracting` stays true, every later
     // layout pass early-returns, and peers that join afterwards are stranded
     // at the origin. Recover as soon as we see the button is no longer down.
-    if (e.buttons === 0) { this.endDrag(); return; }
+    //
+    // Never commit a click on this path: the release happened somewhere we
+    // never saw, so an under-threshold press would otherwise be retroactively
+    // fired as a selection the moment the pointer wandered back.
+    if (e.buttons === 0) { this.endDrag(false); return; }
     if (this.pointerStart && Math.hypot(
       e.clientX - this.pointerStart.x,
       e.clientY - this.pointerStart.y,
@@ -351,32 +362,31 @@ export class PresenceGraphElement extends LitElement {
     this.endDrag();
   };
 
-  /** Finish the current interaction and, if the pointer never travelled far
-   *  enough to count as a drag, treat it as a click. */
-  private endDrag(): void {
+  /** Finish the current interaction. When `commitClick` and the pointer never
+   *  travelled far enough to count as a drag, treat it as a click. */
+  private endDrag(commitClick = true): void {
     this.detachDragListeners();
-    if (!this.scene) {
-      this.pointerStart = undefined;
-      this.pointerMoved = false;
-      this.dragNodeKey = null;
-      this.isPanning = false;
-      this.dragging = false;
-      return;
-    }
     const clickedKey = this.pointerStart?.nodeKey;
-    const wasInteracting = this.pointerStart !== undefined;
-    if (this.dragNodeKey) {
-      this.scene.unpin(this.dragNodeKey);
-      this.dragNodeKey = null;
-    }
+    this.pointerStart = undefined;
+    const moved = this.pointerMoved;
+    this.pointerMoved = false;
+    const wasDragging = this.dragNodeKey;
+    this.dragNodeKey = null;
     this.isPanning = false;
     this.dragging = false;
+    if (!this.scene) { return; }
+    if (wasDragging) { this.scene.unpin(wasDragging); }
     this.scene.endInteraction();
-    if (wasInteracting && !this.pointerMoved) {
+    if (commitClick && !moved) {
       this.scene.selectPeer(clickedKey);
     }
-    this.pointerStart = undefined;
-    this.pointerMoved = false;
+    // Hover is suppressed while dragging, so a drag that ends with the pointer
+    // already off the canvas would otherwise leave the graph dimmed with the
+    // cursor nowhere near it.
+    if (!this.pointerOverCanvas) {
+      this.scene.setHovered(undefined);
+      this.hoveringNode = false;
+    }
   }
 
   private detachDragListeners(): void {
@@ -385,6 +395,9 @@ export class PresenceGraphElement extends LitElement {
   }
 
   private onMouseHover = (e: MouseEvent): void => {
+    // Tracked even during a drag (when hover updates are suppressed) so
+    // endDrag knows whether the pointer is still over the graph.
+    this.pointerOverCanvas = true;
     // Only updates hover state — the drag listeners take over while
     // a drag is in progress (they're registered on `window`).
     if (!this.scene || !this.canvasEl) { return; }
@@ -403,7 +416,10 @@ export class PresenceGraphElement extends LitElement {
    *  the controls overlay. Without this the graph stays dimmed at 8–25%
    *  indefinitely. */
   private onMouseOut = (): void => {
+    this.pointerOverCanvas = false;
     if (!this.scene) { return; }
+    // Mid-drag the pointer is expected to leave; clearing hover here would
+    // drop the dragged peer's highlight. endDrag applies it on release.
     if (this.dragNodeKey || this.isPanning) { return; }
     this.scene.setHovered(undefined);
     this.hoveringNode = false;

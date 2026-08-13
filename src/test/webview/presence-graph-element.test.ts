@@ -14,18 +14,28 @@ class TestResizeObserver {
 // frame, so the shared setTimeout-based rAF from setup.ts would spin for
 // the life of the process. Queueing the callbacks lets each test render an
 // exact number of frames and assert on what was painted.
-const frameQueue: FrameRequestCallback[] = [];
+const frameQueue = new Map<number, FrameRequestCallback>();
 let nextFrameHandle = 1;
 (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback): number => {
-  frameQueue.push(cb);
-  return nextFrameHandle++;
+  const handle = nextFrameHandle++;
+  frameQueue.set(handle, cb);
+  return handle;
 };
-(globalThis as any).cancelAnimationFrame = (): void => { frameQueue.length = 0; };
+// Honour the handle: clearing the whole queue would let one element's
+// teardown permanently starve another mounted element's loop.
+(globalThis as any).cancelAnimationFrame = (handle: number): void => {
+  frameQueue.delete(handle);
+};
 
+// Anchored to the real clock on first use: position transitions stamp
+// `tStart` from performance.now(), so a frame timestamp starting at 0 would
+// make every transition read as not-yet-started.
 let frameClock = 0;
-function drawFrame(): void {
-  frameClock += 16;
-  for (const cb of frameQueue.splice(0)) { cb(frameClock); }
+function drawFrame(advanceMs = 16): void {
+  frameClock = Math.max(frameClock, performance.now()) + advanceMs;
+  const due = [...frameQueue.entries()];
+  frameQueue.clear();
+  for (const [, cb] of due) { cb(frameClock); }
 }
 
 await import('../../../webview-ui/presence-graph/presence-graph-element.js');
@@ -329,24 +339,45 @@ test('PresenceGraphElement: disconnect detaches window drag listeners', async ()
 
 // ─── Rendering ───────────────────────────────────────────────────
 
-/** Alpha of the pill fill for a peer, read off the recorded draw calls.
- *  Nodes are painted after lines, one fill + stroke + fillText each, in
- *  scene peer-map order. */
-function fillAlphaByPeer(el: any, ctx: RecordingContext2D): Map<string, number> {
+/** Per-peer record of how the pill was painted, keyed by peer.
+ *
+ *  Peers are drawn last, one `fill` → `stroke` → `fillText` triple each, in
+ *  `scene.peers` insertion order — so the i-th label op IS the i-th peer.
+ *  Resolving by label text instead would silently mis-attribute when two
+ *  devices share a name, which is entirely ordinary. */
+interface PaintedPeer { fillAlpha: number; strokeWidth: number; x: number; y: number }
+function paintedPeers(el: any, ctx: RecordingContext2D): Map<string, PaintedPeer> {
   const keys = [...el.scene.peers.keys()];
-  const labels = keys.map(k => (el.scene.peers.get(k).isLocal ? 'Me' : el.scene.peers.get(k).label));
-  const out = new Map<string, number>();
-  const texts = ctx.__ops.filter(o => o.op === 'fillText');
-  for (let i = 0; i < texts.length; i += 1) {
-    const idx = labels.indexOf(String(texts[i].args[0]));
-    if (idx >= 0) {
-      // The fill immediately preceding this label is the pill body.
-      const opIndex = ctx.__ops.indexOf(texts[i]);
-      for (let j = opIndex - 1; j >= 0; j -= 1) {
-        if (ctx.__ops[j].op === 'fill') { out.set(keys[idx], ctx.__ops[j].globalAlpha); break; }
+  const out = new Map<string, PaintedPeer>();
+  const textIndices = ctx.__ops
+    .map((o, i) => (o.op === 'fillText' ? i : -1))
+    .filter(i => i >= 0);
+  assert.equal(textIndices.length, keys.length, 'one label painted per peer');
+
+  textIndices.forEach((opIndex, i) => {
+    let fillAlpha = NaN;
+    let strokeWidth = NaN;
+    for (let j = opIndex - 1; j >= 0; j -= 1) {
+      if (ctx.__ops[j].op === 'stroke' && Number.isNaN(strokeWidth)) {
+        strokeWidth = ctx.__ops[j].lineWidth;
+      } else if (ctx.__ops[j].op === 'fill') {
+        fillAlpha = ctx.__ops[j].globalAlpha;
+        break;
       }
     }
-  }
+    out.set(keys[i], {
+      fillAlpha,
+      strokeWidth,
+      x: ctx.__ops[opIndex].tx,
+      y: ctx.__ops[opIndex].ty,
+    });
+  });
+  return out;
+}
+
+function fillAlphaByPeer(el: any, ctx: RecordingContext2D): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [k, p] of paintedPeers(el, ctx)) { out.set(k, p.fillAlpha); }
   return out;
 }
 
@@ -407,5 +438,238 @@ test('PresenceGraphElement: a stale hover does not out-emphasize the selection',
   const receded = ctx.__ops.filter(o => o.op === 'stroke' && o.globalAlpha < 0.1);
   assert.ok(receded.length > 0, 'the hovered-but-unfocused link is still dimmed');
   assert.ok(receded.every(o => o.lineWidth === 2), 'and is not given the 3px emphasis');
+  el.remove();
+});
+
+test('PresenceGraphElement: a swallowed mouseup does not fire a phantom click', async () => {
+  const el = await mount();
+  const canvas = el.shadowRoot.querySelector('canvas');
+  canvas.dispatchEvent(mouse('mousedown', { ...screenPos(el, 'alpha'), button: 0, buttons: 1 }));
+
+  // Released somewhere we never saw; the pointer later wanders back in.
+  window.dispatchEvent(mouse('mousemove', { clientX: 5, clientY: 5, buttons: 0 }));
+
+  assert.equal(el.scene.selectedPeerKey, undefined, 'the abandoned press must not select');
+  el.remove();
+});
+
+test('PresenceGraphElement: a swallowed pan does not clear an existing selection', async () => {
+  const el = await mount();
+  clickPeer(el, 'alpha');
+  assert.equal(el.scene.selectedPeerKey, 'alpha');
+
+  const canvas = el.shadowRoot.querySelector('canvas');
+  canvas.dispatchEvent(mouse('mousedown', { clientX: 5, clientY: 5, button: 0, buttons: 1 }));
+  window.dispatchEvent(mouse('mousemove', { clientX: 6, clientY: 6, buttons: 0 }));
+
+  assert.equal(el.scene.selectedPeerKey, 'alpha', 'selection survives an abandoned pan');
+  el.remove();
+});
+
+test('PresenceGraphElement: a drag ending off-canvas releases hover', async () => {
+  const el = await mount();
+  const canvas = el.shadowRoot.querySelector('canvas');
+  canvas.dispatchEvent(mouse('mousemove', screenPos(el, 'alpha')));
+  assert.equal(el.scene.hoveredPeerKey, 'alpha');
+
+  canvas.dispatchEvent(mouse('mousedown', { ...screenPos(el, 'alpha'), button: 0, buttons: 1 }));
+  window.dispatchEvent(mouse('mousemove', { clientX: 900, clientY: 900, buttons: 1 }));
+  canvas.dispatchEvent(mouse('mouseout', {}));
+  window.dispatchEvent(mouse('mouseup', { button: 0, buttons: 0 }));
+
+  assert.equal(el.scene.hoveredPeerKey, undefined, 'graph must not stay dimmed after the drag');
+  el.remove();
+});
+
+test('PresenceGraphElement: hover is kept while dragging across the canvas edge', async () => {
+  const el = await mount();
+  const canvas = el.shadowRoot.querySelector('canvas');
+  canvas.dispatchEvent(mouse('mousemove', screenPos(el, 'alpha')));
+  canvas.dispatchEvent(mouse('mousedown', { ...screenPos(el, 'alpha'), button: 0, buttons: 1 }));
+
+  canvas.dispatchEvent(mouse('mouseout', {}));
+  assert.equal(el.scene.hoveredPeerKey, 'alpha', 'the dragged peer keeps its highlight');
+
+  // Dragged back in and released over the canvas — hover stays.
+  canvas.dispatchEvent(mouse('mousemove', { ...screenPos(el, 'alpha'), buttons: 1 }));
+  window.dispatchEvent(mouse('mouseup', { button: 0, buttons: 0 }));
+  assert.equal(el.scene.hoveredPeerKey, 'alpha');
+  el.remove();
+});
+
+// ─── Geometry: camera, zoom, layout animation ────────────────────
+
+test('PresenceGraphElement: peers are painted at their laid-out positions', async () => {
+  const el = await mount();
+  const ctx = contextFor(el.shadowRoot.querySelector('canvas'));
+  ctx.__reset();
+  drawFrame();
+  const painted = paintedPeers(el, ctx);
+
+  for (const [key, node] of el.scene.peers) {
+    assert.ok(
+      Math.abs(painted.get(key)!.x - (400 + node.position.x)) < 1e-6
+      && Math.abs(painted.get(key)!.y - (300 + node.position.y)) < 1e-6,
+      `${key} painted at its world position`,
+    );
+  }
+  // And they are not all stacked on one another.
+  const ys = [...painted.values()].map(p => p.y);
+  assert.ok(new Set(ys).size > 1, 'peers occupy distinct positions');
+  el.remove();
+});
+
+test('PresenceGraphElement: camera pan and zoom move what is painted', async () => {
+  const el = await mount();
+  const ctx = contextFor(el.shadowRoot.querySelector('canvas'));
+  ctx.__reset();
+  drawFrame();
+  const before = paintedPeers(el, ctx).get('alpha')!;
+
+  el.scene.panBy(60, 25);
+  ctx.__reset();
+  drawFrame();
+  const panned = paintedPeers(el, ctx).get('alpha')!;
+  assert.ok(Math.abs(panned.x - (before.x + 60)) < 1e-6, 'pan shifts x by the delta');
+  assert.ok(Math.abs(panned.y - (before.y + 25)) < 1e-6, 'pan shifts y by the delta');
+
+  el.scene.setZoom(2);
+  ctx.__reset();
+  drawFrame();
+  const zoomed = paintedPeers(el, ctx).get('alpha')!;
+  // screen = centre + zoom * (world + camera)
+  const cam = el.scene.camera;
+  const world = el.scene.peers.get('alpha').position;
+  assert.ok(Math.abs(zoomed.x - (400 + 2 * (world.x + cam.x))) < 1e-6, 'zoom scales about the centre');
+  el.remove();
+});
+
+test('PresenceGraphElement: zoom buttons and the wheel move zoom the right way', async () => {
+  const el = await mount();
+  const buttons = [...el.shadowRoot.querySelectorAll('[aria-label="Zoom controls"] button')];
+  const zoomOut = buttons[0] as HTMLButtonElement;
+  const zoomIn = buttons[1] as HTMLButtonElement;
+
+  zoomIn.click();
+  await el.updateComplete;
+  assert.ok(el.scene.zoom > 1, `zoom in increases zoom, got ${el.scene.zoom}`);
+  assert.equal(el.shadowRoot.querySelector('.zoom-label').textContent, '110%');
+
+  zoomOut.click();
+  zoomOut.click();
+  await el.updateComplete;
+  assert.ok(el.scene.zoom < 1, `zoom out decreases zoom, got ${el.scene.zoom}`);
+
+  const canvas = el.shadowRoot.querySelector('canvas');
+  const at = el.scene.zoom;
+  // Wheel is deliberately inverted vs the web default: down = zoom out.
+  canvas.dispatchEvent(new (globalThis as any).WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }));
+  assert.ok(el.scene.zoom < at, 'wheel down zooms out');
+  el.remove();
+});
+
+test('PresenceGraphElement: layout transitions ease peers away from the origin', async () => {
+  // Deliberately does NOT call settleLayout: this is the animation path that
+  // strands peers on top of Me when it regresses.
+  const el = document.createElement('ditto-presence-graph') as any;
+  el.input = structuredClone(INPUT);
+  document.body.appendChild(el);
+  await el.updateComplete;
+  el.scene.setSize(800, 600);
+
+  const target = el.scene.layout.positions.get('alpha');
+  assert.ok(Math.abs(target.y) > 50, 'layout puts alpha well off the origin');
+  assert.deepEqual(el.scene.peers.get('alpha').position, { x: 0, y: 0 }, 'spawns at the origin');
+
+  // Half the 500ms transition, then past the end.
+  drawFrame(250);
+  const mid = { ...el.scene.peers.get('alpha').position };
+  assert.ok(Math.abs(mid.y) > 1, 'peer has started moving');
+  assert.ok(Math.abs(mid.y) < Math.abs(target.y), 'and has not arrived yet');
+
+  drawFrame(400);
+  const end = el.scene.peers.get('alpha').position;
+  assert.ok(Math.abs(end.y - target.y) < 1e-6, 'peer settles exactly on its target');
+  el.remove();
+});
+
+test('PresenceGraphElement: the pill hit area covers the pill, not just its centre', async () => {
+  const el = await mount();
+  const ctx = contextFor(el.shadowRoot.querySelector('canvas'));
+  const node = el.scene.peers.get('alpha');
+  const halfWidth = ctx.measureText(node.label).width / 2 + 11.25;
+
+  // Just inside the right edge selects; comfortably outside does not.
+  const centre = screenPos(el, 'alpha');
+  const canvas = el.shadowRoot.querySelector('canvas');
+  canvas.dispatchEvent(mouse('mousedown', {
+    clientX: centre.clientX + halfWidth - 2, clientY: centre.clientY, button: 0, buttons: 1,
+  }));
+  window.dispatchEvent(mouse('mouseup', { button: 0, buttons: 0 }));
+  assert.equal(el.scene.selectedPeerKey, 'alpha', 'a click near the pill edge still hits');
+
+  canvas.dispatchEvent(mouse('mousedown', {
+    clientX: centre.clientX + halfWidth + 20, clientY: centre.clientY, button: 0, buttons: 1,
+  }));
+  window.dispatchEvent(mouse('mouseup', { button: 0, buttons: 0 }));
+  assert.equal(el.scene.selectedPeerKey, undefined, 'a click past the pill misses');
+  el.remove();
+});
+
+test('PresenceGraphElement: the star field is painted behind the graph', async () => {
+  const el = await mount();
+  const ctx = contextFor(el.shadowRoot.querySelector('canvas'));
+  ctx.__reset();
+  drawFrame();
+
+  // Only stars and peer pills emit `fill` for this input (cloud circles are
+  // the sole other source and there is no cloud peer here), and stars are
+  // painted first — so any fill beyond one-per-peer is a star.
+  const peerCount = el.scene.peers.size;
+  const starsOf = (): string => {
+    const fills = ctx.__ops.filter(o => o.op === 'fill');
+    assert.ok(fills.length > peerCount, `star field drawn, got ${fills.length} fills for ${peerCount} peers`);
+    return fills.slice(0, fills.length - peerCount).map(o => `${o.tx},${o.ty}`).join('|');
+  };
+
+  const before = starsOf();
+  ctx.__reset();
+  drawFrame(100);
+  assert.notEqual(starsOf(), before, 'star field advances between frames');
+  el.remove();
+});
+
+test('PresenceGraphElement: a renamed peer gets a fresh pill width in a new scene', async () => {
+  // The pill-width cache is module-global and outlives a scene, but the graph
+  // tab rebuilds the scene on every switch. A device renamed while the tab was
+  // hidden used to keep the old width — wrong text bounds and a wrong hit box.
+  const first = await mount();
+  const shortHalfWidth = contextFor(first.shadowRoot.querySelector('canvas'))
+    .measureText('Alpha').width / 2 + 11.25;
+  first.remove();
+
+  const longName = 'Alpha With A Very Much Longer Device Name';
+  const el = document.createElement('ditto-presence-graph') as any;
+  el.input = {
+    ...structuredClone(INPUT),
+    remotePeers: [{ peerKey: 'alpha', deviceName: longName }, { peerKey: 'beta', deviceName: 'Beta' }],
+  };
+  document.body.appendChild(el);
+  await el.updateComplete;
+  el.scene.setSize(800, 600);
+  settleLayout(el);
+
+  const canvas = el.shadowRoot.querySelector('canvas');
+  const longHalfWidth = contextFor(canvas).measureText(longName).width / 2 + 11.25;
+  assert.ok(longHalfWidth > shortHalfWidth + 40, 'the fixture names differ enough to matter');
+
+  // A point inside the renamed pill but well outside the stale one.
+  const centre = screenPos(el, 'alpha');
+  canvas.dispatchEvent(mouse('mousedown', {
+    clientX: centre.clientX + shortHalfWidth + 20, clientY: centre.clientY, button: 0, buttons: 1,
+  }));
+  window.dispatchEvent(mouse('mouseup', { button: 0, buttons: 0 }));
+
+  assert.equal(el.scene.selectedPeerKey, 'alpha', 'hit box reflects the new name');
   el.remove();
 });

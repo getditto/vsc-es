@@ -33,7 +33,10 @@ g.getComputedStyle = dom.window.getComputedStyle;
 // so tests can assert on compositing (globalAlpha, lineWidth, …) rather
 // than merely that a function was reached.
 
-/** One recorded draw call plus the graphics state in effect when it ran. */
+/** One recorded draw call plus the graphics state in effect when it ran.
+ *  `tx`/`ty` are the current transform's translation — for a peer pill that
+ *  is the device-space position it was painted at, which is what makes the
+ *  camera/zoom/layout maths assertable rather than merely reached. */
 export interface CanvasOp {
   op: string;
   args: unknown[];
@@ -41,6 +44,9 @@ export interface CanvasOp {
   fillStyle: string;
   strokeStyle: string;
   lineWidth: number;
+  tx: number;
+  ty: number;
+  scaleX: number;
 }
 
 export interface RecordingContext2D {
@@ -58,16 +64,22 @@ const STATE_KEYS = [
 /** Draw calls worth recording; path-building calls are ignored as noise. */
 const RECORDED = ['fill', 'stroke', 'fillText', 'clearRect', 'setLineDash'];
 
-/** Void methods that only build paths or mutate the transform. */
+/** Void methods that only build paths. */
 const NOOP_METHODS = [
   'beginPath', 'closePath', 'moveTo', 'lineTo', 'arc', 'quadraticCurveTo',
-  'bezierCurveTo', 'rect', 'translate', 'rotate', 'scale', 'setTransform',
-  'transform', 'resetTransform', 'clip', 'strokeRect', 'fillRect',
+  'bezierCurveTo', 'rect', 'clip', 'strokeRect', 'fillRect',
 ];
+
+/** Affine transform [a b c d e f], tracked so recorded ops carry the device
+ *  position they were painted at. */
+interface Matrix { a: number; b: number; c: number; d: number; e: number; f: number }
+const IDENTITY = (): Matrix => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
 
 function createRecordingContext2D(canvas: any): RecordingContext2D {
   const ctx: any = { canvas };
   const stack: Record<string, unknown>[] = [];
+  let m: Matrix = IDENTITY();
+  const matrixStack: Matrix[] = [];
 
   ctx.globalAlpha = 1;
   ctx.fillStyle = '#000';
@@ -90,6 +102,9 @@ function createRecordingContext2D(canvas: any): RecordingContext2D {
       fillStyle: ctx.fillStyle,
       strokeStyle: ctx.strokeStyle,
       lineWidth: ctx.lineWidth,
+      tx: m.e,
+      ty: m.f,
+      scaleX: m.a,
     });
   };
 
@@ -100,13 +115,38 @@ function createRecordingContext2D(canvas: any): RecordingContext2D {
     ctx[name] = (...args: unknown[]): void => { record(name, args); };
   }
 
+  ctx.translate = (x: number, y: number): void => {
+    m = { ...m, e: m.a * x + m.c * y + m.e, f: m.b * x + m.d * y + m.f };
+  };
+  ctx.scale = (sx: number, sy: number): void => {
+    m = { ...m, a: m.a * sx, b: m.b * sx, c: m.c * sy, d: m.d * sy };
+  };
+  ctx.rotate = (r: number): void => {
+    const cos = Math.cos(r);
+    const sin = Math.sin(r);
+    m = {
+      ...m,
+      a: m.a * cos + m.c * sin,
+      b: m.b * cos + m.d * sin,
+      c: m.c * cos - m.a * sin,
+      d: m.d * cos - m.b * sin,
+    };
+  };
+  ctx.setTransform = (a = 1, b = 0, c = 0, d = 1, e = 0, f = 0): void => {
+    m = { a, b, c, d, e, f };
+  };
+  ctx.resetTransform = (): void => { m = IDENTITY(); };
+
   ctx.save = (): void => {
     const snapshot: Record<string, unknown> = {};
     for (const k of STATE_KEYS) { snapshot[k] = ctx[k]; }
     stack.push(snapshot);
+    matrixStack.push({ ...m });
   };
   ctx.restore = (): void => {
     const snapshot = stack.pop();
+    const savedMatrix = matrixStack.pop();
+    if (savedMatrix) { m = savedMatrix; }
     if (!snapshot) { return; }
     for (const k of STATE_KEYS) { ctx[k] = snapshot[k]; }
   };

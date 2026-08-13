@@ -137,6 +137,12 @@ export class PresenceGraphScene {
     if (this.hoveredPeerKey && !this.peers.has(this.hoveredPeerKey)) {
       this.hoveredPeerKey = undefined;
     }
+    // Line highlighting is derived from the hovered peer, never stored across
+    // updates: upsertLines rebuilds the map from scratch on every presence
+    // tick. Carrying the flag over instead would both strand a stale `true`
+    // once hover was cleared without a pointer event, and miss links that
+    // appeared while the peer stayed hovered.
+    this.setHovered(this.hoveredPeerKey ? this.peers.get(this.hoveredPeerKey) : undefined);
     if (topologyChanged) {
       this.recalculateLayout();
     }
@@ -181,6 +187,7 @@ export class PresenceGraphScene {
         localExisting.label = input.localDeviceName;
       }
     } else {
+      invalidatePillWidth(input.localPeerKey);
       this.peers.set(input.localPeerKey, {
         key: input.localPeerKey,
         label: input.localDeviceName,
@@ -199,6 +206,13 @@ export class PresenceGraphScene {
           existing.label = r.deviceName;
         }
       } else {
+        // The width cache is module-global and outlives any one scene, so a
+        // peer first seen by *this* scene may still have a width cached from
+        // a previous one (the graph tab rebuilds the scene on every switch).
+        // Without this, a device renamed while the tab was hidden keeps the
+        // old pill width — overflowing text and a wrong hit box — for the
+        // rest of the session.
+        invalidatePillWidth(r.peerKey);
         this.peers.set(r.peerKey, {
           key: r.peerKey,
           label: r.deviceName,
@@ -282,11 +296,6 @@ export class PresenceGraphScene {
           offset,
           arcOutward: isPeerToPeer,
           alpha: this.lines.get(id)?.alpha ?? 1,
-          // Carried over with alpha: hover state lives on the peer, so
-          // rebuilding the line map on every presence tick would otherwise
-          // strip the hovered peer's links of their emphasis while the peer
-          // itself stayed hovered.
-          highlighted: this.lines.get(id)?.highlighted,
         });
       });
     }
@@ -302,7 +311,6 @@ export class PresenceGraphScene {
         offset: 0,
         arcOutward: false,
         alpha: this.lines.get(id)?.alpha ?? 1,
-        highlighted: this.lines.get(id)?.highlighted,
       });
     }
 

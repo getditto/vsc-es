@@ -284,6 +284,22 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
       stranded on top of **Me**.
     - Start dragging a peer, then press and release the right mouse button while
       still holding the left. The drag continues and no peer becomes selected.
+    - After releasing outside the window, move back over the canvas: no peer
+      becomes selected, and an existing selection is not silently cleared.
+    - Drag a peer off the canvas edge and release there. Full opacity returns —
+      the peer you were dragging must not stay latched as hovered.
+
+> The following can only be checked by eye — jsdom performs no layout, cascade,
+> or hit-testing, so the automated suite cannot cover CSS behaviour at all.
+
+16. Verify cursors and pointer targets:
+    - Hovering a peer shows a pointer cursor; pressing and dragging shows
+      `grabbing` (not `pointer`) for the whole drag.
+    - Hover a peer, then move the pointer through the *gaps between* the control
+      groups in the bottom-right. The graph returns to full opacity rather than
+      staying dimmed — the overlay container must not swallow those events.
+    - Every control in that cluster is still clickable: Direct, both zoom
+      buttons, center, and eye.
 15. Switch VS Code to a **light** theme and reopen the Presence Graph:
     - The legend, Direct/zoom groups, and the center/eye buttons are all legible
       against their own backgrounds — check especially with the controls hidden,
