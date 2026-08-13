@@ -136,9 +136,13 @@ export class DittoLogAnalyzer extends LitElement {
   private latestDetailReq: string | null = null;
   private searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<AnalyzerOut>(this.handleMessage);
+    this.disposeHostMessages = onHostMessage<AnalyzerOut>(this.handleMessage);
     this.addEventListener('reveal-line', this.onRevealLine as EventListener);
     this.addEventListener('filter-change', this.onFilterChange as EventListener);
     this.addEventListener('line-clicked', this.onLineClicked as EventListener);
@@ -148,6 +152,8 @@ export class DittoLogAnalyzer extends LitElement {
   }
 
   disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
     this.removeEventListener('reveal-line', this.onRevealLine as EventListener);
     this.removeEventListener('filter-change', this.onFilterChange as EventListener);
     this.removeEventListener('line-clicked', this.onLineClicked as EventListener);

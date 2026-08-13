@@ -103,9 +103,13 @@ export class DatabaseEditor extends LitElement {
     }
   `;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<In>(msg => {
+    this.disposeHostMessages = onHostMessage<In>(msg => {
       if (msg.type === 'editor.init') {
         this.config = msg.config;
         this.secrets = msg.secrets;
@@ -135,6 +139,12 @@ export class DatabaseEditor extends LitElement {
         if (msg.field === 'advancedConfig') { this.advancedOpen = true; }
       }
     });
+  }
+
+  disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
+    super.disconnectedCallback();
   }
 
   private update_(field: keyof StoredDittoConfig, value: any) {

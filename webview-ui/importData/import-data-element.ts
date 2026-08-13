@@ -233,9 +233,19 @@ export class ImportDataElement extends LitElement {
     }
   `;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<Msg>((msg) => this.onHost(msg));
+    this.disposeHostMessages = onHostMessage<Msg>((msg) => this.onHost(msg));
+  }
+
+  disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
+    super.disconnectedCallback();
   }
 
   private onHost(msg: Msg): void {

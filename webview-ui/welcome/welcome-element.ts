@@ -267,13 +267,23 @@ export class WelcomeElement extends LitElement {
     .learn-more a { font-size: 12px; }
   `;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<Msg>((msg) => {
+    this.disposeHostMessages = onHostMessage<Msg>((msg) => {
       if (msg.type === 'welcome.init') {
         this.hasExistingDatabases = msg.hasExistingDatabases;
       }
     });
+  }
+
+  disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
+    super.disconnectedCallback();
   }
 
   private registerDatabase = (): void => {

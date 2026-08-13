@@ -99,9 +99,13 @@ export class AddIndexElement extends LitElement {
     }
   `;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<In>(msg => {
+    this.disposeHostMessages = onHostMessage<In>(msg => {
       if (msg.type === 'addIndex.init') {
         this.collections = msg.collections;
         const fallback = msg.collections[0] ?? '';
@@ -112,6 +116,12 @@ export class AddIndexElement extends LitElement {
       }
       // 'addIndex.created' results in panel disposal — no-op here.
     });
+  }
+
+  disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
+    super.disconnectedCallback();
   }
 
   private isValid(): boolean {

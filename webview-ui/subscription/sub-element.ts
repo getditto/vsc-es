@@ -29,11 +29,21 @@ export class SubscriptionEditor extends LitElement {
     .footer .cancel { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
   `;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<In>(msg => {
+    this.disposeHostMessages = onHostMessage<In>(msg => {
       if (msg.type === 'sub.init') { this.subId = msg.id; this.name = msg.name; this.query = msg.query; }
     });
+  }
+
+  disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
+    super.disconnectedCallback();
   }
 
   private isValid() { return this.name.trim().length > 0 && this.query.trim().length > 0; }

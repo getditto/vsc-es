@@ -21,7 +21,11 @@ export class PresenceGraphElement extends LitElement {
    *  is a no-op when the attribute was never set, so no
    *  `attributeChangedCallback` fires and the class-field default silently
    *  wins. The graph tab is destroyed and rebuilt on every tab switch, so
-   *  that case is the common one, not the edge case. */
+   *  that case is the common one, not the edge case.
+   *
+   *  Contract: the owner must keep this and `input` consistent — `input` is
+   *  expected to be rebuilt for the new mode whenever this changes. The
+   *  element relies on that to lay the graph out exactly once per toggle. */
   @property({ attribute: false }) directConnectedOnly = true;
 
   /** Also parent-owned, for the same reason: the element is torn down on
@@ -219,12 +223,19 @@ export class PresenceGraphElement extends LitElement {
 
   protected updated(changed: Map<string, unknown>): void {
     if (!this.scene) { return; }
-    if (changed.has('directConnectedOnly')) {
+    const modeChanged = changed.has('directConnectedOnly');
+    if (modeChanged) {
       this.scene.setShowDirectConnectedOnly(this.directConnectedOnly);
-      this.applyInputAndStartRaf(true);
     }
     if (changed.has('input')) {
       this.applyInputAndStartRaf();
+    } else if (modeChanged) {
+      // Deliberately does NOT re-apply the current input. The owner rebuilds
+      // `input` for the new mode and pushes it in the very next update, so
+      // laying out from the old, differently-filtered snapshot first would
+      // run two layout passes and play two overlapping 500ms transitions.
+      // Just keep painting; the input push does the single layout.
+      this.ensureRafRunning();
     }
   }
 

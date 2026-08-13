@@ -58,9 +58,13 @@ export class DittoPatternEditor extends LitElement {
   @state() private showForm = false;
   @state() private errMessage: string | null = null;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<PatternEditorOut>(this.handleMessage);
+    this.disposeHostMessages = onHostMessage<PatternEditorOut>(this.handleMessage);
     this.addEventListener('edit', this.onEdit as EventListener);
     this.addEventListener('delete', this.onDelete as EventListener);
     this.addEventListener('save', this.onSave as EventListener);
@@ -68,6 +72,8 @@ export class DittoPatternEditor extends LitElement {
   }
 
   disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
     this.removeEventListener('edit', this.onEdit as EventListener);
     this.removeEventListener('delete', this.onDelete as EventListener);
     this.removeEventListener('save', this.onSave as EventListener);

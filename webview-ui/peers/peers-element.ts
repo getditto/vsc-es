@@ -708,9 +708,13 @@ export class PeerListing extends LitElement {
     .popover-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
   `;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<In>(msg => {
+    this.disposeHostMessages = onHostMessage<In>(msg => {
       if (msg.type === 'peer.state') {
         this.snapshot = msg.snapshot;
         this.sync = msg.sync;
@@ -751,6 +755,8 @@ export class PeerListing extends LitElement {
   }
 
   disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
     super.disconnectedCallback();
     if (this.tickInterval !== null) { window.clearInterval(this.tickInterval); }
     if (this.completeClearTimer !== null) {

@@ -17,6 +17,22 @@ class TestResizeObserver {
 (globalThis as any).requestAnimationFrame = (): number => 1;
 (globalThis as any).cancelAnimationFrame = (): void => {};
 
+// Track host-message subscriptions so the re-attach test can assert that
+// exactly one handler is live rather than inferring it from side effects.
+const messageListeners = new Set<unknown>();
+{
+  const origAdd = window.addEventListener.bind(window);
+  const origRemove = window.removeEventListener.bind(window);
+  (window as any).addEventListener = (type: string, fn: any, opts: any): void => {
+    if (type === 'message') { messageListeners.add(fn); }
+    origAdd(type, fn, opts);
+  };
+  (window as any).removeEventListener = (type: string, fn: any, opts: any): void => {
+    if (type === 'message') { messageListeners.delete(fn); }
+    origRemove(type, fn, opts);
+  };
+}
+
 await import('../../../webview-ui/peers/peers-element.js');
 
 const LOCAL = {
@@ -135,4 +151,50 @@ test('PeerListing: Direct mode off feeds the unfiltered presence graph', async t
   // show; the contract is that it stops claiming a direct-only view.
   assert.equal(graph(el).directConnectedOnly, false);
   assert.equal(graph(el).scene.showDirectConnectedOnly, false);
+});
+
+test('PeerListing: toggling Direct lays the graph out exactly once', async t => {
+  const el = await mountGraphTab(t);
+  const scene = graph(el).scene;
+
+  // The owner rebuilds `input` for the new mode, so the element must wait for
+  // that push rather than also applying the old, differently-filtered one —
+  // otherwise the toggle plays two overlapping 500ms layout transitions.
+  const applied: boolean[] = [];
+  const realApply = scene.applyInput.bind(scene);
+  scene.applyInput = (input: any) => {
+    const r = realApply(input);
+    applied.push(r.topologyChanged);
+    return r;
+  };
+
+  graph(el).shadowRoot.querySelector('.direct-control input').checked = false;
+  graph(el).shadowRoot.querySelector('.direct-control input')
+    .dispatchEvent(new window.Event('change', { bubbles: true }));
+  await el.updateComplete;
+  await graph(el).updateComplete;
+
+  assert.equal(applied.length, 1, `one applyInput per toggle, got ${applied.length}`);
+  assert.equal(graph(el).scene.showDirectConnectedOnly, false, 'and the mode still took effect');
+});
+
+test('PeerListing: re-attaching does not double-register the host message handler', async t => {
+  const el = await mountGraphTab(t);
+  assert.equal(messageListeners.size, 1, 'one handler after the initial mount');
+
+  // VS Code moves webview panels between editor groups, which re-runs
+  // connectedCallback on the same element.
+  el.remove();
+  assert.equal(messageListeners.size, 0, 'disconnect releases the handler');
+
+  document.body.appendChild(el);
+  await el.updateComplete;
+  assert.equal(messageListeners.size, 1, 'a re-attach registers exactly one, not two');
+
+  // And the re-attached element still receives host messages.
+  window.dispatchEvent(new window.MessageEvent('message', {
+    data: { type: 'peer.state', snapshot: { local: LOCAL, remote: [remotePeer('alpha')] }, sync: undefined },
+  }));
+  await el.updateComplete;
+  assert.equal(el.snapshot.remote.length, 1);
 });

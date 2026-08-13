@@ -77,9 +77,13 @@ export class DittoObserverPanel extends LitElement {
     .empty { padding: 48px; text-align: center; color: var(--vscode-descriptionForeground); }
   `;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<ObserverOut>(msg => {
+    this.disposeHostMessages = onHostMessage<ObserverOut>(msg => {
       switch (msg.type) {
         case 'observer.init':
           this.observer = msg.observer;
@@ -99,6 +103,12 @@ export class DittoObserverPanel extends LitElement {
           assertNever(msg);
       }
     });
+  }
+
+  disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
+    super.disconnectedCallback();
   }
 
   render(): TemplateResult {

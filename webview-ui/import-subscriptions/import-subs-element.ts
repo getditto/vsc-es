@@ -56,9 +56,13 @@ export class ImportSubscriptionsElement extends LitElement {
     .progress { font-size: 12px; color: var(--vscode-descriptionForeground); margin-right: auto; }
   `;
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<In>((msg) => {
+    this.disposeHostMessages = onHostMessage<In>((msg) => {
       switch (msg.type) {
         case 'importSubs.loading':
           this.view = { kind: 'loading' };
@@ -77,6 +81,12 @@ export class ImportSubscriptionsElement extends LitElement {
           break;
       }
     });
+  }
+
+  disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
+    super.disconnectedCallback();
   }
 
   private toggle(id: string): void {

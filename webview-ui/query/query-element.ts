@@ -391,6 +391,10 @@ export class QueryEditor extends LitElement {
     return this.rows.slice(this.pageOffset, this.pageOffset + this.pageSize);
   }
 
+  /** Disposes the host-message subscription; without it every re-attach
+   *  leaves another live handler bound to a stale element. */
+  private disposeHostMessages: (() => void) | undefined;
+
   connectedCallback(): void {
     super.connectedCallback();
     // Click-away closes the context menu — register at the document
@@ -402,7 +406,7 @@ export class QueryEditor extends LitElement {
     document.addEventListener('contextmenu', this.closeContextMenu);
     // Same click-away pattern for the settings cog popover.
     document.addEventListener('click', this.onDocumentClick);
-    onHostMessage<QueryOut>(msg => {
+    this.disposeHostMessages = onHostMessage<QueryOut>(msg => {
       switch (msg.type) {
         case 'query.result':
           this.rows = msg.rows;
@@ -471,6 +475,8 @@ export class QueryEditor extends LitElement {
   }
 
   disconnectedCallback(): void {
+    this.disposeHostMessages?.();
+    this.disposeHostMessages = undefined;
     document.removeEventListener('click', this.closeContextMenu);
     document.removeEventListener('contextmenu', this.closeContextMenu);
     document.removeEventListener('click', this.onDocumentClick);
