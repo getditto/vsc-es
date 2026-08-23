@@ -1103,12 +1103,31 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     }, 100);
   }
 
-  process.on('uncaughtException', (err) => {
-    log.error('UNCAUGHT EXCEPTION', { stack: err.stack ?? err.message });
-  });
-  process.on('unhandledRejection', (reason) => {
-    log.error('UNHANDLED REJECTION', { reason: reason instanceof Error ? reason.stack : String(reason) });
-  });
+  // DO NOT add process-level 'uncaughtException' / 'unhandledRejection'
+  // handlers here. This ran until it was measured, and it was wrong four ways:
+  //
+  //   1. The extension host is a SHARED Node process. The handler receives
+  //      every installed extension's unhandled errors, not ours. In one real
+  //      log set it captured 1,856 of them — 228 from Copilot, 153 from Vim,
+  //      69 from Ionide, 48 from github-authentication, 44 from VS Code
+  //      itself — and not one from this extension. Every one was tagged
+  //      `[ext]` and counted as our error by our own Log Analyzer.
+  //   2. Registering an 'uncaughtException' listener suppresses Node's default
+  //      behaviour of terminating the process. That changes crash semantics
+  //      for the whole extension host, so another extension's fatal error
+  //      could leave the host running in a corrupted state.
+  //   3. Other extensions' error text — file paths, tokens, whatever they put
+  //      in a message — landed in OUR log file, which the user exports and
+  //      sends to us in a bug report. The export warning covers database
+  //      contents, not third-party extension internals.
+  //   4. `process.on` in activate() with nothing removing it in deactivate()
+  //      leaks a listener per extension reload, so the same rejection gets
+  //      logged once per past activation until Node's listener cap warns.
+  //
+  // Our own unhandled rejections are caught where they originate instead:
+  // `webviewMessageHandler` wraps every webview message handler, async work
+  // kicked off from activate() carries its own .catch(), and
+  // `@typescript-eslint/no-floating-promises` is an error in CI.
 
   if (process.env.DITTO_CI_MODE === '1') {
     return makeTestApi({ configStore, secretStore, manager });
