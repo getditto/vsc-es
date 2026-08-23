@@ -138,6 +138,10 @@ export class LogAnalyzerPanel {
   private async handle(msg: AnalyzerIn): Promise<void> {
     switch (msg.type) {
       case 'analyzer.refresh':
+        // Clear first: bootstrap re-reads the whole backfill, so without this
+        // the refreshed view contained every line twice (and again on the next
+        // refresh). clear() also emits reset, which resets the webview.
+        this.svc.clear();
         this.bootstrapped = false;
         await this.bootstrap();
         return;
@@ -146,9 +150,6 @@ export class LogAnalyzerPanel {
       case 'analyzer.resume': this.svc.resume(); return;
       case 'analyzer.openPatternEditor':
         await vscode.commands.executeCommand('dittoVsce.openLogPatternEditor');
-        return;
-      case 'analyzer.revealLine':
-        // Future: open log file at the recorded line. For MVP: no-op.
         return;
       case 'analyzer.queryLines': {
         const result = this.svc.queryLines({

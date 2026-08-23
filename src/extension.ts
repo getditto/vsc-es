@@ -184,7 +184,33 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   // engine starts empty until the load resolves — that's fine: the
   // analyzer panel is user-initiated and won't open faster than this
   // I/O completes in practice.
-  void patternStore.load().then(() => patternEngine.load());
+  //
+  // The catch matters: `void promise.then(...)` observes nothing, so a missing
+  // or malformed bundled catalog became an unhandled rejection and the engine
+  // stayed permanently empty. The analyzer would then report "no problems
+  // detected" forever with no indication that detection was never running.
+  const loadPatterns = (reason: 'startup' | 'settingChanged'): void => {
+    void patternStore.load()
+      .then(() => {
+        patternEngine.load();
+        const rejected = patternEngine.listRejected();
+        if (rejected.length > 0) {
+          logger.warn('Log analyzer: some patterns were skipped', {
+            reason,
+            skipped: rejected.map(r => `${r.key}: ${r.reason}`).join('; '),
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('Log analyzer: pattern catalog failed to load', { reason, err: message });
+        void vscode.window.showWarningMessage(
+          `Ditto: log analyzer patterns failed to load (${message}). `
+          + 'Problem detection is disabled until this is resolved.',
+        );
+      });
+  };
+  loadPatterns('startup');
   context.subscriptions.push(
     patternStore.onDidChange(() => patternEngine.reload()),
   );
@@ -337,7 +363,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         // analyzer panel, if open, will see the new patterns the next
         // time it processes a line (or via the store's change event,
         // which already triggers engine.reload above).
-        void patternStore.load().then(() => patternEngine.reload());
+        loadPatterns('settingChanged');
       }
     }),
   );

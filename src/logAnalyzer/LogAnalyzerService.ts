@@ -16,11 +16,20 @@ const PROBLEM_HITS_CAP = 10_000;
 
 export type AnalyzerDiff =
   | { type: 'reset' }
-  | { type: 'summary', counts: SummaryCounts }
+  /** `counts` plus the rest of the summary header. tags/sdkVersion/range used
+   *  to live only in the internal state, which was never transmitted — so the
+   *  header showed "Tags: none / SDK: unknown / Range: n/a" permanently. */
+  | {
+      type: 'summary',
+      counts: SummaryCounts,
+      tags: string[],
+      sdkVersion: string | null,
+      startTimeMs: number | null,
+      endTimeMs: number | null,
+    }
   | { type: 'problemsAdded', items: ProblemInstance[] }
   | { type: 'sessionsUpdated', sessions: AnalyzerState['sessions'] }
   | { type: 'histogramsUpdated', histograms: AnalyzerState['histograms'] }
-  | { type: 'live', lines: LogLine[] }
   | { type: 'error', stage: 'backfill' | 'live', message: string };
 
 interface ServiceOptions {
@@ -47,26 +56,53 @@ export class LogAnalyzerService {
    *  only land here while their pattern is under PROBLEM_CAP. */
   private pendingProblems: ProblemInstance[] = [];
   private lastTrackerVersion = -1;
+  /** Pending trailing-edge flush. See maybeFlush. */
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Line ids that are listable under the Problems / Critical filters.
+   *  Maintained incrementally rather than rebuilt per query: queryLines runs
+   *  on every flush (~4/s) and rebuilt these sets from state.problems each
+   *  time. They are also what the tab badges must count — `counts.problems`
+   *  counts occurrences, which is a different and larger number. */
+  private problemLineIds = new Set<number>();
+  private criticalLineIds = new Set<number>();
 
   constructor(private readonly opts: ServiceOptions) {
     this.throttleMs = opts.throttleMs ?? 250;
   }
 
   start(p: { backfillText?: string; minTimestamp?: Date } = {}): void {
+    // Dispose first: start() is called again by the panel's refresh, and
+    // overwriting liveSub left the previous subscription attached, so every
+    // later line was processed once per start() — counts and the line buffer
+    // both multiplied.
+    this.liveSub?.dispose();
     if (p.backfillText) {
       this.processBackfill(p.backfillText, p.minTimestamp);
     }
     this.liveSub = this.opts.sink.onLine(l => this.processLine(l));
+    // Flush unconditionally after backfill. maybeFlush is throttled on the
+    // leading edge, so a backfill of N lines emitted exactly one summary — the
+    // one after the FIRST line — and if the log then went quiet (the normal
+    // case for a panel opened on an idle connection) nothing ever corrected
+    // it. That is the "Errors: 0 with four errors in the table" report.
+    this.forceFlush();
   }
 
   pause(): void { this.paused = true; }
-  resume(): void { this.paused = false; this.flush(); }
+
+  resume(): void {
+    this.paused = false;
+    // Everything that accumulated while paused is emitted in one flush.
+    this.forceFlush();
+  }
 
   clear(): void {
     this.state = emptyState();
     this.problemHits = [];
     this.lineBuffer = [];
     this.pendingProblems = [];
+    this.problemLineIds.clear();
+    this.criticalLineIds.clear();
     // The tracker owns the session history that state.sessions mirrors, so
     // it has to be cleared too — otherwise the next connection event
     // resurrects everything from before the Clear. Resetting the version
@@ -75,12 +111,17 @@ export class LogAnalyzerService {
     // leave the Sessions view stranded at empty until a tracker mutation.
     this.opts.tracker.reset();
     this.lastTrackerVersion = this.opts.tracker.getVersion();
+    // Let the next line flush immediately rather than sitting behind the
+    // throttle window left over from before the Clear.
+    this.lastFlush = 0;
+    this.cancelScheduledFlush();
     this.emit({ type: 'reset' });
   }
 
   dispose(): void {
     this.liveSub?.dispose();
     this.liveSub = null;
+    this.cancelScheduledFlush();
   }
 
   onDiff(listener: (d: AnalyzerDiff) => void): { dispose(): void } {
@@ -116,19 +157,11 @@ export class LogAnalyzerService {
     const limit = opts.limit ?? 1000;
     const offset = opts.offset ?? 0;
 
-    // Build a set of "problem line ids" once when needed.
-    let problemIds: Set<number> | null = null;
-    let criticalIds: Set<number> | null = null;
-    if (filter === 'problem' || filter === 'critical') {
-      problemIds = new Set();
-      criticalIds = new Set();
-      for (const list of this.state.problems.values()) {
-        for (const p of list) {
-          problemIds.add(p.line.id);
-          if (p.severity === 5) criticalIds.add(p.line.id);
-        }
-      }
-    }
+    // The id sets are maintained incrementally in processLine — rebuilding
+    // them here re-walked every stored problem on every query, and queryLines
+    // is issued on each flush.
+    const problemIds = this.problemLineIds;
+    const criticalIds = this.criticalLineIds;
 
     // Walk newest-first so we can paginate without sorting the whole buffer.
     const matched: LogLine[] = [];
@@ -139,8 +172,8 @@ export class LogAnalyzerService {
         case 'all':      pass = true; break;
         case 'error':    pass = line.level === 'error'; break;
         case 'warn':     pass = line.level === 'warn'; break;
-        case 'problem':  pass = problemIds!.has(line.id); break;
-        case 'critical': pass = criticalIds!.has(line.id); break;
+        case 'problem':  pass = problemIds.has(line.id); break;
+        case 'critical': pass = criticalIds.has(line.id); break;
       }
       if (!pass) continue;
       if (search.length > 0) {
@@ -207,6 +240,14 @@ export class LogAnalyzerService {
     this.state.counts.totalLines++;
     if (line.timestamp == null) this.state.counts.unparseableLines++;
     if (line.tag) this.state.tags.add(line.tag);
+    // The SDK announces itself once per init, e.g. `… sdk.version=5.1.0 …`.
+    // Nothing populated this field before, so the header read "SDK: unknown"
+    // for the life of the panel. Guarded on null so it is one regex per line
+    // until the first match, not per line forever.
+    if (this.state.sdkVersion === null) {
+      const m = /\bsdk\.version=(\S+)/.exec(line.text);
+      if (m) { this.state.sdkVersion = m[1]; }
+    }
     if (line.timestamp) {
       if (!this.state.startTime || line.timestamp < this.state.startTime) this.state.startTime = line.timestamp;
       if (!this.state.endTime || line.timestamp > this.state.endTime) this.state.endTime = line.timestamp;
@@ -231,6 +272,9 @@ export class LogAnalyzerService {
         list.push(item);
         this.state.problems.set(h.key, list);
         if (!isBackfill) { this.pendingProblems.push(item); }
+        // Only ids that were actually stored are listable by the filters.
+        this.problemLineIds.add(line.id);
+        if (h.severity === 5) { this.criticalLineIds.add(line.id); }
       }
       this.state.counts.problems++;
       if (h.severity === 5) this.state.counts.critical++;
@@ -270,9 +314,43 @@ export class LogAnalyzerService {
   private maybeFlush(): void {
     if (this.paused) return;
     const now = this.opts.now?.() ?? Date.now();
-    if (now - this.lastFlush < this.throttleMs) return;
-    this.lastFlush = now;
+    if (now - this.lastFlush >= this.throttleMs) {
+      this.cancelScheduledFlush();
+      this.lastFlush = now;
+      this.flush();
+      return;
+    }
+    // Leading-edge-only throttling silently drops the tail of every burst:
+    // the first line of a burst flushes, the rest are swallowed, and if no
+    // further line arrives there is nothing left to trigger a flush. The UI
+    // then shows the state as of one line, indefinitely. Schedule the
+    // trailing edge so the last lines of a burst always land.
+    if (this.flushTimer === null) {
+      const wait = Math.max(0, this.throttleMs - (now - this.lastFlush));
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        if (this.paused) { return; }
+        this.lastFlush = this.opts.now?.() ?? Date.now();
+        this.flush();
+      }, wait);
+      // Never hold the extension host (or a test process) open for a flush.
+      this.flushTimer.unref?.();
+    }
+  }
+
+  /** Flush now, regardless of the throttle. */
+  private forceFlush(): void {
+    if (this.paused) { return; }
+    this.cancelScheduledFlush();
+    this.lastFlush = this.opts.now?.() ?? Date.now();
     this.flush();
+  }
+
+  private cancelScheduledFlush(): void {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
   }
 
   private flush(): void {
@@ -282,7 +360,18 @@ export class LogAnalyzerService {
       this.pendingProblems = [];
     }
     this.recomputeHistograms();
-    this.emit({ type: 'summary', counts: { ...this.state.counts } });
+    this.emit({
+      type: 'summary',
+      counts: {
+        ...this.state.counts,
+        problemLines: this.problemLineIds.size,
+        criticalLines: this.criticalLineIds.size,
+      },
+      tags: [...this.state.tags].sort(),
+      sdkVersion: this.state.sdkVersion,
+      startTimeMs: this.state.startTime?.getTime() ?? null,
+      endTimeMs: this.state.endTime?.getTime() ?? null,
+    });
     this.emit({ type: 'histogramsUpdated', histograms: this.state.histograms });
   }
 
@@ -292,7 +381,13 @@ export class LogAnalyzerService {
       : 0;
     const binMs = pickBinWidth(Math.max(range, 1000));
     this.state.histograms.problemsOverTime = binProblemsOverTime(this.problemHits, binMs);
-    this.state.histograms.volumeByLevel = binVolumeByLevel(this.opts.sink.snapshot(), binMs);
+    // this.lineBuffer, NOT sink.snapshot(). The sink is shared by every
+    // database's analyzer and holds only lines the extension logged live —
+    // it excludes backfill (read from the rotated log file) and includes
+    // other connections' lines. Binning it produced a histogram over a
+    // completely different population than every other number on screen,
+    // and one that Clear could not empty.
+    this.state.histograms.volumeByLevel = binVolumeByLevel(this.lineBuffer, binMs);
     this.state.histograms.connectionDurations = binDurations(
       this.state.sessions
         .filter(s => s.end)
@@ -305,7 +400,10 @@ export class LogAnalyzerService {
 
 function emptyState(): AnalyzerState {
   return {
-    counts: { critical: 0, errors: 0, warnings: 0, problems: 0, totalLines: 0, unparseableLines: 0 },
+    counts: {
+      critical: 0, errors: 0, warnings: 0, problems: 0,
+      problemLines: 0, criticalLines: 0, totalLines: 0, unparseableLines: 0,
+    },
     problems: new Map(),
     sessions: [],
     reinits: [],

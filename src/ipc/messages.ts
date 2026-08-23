@@ -358,11 +358,20 @@ export type LogOut = { type: 'log.levelChanged'; level: LogLevel };
 /** Host → webview: state diffs from LogAnalyzerService. */
 export type AnalyzerOut =
   | { type: 'analyzer.reset' }
-  | { type: 'analyzer.summary'; counts: import('../logAnalyzer/types.js').SummaryCounts }
+  | {
+      type: 'analyzer.summary';
+      counts: import('../logAnalyzer/types.js').SummaryCounts;
+      /** Distinct log tags seen so far, sorted. */
+      tags: string[];
+      /** Parsed from the SDK's init line; null until one is seen. */
+      sdkVersion: string | null;
+      /** Epoch ms of the first/last timestamped line, for the Range field. */
+      startTimeMs: number | null;
+      endTimeMs: number | null;
+    }
   | { type: 'analyzer.problemsAdded'; items: import('../logAnalyzer/types.js').ProblemInstance[] }
   | { type: 'analyzer.sessionsUpdated'; sessions: import('../logAnalyzer/types.js').Session[] }
   | { type: 'analyzer.histogramsUpdated'; histograms: import('../logAnalyzer/types.js').AnalyzerState['histograms'] }
-  | { type: 'analyzer.live'; lines: import('../logAnalyzer/types.js').LogLine[] }
   | { type: 'analyzer.error'; stage: 'backfill' | 'live'; message: string }
   | { type: 'analyzer.linesResult'; requestId: string; items: import('../logAnalyzer/types.js').LogLine[]; total: number }
   | {
@@ -379,7 +388,6 @@ export type AnalyzerIn =
   | { type: 'analyzer.clear' }
   | { type: 'analyzer.pause' }
   | { type: 'analyzer.resume' }
-  | { type: 'analyzer.revealLine'; lineId: number }
   | { type: 'analyzer.openPatternEditor' }
   | {
       type: 'analyzer.queryLines';

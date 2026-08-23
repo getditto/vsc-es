@@ -113,6 +113,9 @@ export class DittoLogAnalyzer extends LitElement {
   @state() private problems: Map<string, ProblemInstance[]> = new Map();
   @state() private tags: string[] = [];
   @state() private sdkVersion: string | null = null;
+  /** Epoch ms of the first/last timestamped line, for the Range field. */
+  @state() private startTimeMs: number | null = null;
+  @state() private endTimeMs: number | null = null;
   @state() private errorBanner: string | null = null;
   @state() private histograms: AnalyzerState['histograms'] = {
     volumeByLevel: [],
@@ -166,9 +169,16 @@ export class DittoLogAnalyzer extends LitElement {
     super.disconnectedCallback();
   }
 
+  /** The `↗` on a problem row. It used to post `analyzer.revealLine`, which
+   *  the host handled with an explicit no-op — a visible affordance that did
+   *  nothing. Opening the line's detail drawer is what the arrow implies and
+   *  is already fully wired for row clicks, so reuse that. */
   private onRevealLine = (e: Event): void => {
     const detail = (e as CustomEvent).detail as { id: number };
-    postToHost({ type: 'analyzer.revealLine', lineId: detail.id });
+    this.selectedLineId = detail.id;
+    const requestId = String(++this.requestCursor);
+    this.latestDetailReq = requestId;
+    postToHost({ type: 'analyzer.requestLineDetail', lineId: detail.id, requestId });
   };
 
   private onFilterChange = (e: Event): void => {
@@ -200,6 +210,23 @@ export class DittoLogAnalyzer extends LitElement {
     }, 200);
   };
 
+  /** Human-readable span of the ingested lines for the Range field. Empty
+   *  when nothing timestamped has been seen, which the header renders as
+   *  'n/a'. */
+  private formatRange(): string {
+    if (this.startTimeMs === null || this.endTimeMs === null) { return ''; }
+    const start = new Date(this.startTimeMs);
+    const end = new Date(this.endTimeMs);
+    const seconds = Math.max(0, Math.round((this.endTimeMs - this.startTimeMs) / 1000));
+    const span = seconds < 60
+      ? `${seconds}s`
+      : seconds < 3600
+        ? `${Math.round(seconds / 60)}m`
+        : `${(seconds / 3600).toFixed(1)}h`;
+    const hhmmss = (d: Date): string => d.toISOString().slice(11, 19);
+    return `${hhmmss(start)} → ${hhmmss(end)} (${span})`;
+  }
+
   private requestLines(): void {
     const requestId = String(++this.requestCursor);
     this.latestLinesReq = requestId;
@@ -218,6 +245,13 @@ export class DittoLogAnalyzer extends LitElement {
     switch (m.type) {
       case 'analyzer.summary':
         this.counts = m.counts;
+        // The rest of the summary header travels with the counts. It used not
+        // to travel at all, which is why Tags/SDK/Range read "none /
+        // unknown / n/a" for the life of the panel.
+        this.tags = m.tags;
+        this.sdkVersion = m.sdkVersion;
+        this.startTimeMs = m.startTimeMs;
+        this.endTimeMs = m.endTimeMs;
         // Counts changed → table totals + tab badges should refresh.
         this.requestLines();
         break;
@@ -238,6 +272,10 @@ export class DittoLogAnalyzer extends LitElement {
       }
       case 'analyzer.reset':
         this.counts = null;
+        this.tags = [];
+        this.sdkVersion = null;
+        this.startTimeMs = null;
+        this.endTimeMs = null;
         this.problems = new Map();
         this.histograms = {
           volumeByLevel: [],
@@ -266,11 +304,6 @@ export class DittoLogAnalyzer extends LitElement {
         // still emits this so the IPC contract stays stable; sessions
         // are derived from the durations histogram which we DO render.
         break;
-      case 'analyzer.live':
-        // Streaming live lines no longer feed a separate tail — the
-        // log table refreshes whenever analyzer.summary fires. Nothing
-        // to do here.
-        break;
       case 'analyzer.linesResult':
         // Drop late responses; only honour the most recent request.
         if (m.requestId !== this.latestLinesReq) break;
@@ -298,8 +331,24 @@ export class DittoLogAnalyzer extends LitElement {
       .sort((a, b) => (b.items[0]?.severity ?? 0) - (a.items[0]?.severity ?? 0));
   }
 
+  /** Badge numbers for the filter tabs.
+   *
+   *  Problems/Critical use `problemLines`/`criticalLines`, not `problems`/
+   *  `critical`: the latter count pattern-match *occurrences* — a line matching
+   *  three patterns counts three times, and matches past a pattern's storage
+   *  cap count too — so a badge built from them promised rows the tab could
+   *  not list. The Summary header still shows the occurrence count, which is
+   *  the right number for "how much went wrong". */
   private tabCounts(): { critical: number; errors: number; warnings: number; problems: number; totalLines: number } {
-    return this.counts ?? { critical: 0, errors: 0, warnings: 0, problems: 0, totalLines: 0 };
+    const c = this.counts;
+    if (!c) { return { critical: 0, errors: 0, warnings: 0, problems: 0, totalLines: 0 }; }
+    return {
+      critical: c.criticalLines,
+      errors: c.errors,
+      warnings: c.warnings,
+      problems: c.problemLines,
+      totalLines: c.totalLines,
+    };
   }
 
   render(): TemplateResult {
@@ -320,6 +369,7 @@ export class DittoLogAnalyzer extends LitElement {
             .counts=${this.counts}
             .tags=${this.tags}
             .sdkVersion=${this.sdkVersion}
+            .sessionRange=${this.formatRange()}
           ></summary-header>
           <problems-list .groups=${this.problemGroups()}></problems-list>
         </collapsible-section>
