@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost, HostMessages } from '../shared/messaging.js';
+import type { IndexField } from '../../src/models/DittoCollection.js';
 
 type In =
   | { type: 'addIndex.init'; collections: string[]; preselected?: string }
@@ -11,7 +12,10 @@ type In =
 export class AddIndexElement extends LitElement {
   @state() private collections: string[] = [];
   @state() private selectedCollection = '';
-  @state() private field = '';
+  /** Ordered keys. Ditto SDK 5.1 supports composite indexes, and the order is
+   *  significant to the query optimizer, so the rows are reorderable rather
+   *  than sorted for display. */
+  @state() private fields: IndexField[] = [{ name: '', ascending: true }];
   @state() private isCreating = false;
   @state() private errorMessage: string | undefined;
 
@@ -50,6 +54,38 @@ export class AddIndexElement extends LitElement {
       /* Native dropdown caret rendering uses the platform; just ensure
          text/background follow VS Code theme tokens. */
       appearance: auto;
+    }
+    .key-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    /* The field name takes the slack; the direction stays wide enough to read
+       and the icon buttons stay square. */
+    .key-row input { flex: 1 1 auto; width: auto; }
+    .key-row select { flex: 0 0 84px; width: auto; }
+    .row-btn {
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      cursor: pointer;
+      font: inherit;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 2px;
+    }
+    .row-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+    .add-field {
+      margin-top: 4px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font: inherit;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 2px;
     }
     .info {
       margin-top: 24px;
@@ -113,9 +149,28 @@ export class AddIndexElement extends LitElement {
     // 'addIndex.created' results in panel disposal — no-op here.
   });
 
+  /** Non-blank keys, trimmed, in the order shown. */
+  private cleanFields(): IndexField[] {
+    return this.fields
+      .map(f => ({ name: f.name.trim(), ascending: f.ascending }))
+      .filter(f => f.name.length > 0);
+  }
+
+  /** A key repeated in the list, if any — reported inline rather than as a
+   *  round-trip error, since the user can see both rows. */
+  private duplicateField(): string | undefined {
+    const seen = new Set<string>();
+    for (const f of this.cleanFields()) {
+      if (seen.has(f.name)) { return f.name; }
+      seen.add(f.name);
+    }
+    return undefined;
+  }
+
   private isValid(): boolean {
     return this.selectedCollection.trim().length > 0
-        && this.field.trim().length > 0
+        && this.cleanFields().length > 0
+        && this.duplicateField() === undefined
         && !this.isCreating;
   }
 
@@ -126,8 +181,36 @@ export class AddIndexElement extends LitElement {
     postToHost({
       type: 'addIndex.create',
       collection: this.selectedCollection,
-      field: this.field.trim(),
+      fields: this.cleanFields(),
     });
+  }
+
+  private setFieldName(i: number, name: string): void {
+    this.fields = this.fields.map((f, j) => (j === i ? { ...f, name } : f));
+  }
+
+  private setFieldDirection(i: number, ascending: boolean): void {
+    this.fields = this.fields.map((f, j) => (j === i ? { ...f, ascending } : f));
+  }
+
+  private addField(): void {
+    this.fields = [...this.fields, { name: '', ascending: true }];
+  }
+
+  private removeField(i: number): void {
+    // Always leave one row: an empty editor has nothing to type into.
+    const next = this.fields.filter((_, j) => j !== i);
+    this.fields = next.length > 0 ? next : [{ name: '', ascending: true }];
+  }
+
+  /** Move a key one place up or down. Order decides which queries the index
+   *  can serve, so it has to be editable without retyping every row. */
+  private moveField(i: number, delta: -1 | 1): void {
+    const to = i + delta;
+    if (to < 0 || to >= this.fields.length) { return; }
+    const next = [...this.fields];
+    [next[i], next[to]] = [next[to], next[i]];
+    this.fields = next;
   }
 
   private cancel(): void {
@@ -148,21 +231,56 @@ export class AddIndexElement extends LitElement {
         `)}
       </select>
 
-      <label>Field</label>
-      <input
-        type="text"
-        autocorrect="off"
-        autocapitalize="off"
-        spellcheck="false"
-        .value=${this.field}
-        @input=${(e: Event) => this.field = (e.target as HTMLInputElement).value}
-      />
+      <label>Fields</label>
+      ${this.fields.map((f, i) => html`
+        <div class="key-row">
+          <input
+            type="text"
+            placeholder="field or nested.path"
+            aria-label=${`Index field ${i + 1}`}
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            .value=${f.name}
+            @input=${(e: Event) => this.setFieldName(i, (e.target as HTMLInputElement).value)}
+          />
+          <select
+            aria-label=${`Sort direction for field ${i + 1}`}
+            .value=${f.ascending ? 'ASC' : 'DESC'}
+            @change=${(e: Event) =>
+              this.setFieldDirection(i, (e.target as HTMLSelectElement).value === 'ASC')}
+          >
+            <option value="ASC" ?selected=${f.ascending}>ASC</option>
+            <option value="DESC" ?selected=${!f.ascending}>DESC</option>
+          </select>
+          <button
+            class="row-btn" title="Move up" aria-label=${`Move field ${i + 1} up`}
+            ?disabled=${i === 0}
+            @click=${() => this.moveField(i, -1)}
+          >↑</button>
+          <button
+            class="row-btn" title="Move down" aria-label=${`Move field ${i + 1} down`}
+            ?disabled=${i === this.fields.length - 1}
+            @click=${() => this.moveField(i, 1)}
+          >↓</button>
+          <button
+            class="row-btn" title="Remove field" aria-label=${`Remove field ${i + 1}`}
+            ?disabled=${this.fields.length === 1 && f.name.trim().length === 0}
+            @click=${() => this.removeField(i)}
+          >✕</button>
+        </div>
+      `)}
+      <button class="add-field" @click=${this.addField}>+ Add field</button>
 
       <div class="info">
-        <p>DQL limits indexes to a single field on a collection. You can create multiple indexes on a single collection.</p>
-        <p>DQL supports union and intersect scans for queries with OR, IN, and AND operators. This allows the query optimizer to use multiple indexes simultaneously in a single query. For example, a query like <code>WHERE status = 'active' OR priority = 'high'</code> can leverage separate indexes on both status and priority fields, combining results through a union scan.</p>
+        <p>Two or more fields create a <strong>composite index</strong>. Field order matters: put fields used in equality filters first, then fields used for range filters or sorting. A query that skips the leading field gets little benefit from the index.</p>
+        <p>Example — <code>(status ASC, createdAt DESC)</code> serves <code>WHERE status = 'open' ORDER BY createdAt DESC</code>.</p>
+        <p>Separate single-field indexes are often better for unrelated filters: DQL supports union and intersect scans for <code>OR</code>, <code>IN</code> and <code>AND</code>, so the optimizer can combine several indexes in one query.</p>
       </div>
 
+      ${this.duplicateField() !== undefined
+        ? html`<div class="error">Field "${this.duplicateField()}" is listed more than once.</div>`
+        : ''}
       ${this.errorMessage ? html`<div class="error">${this.errorMessage}</div>` : ''}
 
       <div class="footer">

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
-import type { DittoCollection } from '../models/DittoCollection.js';
+import type { DittoCollection, IndexField } from '../models/DittoCollection.js';
 import type { AddIndexIn, AddIndexOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 
@@ -9,7 +9,7 @@ import type { Logger } from '../logging/types.js';
  *  trivially fakeable). */
 export interface AddIndexCollectionsShim {
   current(): DittoCollection[];
-  createIndex(collection: string, fieldName: string): Promise<void>;
+  createIndex(collection: string, fields: readonly IndexField[]): Promise<void>;
   refresh(): Promise<void>;
 }
 
@@ -118,7 +118,7 @@ export class AddIndexPanel {
     }
     if (msg.type === 'addIndex.create') {
       try {
-        await this.collections.createIndex(msg.collection, msg.field);
+        await this.collections.createIndex(msg.collection, msg.fields);
         await this.collections.refresh();
         this.post({ type: 'addIndex.created' });
         this.dispose();

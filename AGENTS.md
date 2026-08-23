@@ -21,6 +21,12 @@
 - Extend `scripts/vscode-stub.mjs` when unit tests need another VS Code API; do not add
   scattered ad-hoc mocks. It already fakes webview panels — see `createdWebviewPanels`
   and `__resetStub()` — so panels are unit-testable without an Extension Development Host.
+- Build index statements with `src/ditto/index-builder.ts`, not by hand. Indexes
+  are composite (SDK 5.1+): an index carries an ordered `IndexField[]`, and the
+  order is significant to the query optimizer, so never sort or dedupe it for
+  display. `CREATE INDEX IF NOT EXISTS` matches on the index NAME only, so
+  `CollectionsRepository.createIndex` checks `system:indexes` first and refuses
+  a same-name index with a different definition rather than silently no-oping.
 - Interpolate collection/field/index names into DQL through `quoteIdentifier` /
   `quoteFieldPath` (`src/ditto/dql-identifier.ts`). Never hand-roll a character
   whitelist: DQL allows any name once backtick-quoted, and a whitelist both rejects

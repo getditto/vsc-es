@@ -8,6 +8,7 @@ import { CollectionsRepository } from '../ditto/CollectionsRepository.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import { importDocuments } from '../ditto/ImportService.js';
 import { quoteIdentifier, isBareIdentifier } from '../ditto/dql-identifier.js';
+import { parseIndexKeys } from '../ditto/index-builder.js';
 import type { Logger } from '../logging/types.js';
 
 /**
@@ -101,16 +102,16 @@ test('live DQL: createIndex/dropIndex work on a hyphenated collection', async ()
   await withStore(async ({ exec, repo }) => {
     await exec('INSERT INTO `order-items` DOCUMENTS (:doc)', { doc: { _id: 'a', qty: 1 } });
 
-    await repo.createIndex('order-items', 'qty');
+    await repo.createIndex('order-items', [{ name: 'qty', ascending: true }]);
     const after = await exec('SELECT * FROM system:indexes');
-    const mine = after.find(r => r._id === 'order-items.idx_order-items_qty');
+    const mine = after.find(r => r._id === 'order-items.idx_order_items_qty');
     assert.ok(mine, `index created; saw ${JSON.stringify(after.map(r => r._id))}`);
     assert.equal(mine.collection, 'order-items');
 
-    await repo.dropIndex('idx_order-items_qty', 'order-items');
+    await repo.dropIndex('idx_order_items_qty', 'order-items');
     const gone = await exec('SELECT * FROM system:indexes');
     assert.ok(
-      !gone.some(r => r._id === 'order-items.idx_order-items_qty'),
+      !gone.some(r => r._id === 'order-items.idx_order_items_qty'),
       'index dropped',
     );
   });
@@ -121,7 +122,7 @@ test('live DQL: createIndex accepts a nested field path', async () => {
     await exec('INSERT INTO `people` DOCUMENTS (:doc)', {
       doc: { _id: 'a', address: { city: 'Austin' } },
     });
-    await repo.createIndex('people', 'address.city');
+    await repo.createIndex('people', [{ name: 'address.city', ascending: true }]);
     const rows = await exec('SELECT * FROM system:indexes');
     const mine = rows.find(r => r._id === 'people.idx_people_address_city');
     assert.ok(mine, `nested-path index created; saw ${JSON.stringify(rows.map(r => r._id))}`);
@@ -134,14 +135,14 @@ test('live DQL: an index on a name needing quotes is created and dropped by name
   // would create an index the UI could never delete.
   await withStore(async ({ exec, repo }) => {
     await exec('INSERT INTO `two words` DOCUMENTS (:doc)', { doc: { _id: 'a', qty: 1 } });
-    await repo.createIndex('two words', 'qty');
+    await repo.createIndex('two words', [{ name: 'qty', ascending: true }]);
     const created = await exec('SELECT * FROM system:indexes');
     const mine = created.find(r => r.collection === 'two words');
     assert.ok(mine, 'created');
 
     // system:indexes reports the bare name; fall back to the name createIndex
     // generates if the SDK ever stops surfacing it.
-    const indexName = typeof mine.name === 'string' ? mine.name : 'idx_two words_qty';
+    const indexName = typeof mine.name === 'string' ? mine.name : 'idx_two_words_qty';
     await repo.dropIndex(indexName, 'two words');
     const left = await exec('SELECT * FROM system:indexes');
     assert.ok(!left.some(r => r.collection === 'two words'), 'dropped');
@@ -223,5 +224,170 @@ test('live DQL: COUNT(*) hydration query parses for awkward names', async () => 
       `SELECT COUNT(*) AS numDocs FROM ${quoteIdentifier('order-items', 'collection')}`,
     );
     assert.equal(Number(rows[0].numDocs), 2);
+  });
+});
+
+// ─── Composite indexes (SDK 5.1) ───────────────────────────────
+
+test('live DQL: a composite index is created with both keys and directions', async () => {
+  // The feature itself: more than one field in one index. Asserted against
+  // system:indexes rather than just "the statement did not throw", because a
+  // wrong key order or a dropped direction still parses.
+  await withStore(async ({ exec, repo }) => {
+    await exec('INSERT INTO `tasks` DOCUMENTS (:doc)', {
+      doc: { _id: 'a', status: 'open', createdAt: 3 },
+    });
+
+    await repo.createIndex('tasks', [
+      { name: 'status', ascending: true },
+      { name: 'createdAt', ascending: false },
+    ]);
+
+    const rows = await exec('SELECT * FROM system:indexes');
+    const mine = rows.find(r => r._id === 'tasks.idx_tasks_status_createdAt');
+    assert.ok(mine, `composite index created; saw ${JSON.stringify(rows.map(r => r._id))}`);
+    assert.deepEqual(parseIndexKeys(mine.fields), [
+      { name: 'status', ascending: true },
+      { name: 'createdAt', ascending: false },
+    ], `stored keys: ${JSON.stringify(mine.fields)}`);
+  });
+});
+
+test('live DQL: a composite index preserves key order, not alphabetical order', async () => {
+  // Order decides which queries the index can serve, so it must survive
+  // exactly as entered.
+  await withStore(async ({ exec, repo }) => {
+    await exec('INSERT INTO `t` DOCUMENTS (:d)', { d: { _id: 'a', zebra: 1, alpha: 2 } });
+    await repo.createIndex('t', [
+      { name: 'zebra', ascending: true },
+      { name: 'alpha', ascending: true },
+    ]);
+    const rows = await exec('SELECT * FROM system:indexes');
+    const mine = rows.find(r => r._id === 't.idx_t_zebra_alpha');
+    assert.ok(mine);
+    assert.deepEqual(parseIndexKeys(mine.fields).map(k => k.name), ['zebra', 'alpha']);
+  });
+});
+
+test('live DQL: a composite index over nested paths round-trips', async () => {
+  await withStore(async ({ exec, repo }) => {
+    await exec('INSERT INTO `people` DOCUMENTS (:d)', {
+      d: { _id: 'a', address: { city: 'Austin', zip: '78701' } },
+    });
+    await repo.createIndex('people', [
+      { name: 'address.city', ascending: true },
+      { name: 'address.zip', ascending: false },
+    ]);
+    const rows = await exec('SELECT * FROM system:indexes');
+    const mine = rows.find(r => r._id === 'people.idx_people_address_city_address_zip');
+    assert.ok(mine, `saw ${JSON.stringify(rows.map(r => r._id))}`);
+    assert.deepEqual(parseIndexKeys(mine.fields), [
+      { name: 'address.city', ascending: true },
+      { name: 'address.zip', ascending: false },
+    ]);
+  });
+});
+
+test('live DQL: a composite index on an awkward collection name works', async () => {
+  await withStore(async ({ exec, repo }) => {
+    await exec('INSERT INTO `order-items` DOCUMENTS (:d)', { d: { _id: 'a', sku: 'x', qty: 1 } });
+    await repo.createIndex('order-items', [
+      { name: 'sku', ascending: true },
+      { name: 'qty', ascending: false },
+    ]);
+    const rows = await exec('SELECT * FROM system:indexes');
+    const mine = rows.find(r => r.collection === 'order-items');
+    assert.ok(mine, `saw ${JSON.stringify(rows.map(r => r._id))}`);
+    assert.equal(parseIndexKeys(mine.fields).length, 2);
+  });
+});
+
+test('live DQL: re-creating the identical index is a silent success', async () => {
+  await withStore(async ({ exec, repo }) => {
+    await exec('INSERT INTO `t` DOCUMENTS (:d)', { d: { _id: 'a', s: 1, c: 2 } });
+    const keys = [
+      { name: 's', ascending: true },
+      { name: 'c', ascending: false },
+    ];
+    await repo.createIndex('t', keys);
+    await repo.createIndex('t', keys); // idempotent
+
+    const rows = await exec('SELECT * FROM system:indexes');
+    assert.equal(rows.filter(r => r._id === 't.idx_t_s_c').length, 1, 'exactly one index');
+  });
+});
+
+test('live DQL: a same-name index with a different definition is refused, not ignored', async () => {
+  // `IF NOT EXISTS` compares index NAMES only, so flipping a direction would
+  // otherwise succeed silently while changing nothing — the user would believe
+  // their new definition took effect. The name is direction-independent by
+  // design, which is exactly why this check has to exist.
+  await withStore(async ({ exec, repo }) => {
+    await exec('INSERT INTO `t` DOCUMENTS (:d)', { d: { _id: 'a', s: 1, c: 2 } });
+    await repo.createIndex('t', [
+      { name: 's', ascending: true },
+      { name: 'c', ascending: true },
+    ]);
+
+    await assert.rejects(
+      () => repo.createIndex('t', [
+        { name: 's', ascending: true },
+        { name: 'c', ascending: false },   // same name, different definition
+      ]),
+      /already exists on "t" with a different definition/,
+    );
+
+    // The original is untouched.
+    const rows = await exec('SELECT * FROM system:indexes');
+    const mine = rows.find(r => r._id === 't.idx_t_s_c');
+    assert.ok(mine);
+    assert.deepEqual(parseIndexKeys(mine.fields).map(k => k.ascending), [true, true]);
+  });
+});
+
+test('live DQL: a composite index is droppable by its generated name', async () => {
+  await withStore(async ({ exec, repo }) => {
+    await exec('INSERT INTO `t` DOCUMENTS (:d)', { d: { _id: 'a', s: 1, c: 2 } });
+    await repo.createIndex('t', [
+      { name: 's', ascending: true },
+      { name: 'c', ascending: false },
+    ]);
+    await repo.dropIndex('idx_t_s_c', 't');
+    const rows = await exec('SELECT * FROM system:indexes');
+    assert.ok(!rows.some(r => r._id === 't.idx_t_s_c'), 'dropped');
+  });
+});
+
+test('live DQL: an all-blank field list is rejected before touching the store', async () => {
+  await withStore(async ({ repo }) => {
+    await assert.rejects(
+      () => repo.createIndex('t', [{ name: '   ', ascending: true }]),
+      /At least one field/,
+    );
+  });
+});
+
+test('live DQL: a query can be planned against a composite index', async () => {
+  // The point of the feature. EXPLAIN naming the index is the only direct
+  // evidence the optimizer can actually use it.
+  await withStore(async ({ exec, repo }) => {
+    for (let i = 0; i < 20; i++) {
+      await exec('INSERT INTO `tasks` DOCUMENTS (:d)', {
+        d: { _id: `t${i}`, status: i % 2 === 0 ? 'open' : 'done', createdAt: i },
+      });
+    }
+    await repo.createIndex('tasks', [
+      { name: 'status', ascending: true },
+      { name: 'createdAt', ascending: false },
+    ]);
+
+    const plan = await exec(
+      "EXPLAIN SELECT * FROM `tasks` WHERE status = 'open' ORDER BY createdAt DESC",
+    );
+    const text = JSON.stringify(plan);
+    assert.match(
+      text, /idx_tasks_status_createdAt/,
+      `expected the composite index in the plan, got: ${text.slice(0, 400)}`,
+    );
   });
 });

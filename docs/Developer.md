@@ -402,6 +402,17 @@ in `DittoManager`. To add a fourth:
   (`redactSecrets`) live in `src/logging/secrets.ts` and must cover the same
   patterns: a detected-but-unredacted secret still reaches the sinks and the
   log export.
+- **Indexes are composite.** SDK 5.1 supports `CREATE INDEX … ON c (a ASC, b
+  DESC)`. `DittoIndex.fields` is an ordered `IndexField[]` (`{ name, ascending }`),
+  and the order is what decides which queries the optimizer can serve it with —
+  it only uses a composite index from its leading key onwards. Never reorder or
+  deduplicate it. All statement construction and `system:indexes` parsing lives
+  in `src/ditto/index-builder.ts`; the generated name matches the SwiftUI Edge
+  Studio app (`idx_<collection>_<field…>`, with `.`/space/`-` mapped to `_`) so
+  an index made in one client is recognisable in the other. Note that
+  `IF NOT EXISTS` compares names only, so creating an index whose name collides
+  with a different definition would silently do nothing — `createIndex` queries
+  `system:indexes` first and raises instead.
 - **Quote identifiers going into DQL.** DQL has bind parameters for values but
   not for identifiers, so collection/field/index names get concatenated into
   the statement. Route them through `quoteIdentifier` / `quoteFieldPath` in

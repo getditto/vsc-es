@@ -1,5 +1,5 @@
 import type { StoredDittoConfig, StoredSubscription } from '../models/DittoConfig.js';
-import type { DittoCollection, DittoIndex } from '../models/DittoCollection.js';
+import type { DittoCollection, DittoIndex, IndexField } from '../models/DittoCollection.js';
 import type { StoredObserver } from '../models/StoredObserver.js';
 
 /** Visual section header inside an active database — non-clickable, dimmed.
@@ -25,7 +25,7 @@ export type DatabaseTreeNode =
   | { kind: 'documentsLeaf'; databaseId: string; collection: DittoCollection }
   | { kind: 'indexesParent'; databaseId: string; collection: DittoCollection }
   | { kind: 'index'; databaseId: string; collectionName: string; index: DittoIndex }
-  | { kind: 'indexField'; databaseId: string; collectionName: string; indexId: string; field: string }
+  | { kind: 'indexField'; databaseId: string; collectionName: string; indexId: string; field: IndexField }
   | { kind: 'peerListing'; databaseId: string }
   | { kind: 'queryEditor'; databaseId: string }
   | { kind: 'queryMetrics'; databaseId: string }

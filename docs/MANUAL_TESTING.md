@@ -524,6 +524,24 @@ hit-testing, real peer-to-peer transports, or a judgement about how something
 looks. jsdom performs no layout, so CSS behaviour in particular cannot be
 covered by the automated suite at all.
 
+## Composite index editor (visual only)
+
+The behaviour is covered automatically — `index-builder.test.ts` for the
+statement text, `dql-live.test.ts` for the real round-trip including an EXPLAIN
+that names the composite index, and `webview/add-index-element.test.ts` for the
+editor's rows, reordering and emitted payload. What is left needs eyes, because
+jsdom performs no layout:
+
+1. Open **Add Index…** on a collection. Add three fields. The rows stay legible
+   at a narrow panel width: the name input flexes, ASC/DESC stays readable, and
+   the ↑/↓/✕ buttons stay square and reachable.
+2. The ↑ on the first row and ↓ on the last are visibly disabled, not just
+   inert.
+3. In a **light** theme, the row buttons and the ASC/DESC dropdown are legible
+   against their own backgrounds.
+4. Tab through one row: name → direction → up → down → remove, each with a
+   visible focus ring.
+
 ## Troubleshooting
 
 ### The Output panel shows `SPIKE: failed: …`

@@ -122,7 +122,13 @@ export type ImportDataOut =
 
 // ─── Add Index panel ───────────────────────────────────────────
 export type AddIndexIn =
-  | { type: 'addIndex.create'; collection: string; field: string }
+  | {
+      type: 'addIndex.create';
+      collection: string;
+      /** Ordered keys. More than one creates a composite index; the order is
+       *  significant to the query optimizer, so it is preserved verbatim. */
+      fields: import('../models/DittoCollection.js').IndexField[];
+    }
   | { type: 'addIndex.cancel' };
 
 export type AddIndexOut =

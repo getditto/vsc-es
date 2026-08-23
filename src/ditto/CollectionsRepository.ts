@@ -1,8 +1,12 @@
 import * as vscode from 'vscode';
 import type { DittoManager } from './DittoManager.js';
 import type { Logger } from '../logging/types.js';
-import type { DittoCollection, DittoIndex } from '../models/DittoCollection.js';
-import { quoteIdentifier, quoteFieldPath } from './dql-identifier.js';
+import type { DittoCollection, DittoIndex, IndexField } from '../models/DittoCollection.js';
+import {
+  buildCreateIndexQuery, buildDropIndexQuery, makeIndexName, normalizeIndexFields,
+  parseIndexKeys, indexKeysMatch, describeIndexKeys, InvalidIndexError,
+} from './index-builder.js';
+import { quoteIdentifier } from './dql-identifier.js';
 
 /**
  * Cache of collections (with counts + indexes) for the active database.
@@ -53,16 +57,40 @@ export class CollectionsRepository {
     await this.hydrate('refresh');
   }
 
-  async createIndex(collection: string, fieldName: string): Promise<void> {
-    // DQL has no bind parameters for identifiers, so these are concatenated
-    // into the statement. Backtick-quote rather than restrict the character
-    // set: a collection named `order-items` is perfectly legal in Ditto, and
-    // rejecting it would lock the user out of indexing it entirely.
-    const safeField = fieldName.replace(/[. ]/g, '_');
-    const indexName = `idx_${collection}_${safeField}`;
-    const query = `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(indexName, 'index')} `
-      + `ON ${quoteIdentifier(collection, 'collection')} (${quoteFieldPath(fieldName)})`;
-    this.log.info('Creating index', { collection, fieldName, indexName });
+  /**
+   * Create an index over one or more fields. More than one field produces a
+   * composite index (SDK 5.1+); their order is preserved because the optimizer
+   * only uses a composite index from its leading key onwards.
+   */
+  async createIndex(collection: string, fields: readonly IndexField[]): Promise<void> {
+    const cleaned = normalizeIndexFields(fields);
+    const indexName = makeIndexName(collection, cleaned);
+
+    // `IF NOT EXISTS` compares index NAMES only, so an existing index with the
+    // same generated name but a different definition — a flipped direction, or
+    // a different field that sanitized to the same name — makes the statement
+    // silently succeed while changing nothing. Detect that instead of letting
+    // the user believe their new definition took effect.
+    const existing = await this.manager.executeRaw(
+      'SELECT * FROM system:indexes WHERE _id = :id',
+      { id: `${collection}.${indexName}` },
+    );
+    if (existing.length > 0) {
+      const existingKeys = parseIndexKeys(existing[0].fields);
+      if (indexKeysMatch(existingKeys, cleaned)) {
+        this.log.info('Index already exists with the same definition', { collection, indexName });
+        return;
+      }
+      throw new InvalidIndexError(
+        `An index named "${indexName}" already exists on "${collection}" with a different `
+        + `definition (${describeIndexKeys(existingKeys)}). Delete it before re-creating.`,
+      );
+    }
+
+    const query = buildCreateIndexQuery(collection, cleaned, indexName);
+    this.log.info('Creating index', {
+      collection, indexName, keys: describeIndexKeys(cleaned),
+    });
     await this.manager.executeRaw(query);
     await this.hydrate('createIndex');
   }
@@ -74,8 +102,7 @@ export class CollectionsRepository {
    *  the equivalent `<collection>.<name>` form would also work.
    *  Re-hydrates so the tree updates immediately. */
   async dropIndex(indexName: string, collection: string): Promise<void> {
-    const query = `DROP INDEX IF EXISTS ${quoteIdentifier(indexName, 'index')} `
-      + `ON ${quoteIdentifier(collection, 'collection')}`;
+    const query = buildDropIndexQuery(indexName, collection);
     this.log.info('Dropping index', { indexName, collection });
     await this.manager.executeRaw(query);
     await this.hydrate('dropIndex');
@@ -236,18 +263,6 @@ export class CollectionsRepository {
   }
 }
 
-/** Shape of a row from `SELECT * FROM system:indexes`. Two field shapes
- *  exist in the wild:
- *   - Newer SDK: `[{ direction: 'asc', key: ['`fieldName`'] }, …]`
- *   - Older SDK: `['fieldName', …]`
- *
- *  Everything is typed as `unknown` because the SDK doesn't expose a
- *  declarative type for system rows. `parseSystemIndexRow` does the
- *  runtime narrowing in one place. */
-interface SystemIndexFieldDescriptor {
-  direction?: string;
-  key?: unknown[];
-}
 
 /** Pure parser for a `system:indexes` row into a `DittoIndex`. Returns
  *  `undefined` if the row is missing required fields so the caller can
@@ -257,21 +272,7 @@ function parseSystemIndexRow(row: Record<string, unknown>): DittoIndex | undefin
   const collection = typeof row.collection === 'string' ? row.collection : '';
   if (!id || !collection) { return undefined; }
 
-  const rawFields = row.fields;
-  const fields: string[] = [];
-  if (Array.isArray(rawFields)) {
-    for (const f of rawFields) {
-      if (typeof f === 'string') {
-        fields.push(f.replace(/`/g, ''));
-      } else if (f && typeof f === 'object' && !Array.isArray(f)) {
-        const desc = f as SystemIndexFieldDescriptor;
-        const key = desc.key;
-        if (Array.isArray(key) && key.length > 0 && typeof key[0] === 'string') {
-          fields.push(key[0].replace(/`/g, ''));
-        }
-      }
-    }
-  }
+  const fields = parseIndexKeys(row.fields);
 
   const dotIdx = id.indexOf('.');
   const displayName = dotIdx >= 0 ? id.slice(dotIdx + 1) : id;

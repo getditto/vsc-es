@@ -5,6 +5,7 @@ import type { ObserverStore } from '../storage/ObserverStore.js';
 import type { DatabaseTreeNode } from './DatabaseTreeItem.js';
 import type { LifecycleState } from '../ditto/lifecycle-state.js';
 import type { DittoCollection } from '../models/DittoCollection.js';
+import { describeIndexKeys } from '../ditto/index-builder.js';
 
 /**
  * Build a `TreeItemLabel` whose count portion is wrapped in
@@ -472,14 +473,24 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         );
         item.iconPath = new vscode.ThemeIcon('symbol-namespace');
         item.contextValue = 'index';
+        // Composite indexes are the point of the key list — showing it inline
+        // saves expanding the row to find out what a name like
+        // `idx_tasks_status_createdAt` actually covers.
+        item.description = describeIndexKeys(node.index.fields);
+        item.tooltip = node.index.fields.length > 1
+          ? `Composite index: ${item.description}`
+          : item.description;
         item.id = `idx.${node.databaseId}.${node.collectionName}.${node.index.id}`;
         return item;
       }
       case 'indexField': {
-        const item = new vscode.TreeItem(node.field, vscode.TreeItemCollapsibleState.None);
+        const item = new vscode.TreeItem(node.field.name, vscode.TreeItemCollapsibleState.None);
+        // The direction is only meaningful alongside the key order, so it goes
+        // in the description rather than the label.
+        item.description = node.field.ascending ? 'ASC' : 'DESC';
         item.iconPath = new vscode.ThemeIcon('symbol-field');
         item.contextValue = 'indexField';
-        item.id = `idxF.${node.databaseId}.${node.collectionName}.${node.indexId}.${node.field}`;
+        item.id = `idxF.${node.databaseId}.${node.collectionName}.${node.indexId}.${node.field.name}`;
         return item;
       }
       case 'peerListing': {
