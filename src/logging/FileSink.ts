@@ -112,6 +112,79 @@ export class FileSink {
     return didSomething;
   }
 
+  /**
+   * Newest `maxLines` lines across the rotation set, oldest-first.
+   *
+   * Reads backwards from the end of the newest file and stops as soon as it
+   * has enough, because that is where the interesting lines are. The
+   * alternative — `readAllChronological()` — pulls the entire retention window
+   * into one string: with the defaults that is 6 files x 5 MB, and the caller
+   * then splits it into ~300k more strings, only to discard nearly all of them
+   * against a timestamp cutoff.
+   *
+   * Chunks are accumulated as *bytes* and only decoded from a line boundary
+   * onwards. Decoding each chunk independently would corrupt any multi-byte
+   * character straddling a chunk boundary.
+   */
+  async readTailLines(maxLines: number, chunkSize = 64 * 1024): Promise<string[]> {
+    if (maxLines <= 0) { return []; }
+    const active = path.join(this.dir, FILENAME);
+    // Newest first: the active file, then .1, .2, … (rotate() shifts upwards,
+    // so a higher suffix is older).
+    const files = [active, ...Array.from({ length: this.opts.retain }, (_, i) => `${active}.${i + 1}`)];
+
+    const newestFirst: string[] = [];
+    for (const file of files) {
+      if (newestFirst.length >= maxLines) { break; }
+      // `maxLines`, not the remaining count: readFileTail appends to the shared
+      // accumulator and compares against its total length.
+      await this.readFileTail(file, maxLines, chunkSize, newestFirst);
+    }
+    return newestFirst.reverse();
+  }
+
+  /** Read backwards from the end of `file`, appending lines to `out` (newest
+   *  first) until `out` holds `target` of them in total. */
+  private async readFileTail(
+    file: string, target: number, chunkSize: number, out: string[],
+  ): Promise<void> {
+    let handle;
+    try { handle = await fs.open(file, 'r'); }
+    catch { return; } // rotated away or never created
+    try {
+      const { size } = await handle.stat();
+      let pos = size;
+      // Leading bytes of the chunk just read, up to its first newline: an
+      // incomplete line whose start lives in the (earlier) next chunk.
+      let carry = Buffer.alloc(0);
+
+      while (pos > 0 && out.length < target) {
+        const len = Math.min(chunkSize, pos);
+        pos -= len;
+        const buf = Buffer.alloc(len);
+        await handle.read(buf, 0, len, pos);
+        const combined = Buffer.concat([buf, carry]);
+
+        const firstNl = combined.indexOf(0x0a);
+        if (firstNl === -1) { carry = combined; continue; }
+        carry = combined.subarray(0, firstNl);
+        // Starts just past a newline and ends where the previous carry ended
+        // (itself a line boundary, or EOF), so this is whole lines only.
+        const complete = combined.subarray(firstNl + 1).toString('utf8').split('\n');
+        for (let i = complete.length - 1; i >= 0 && out.length < target; i -= 1) {
+          if (complete[i].length > 0) { out.push(complete[i]); }
+        }
+      }
+      // Reached the start of the file: the carry is its first line.
+      if (pos === 0 && carry.length > 0 && out.length < target) {
+        const first = carry.toString('utf8');
+        if (first.length > 0) { out.push(first); }
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+
   async readAllChronological(): Promise<string> {
     const active = path.join(this.dir, FILENAME);
     const parts: string[] = [];

@@ -32,6 +32,7 @@ function noopLogger(): Logger {
     onDidChangeSdkLevel: evt as any,
     withTag: () => self,
     readAllLogs: async () => '',
+    readRecentLogLines: async () => [],
     dispose: async () => {},
   };
   return self;

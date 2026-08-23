@@ -24,7 +24,7 @@ export class LogAnalyzerPanel {
     databaseId: string,
     databaseName: string,
     svc: LogAnalyzerService,
-    backfillProvider: () => Promise<string>,
+    backfillProvider: () => Promise<string[]>,
     logger: Logger,
     inspector: InspectorController,
     /** Lines older than this are skipped during backfill so the panel
@@ -63,7 +63,7 @@ export class LogAnalyzerPanel {
     private readonly databaseId: string,
     databaseName: string,
     private readonly svc: LogAnalyzerService,
-    private readonly backfillProvider: () => Promise<string>,
+    private readonly backfillProvider: () => Promise<string[]>,
     private readonly logger: Logger,
     private readonly inspector: InspectorController,
     private readonly minTimestamp?: Date,
@@ -124,8 +124,8 @@ export class LogAnalyzerPanel {
     this.bootstrapped = true;
     const log = this.logger.withTag('ext:LogAnalyzerPanel');
     try {
-      const text = await this.backfillProvider();
-      this.svc.start({ backfillText: text, minTimestamp: this.minTimestamp });
+      const lines = await this.backfillProvider();
+      this.svc.start({ backfillLines: lines, minTimestamp: this.minTimestamp });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.warn('Backfill failed; continuing with live-only ingestion', { err: message });

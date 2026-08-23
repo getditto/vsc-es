@@ -130,6 +130,10 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
         await fileSink.flush();
         return fileSink.readAllChronological();
       },
+      readRecentLogLines: async (maxLines: number) => {
+        await fileSink.flush();
+        return fileSink.readTailLines(maxLines);
+      },
       dispose: async () => {
         await fileSink.dispose();
         channelSink.dispose();

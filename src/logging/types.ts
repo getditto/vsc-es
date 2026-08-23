@@ -29,6 +29,11 @@ export interface Logger {
 
   /** Flush + read all log files chronologically. Used by the Export Logs command. */
   readAllLogs(): Promise<string>;
+  /** Newest `maxLines` log lines across the rotation set, oldest-first. Use
+   *  this instead of readAllLogs when only recent history matters — it reads
+   *  backwards and stops early rather than materialising the whole retention
+   *  window. */
+  readRecentLogLines(maxLines: number): Promise<string[]>;
 
   /** Flush + close. Call from extension.deactivate(). */
   dispose(): Promise<void>;

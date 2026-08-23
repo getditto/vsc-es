@@ -994,7 +994,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         databaseId,
         databaseName,
         makeAnalyzerService(),
-        () => logger.readAllLogs(),
+        // Only the newest lines can survive the buffer cap and the connect-time
+        // cutoff, so read the tail rather than the whole retention window.
+        () => logger.readRecentLogLines(LogAnalyzerService.BACKFILL_LINE_LIMIT),
         logger,
         inspectorController,
         minTimestamp,

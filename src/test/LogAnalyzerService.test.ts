@@ -74,10 +74,10 @@ test('Service: queryLines search matches against user tags', () => {
 test('Service: backfill text is processed before live', () => {
   const { svc } = makeSvc();
   svc.start({
-    backfillText: [
+    backfillLines: [
       '2026-06-09T14:00:00.000Z  INFO   [sdk]  msg one',
       '2026-06-09T14:00:01.000Z  INFO   [sdk]  msg two',
-    ].join('\n'),
+    ],
   });
   const state = svc.getStateForTesting();
   assert.equal(state.counts.totalLines, 2);
@@ -89,11 +89,11 @@ test('Service: backfill skips lines older than minTimestamp', () => {
   // be admitted. The older 14:00:00 line is dropped silently.
   svc.start({
     minTimestamp: new Date('2026-06-09T14:00:30.000Z'),
-    backfillText: [
+    backfillLines: [
       '2026-06-09T14:00:00.000Z  INFO   [sdk]  old',
       '2026-06-09T14:00:30.000Z  INFO   [sdk]  at-cutoff',
       '2026-06-09T14:00:45.000Z  INFO   [sdk]  newer',
-    ].join('\n'),
+    ],
   });
   const state = svc.getStateForTesting();
   assert.equal(state.counts.totalLines, 2);
@@ -103,10 +103,10 @@ test('Service: backfill drops lines with no parsed timestamp when a cutoff is se
   const { svc } = makeSvc();
   svc.start({
     minTimestamp: new Date('2026-06-09T14:00:00.000Z'),
-    backfillText: [
+    backfillLines: [
       '2026-06-09T14:00:30.000Z  INFO   [sdk]  ok',
       'not a real log line at all',  // line.timestamp === null
-    ].join('\n'),
+    ],
   });
   // Only the well-formed line passes; we refuse to admit lines we can't
   // prove belong to the connection.
@@ -116,10 +116,10 @@ test('Service: backfill drops lines with no parsed timestamp when a cutoff is se
 test('Service: backfill without minTimestamp admits every parseable line (legacy behavior)', () => {
   const { svc } = makeSvc();
   svc.start({
-    backfillText: [
+    backfillLines: [
       '2020-01-01T00:00:00.000Z  INFO   [sdk]  ancient',
       '2026-06-09T14:00:00.000Z  INFO   [sdk]  recent',
-    ].join('\n'),
+    ],
   });
   assert.equal(svc.getStateForTesting().counts.totalLines, 2);
 });
@@ -154,7 +154,7 @@ test('Service: dispose unsubscribes', () => {
 
 test('Service: backfill IDs are negative, live IDs non-negative', () => {
   const { svc, sink } = makeSvc();
-  svc.start({ backfillText: '2026-06-09T14:00:00.000Z  ERROR  [sdk]  deadlock' });
+  svc.start({ backfillLines: ['2026-06-09T14:00:00.000Z  ERROR  [sdk]  deadlock'] });
   sink.write('error', '2026-06-09T14:00:01.000Z  ERROR  [sdk]  deadlock');
   const state = svc.getStateForTesting();
   const problems = state.problems.get('deadlock_critical') ?? [];
@@ -327,7 +327,7 @@ const BACKFILL = [
   '2026-08-23T18:55:48.327Z  ERROR  [ext]  UNCAUGHT EXCEPTION {"a":2}',
   '2026-08-23T18:55:48.332Z  ERROR  [ext]  UNCAUGHT EXCEPTION {"a":3}',
   '2026-08-23T18:55:48.346Z  ERROR  [ext]  UNCAUGHT EXCEPTION {"a":4}',
-].join('\n');
+];
 
 /** A service with the production throttle, so the throttling path is the one
  *  under test rather than being disabled by throttleMs: 0. */
@@ -344,7 +344,7 @@ function makeThrottledSvc() {
 
 test('Service: the summary after a backfill agrees with what the tabs query', () => {
   const { svc, summaries } = makeThrottledSvc();
-  svc.start({ backfillText: BACKFILL });
+  svc.start({ backfillLines: BACKFILL });
 
   const last = summaries[summaries.length - 1];
   assert.equal(last.counts.totalLines, svc.queryLines({ filter: 'all' }).total, 'Lines vs All tab');
@@ -367,7 +367,7 @@ test('Service: the volume histogram counts this analyzer\'s lines, not the share
   const histos: any[] = [];
   svc.onDiff(d => { if (d.type === 'histogramsUpdated') { histos.push(d.histograms); } });
 
-  svc.start({ backfillText: BACKFILL });
+  svc.start({ backfillLines: BACKFILL });
 
   const bins = histos[histos.length - 1].volumeByLevel;
   const total = bins.reduce((n: number, b: any) =>
@@ -380,7 +380,7 @@ test('Service: clear() empties the volume histogram too', () => {
   const { svc } = makeThrottledSvc();
   const histos: any[] = [];
   svc.onDiff(d => { if (d.type === 'histogramsUpdated') { histos.push(d.histograms); } });
-  svc.start({ backfillText: BACKFILL });
+  svc.start({ backfillLines: BACKFILL });
   assert.ok(histos[histos.length - 1].volumeByLevel.length > 0, 'populated before clear');
 
   svc.clear();
@@ -437,11 +437,11 @@ test('Service: start() does not leak the sink subscription', () => {
 test('Service: the refresh sequence does not duplicate the backfill', () => {
   // What LogAnalyzerPanel does for analyzer.refresh: clear, then re-ingest.
   const { svc } = makeThrottledSvc();
-  svc.start({ backfillText: BACKFILL });
+  svc.start({ backfillLines: BACKFILL });
   const first = svc.queryLines({ filter: 'all' }).total;
 
   svc.clear();
-  svc.start({ backfillText: BACKFILL });
+  svc.start({ backfillLines: BACKFILL });
 
   assert.equal(svc.queryLines({ filter: 'all' }).total, first, 'same lines, not doubled');
   assert.equal(svc.queryLines({ filter: 'error' }).total, 4);
@@ -451,7 +451,7 @@ test('Service: the summary carries the tags, SDK version and time range', () => 
   // None of these were ever transmitted, so the header showed
   // "SDK: unknown · Tags: none · Range: n/a" for the life of the panel.
   const { svc, summaries } = makeThrottledSvc();
-  svc.start({ backfillText: BACKFILL });
+  svc.start({ backfillLines: BACKFILL });
   const last = summaries[summaries.length - 1] as any;
 
   assert.deepEqual(last.tags, ['ext']);
@@ -462,7 +462,7 @@ test('Service: the summary carries the tags, SDK version and time range', () => 
 
 test('Service: clear() resets the transmitted metadata as well as the counts', () => {
   const { svc, summaries } = makeThrottledSvc();
-  svc.start({ backfillText: BACKFILL });
+  svc.start({ backfillLines: BACKFILL });
   svc.clear();
   svc.resume();
   const last = summaries[summaries.length - 1] as any;

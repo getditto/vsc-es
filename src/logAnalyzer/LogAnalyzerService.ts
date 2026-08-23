@@ -70,14 +70,19 @@ export class LogAnalyzerService {
     this.throttleMs = opts.throttleMs ?? 250;
   }
 
-  start(p: { backfillText?: string; minTimestamp?: Date } = {}): void {
+  /** Upper bound on retained lines. Also the right number of lines to ask a
+   *  backfill provider for: the buffer keeps the newest LINE_BUFFER_CAP, so
+   *  anything older would be read and then dropped. */
+  static readonly BACKFILL_LINE_LIMIT = LINE_BUFFER_CAP;
+
+  start(p: { backfillLines?: readonly string[]; minTimestamp?: Date } = {}): void {
     // Dispose first: start() is called again by the panel's refresh, and
     // overwriting liveSub left the previous subscription attached, so every
     // later line was processed once per start() — counts and the line buffer
     // both multiplied.
     this.liveSub?.dispose();
-    if (p.backfillText) {
-      this.processBackfill(p.backfillText, p.minTimestamp);
+    if (p.backfillLines && p.backfillLines.length > 0) {
+      this.processBackfill(p.backfillLines, p.minTimestamp);
     }
     this.liveSub = this.opts.sink.onLine(l => this.processLine(l));
     // Flush unconditionally after backfill. maybeFlush is throttled on the
@@ -207,11 +212,14 @@ export class LogAnalyzerService {
     return { line, before, after };
   }
 
-  private processBackfill(text: string, minTimestamp?: Date): void {
+  /** `lines` arrive oldest-first and already split — the provider reads the
+   *  tail of the log files, so neither the whole file nor a whole-file split
+   *  array is ever materialised. */
+  private processBackfill(lines: readonly string[], minTimestamp?: Date): void {
     try {
-      const lines = text.split('\n').filter(s => s.length > 0);
       const cutoffMs = minTimestamp?.getTime();
       for (const raw of lines) {
+        if (raw.length === 0) { continue; }
         const id = this.backfillIdCursor--;
         const line = parseLine(raw, id);
         // Drop lines older than the scope's connect time. Lines that
