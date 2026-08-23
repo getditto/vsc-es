@@ -269,6 +269,9 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
     - Resize the panel narrow and wide; controls remain usable and do not obscure recovery actions.
     - Close the panel during or after a drag and reopen it; the cursor and graph interaction are not stuck.
     - Clicking the local **Me** peer selects nothing — no peer dims and no connection thickens.
+      With **Direct** enabled, hovering **Me** likewise dims nothing and thickens no
+      connections; only its own pill shows the hover fill. (With Direct off, hovering
+      **Me** emphasizes its connections like any other peer.)
 13. Verify state survives the tab round-trip (each of these was a real defect):
     - Uncheck **Direct**, switch to *Connected Peers*, switch back. The box is
       still unchecked **and** multi-hop peers are still shown — the two must agree.
@@ -292,7 +295,7 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 > The following can only be checked by eye — jsdom performs no layout, cascade,
 > or hit-testing, so the automated suite cannot cover CSS behaviour at all.
 
-16. Verify cursors and pointer targets:
+15. Verify cursors and pointer targets:
     - Hovering a peer shows a pointer cursor; pressing and dragging shows
       `grabbing` (not `pointer`) for the whole drag.
     - Hover a peer, then move the pointer through the *gaps between* the control
@@ -300,7 +303,7 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
       staying dimmed — the overlay container must not swallow those events.
     - Every control in that cluster is still clickable: Direct, both zoom
       buttons, center, and eye.
-15. Switch VS Code to a **light** theme and reopen the Presence Graph:
+16. Switch VS Code to a **light** theme and reopen the Presence Graph:
     - The legend, Direct/zoom groups, and the center/eye buttons are all legible
       against their own backgrounds — check especially with the controls hidden,
       when the two icon buttons are the only thing on screen.

@@ -59,7 +59,6 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [
         vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview-ui'),
-        vscode.Uri.joinPath(this.context.globalStorageUri, 'inspector-attachments'),
       ],
     };
     view.webview.html = this.html(view.webview);
@@ -346,6 +345,8 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       `script-src ${webview.cspSource}`,
       `font-src ${webview.cspSource}`,
       `connect-src ${webview.cspSource}`,
+      "base-uri 'none'",
+      "form-action 'none'",
     ].join('; ');
     return `<!doctype html>
 <html><head>

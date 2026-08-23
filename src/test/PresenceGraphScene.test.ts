@@ -101,7 +101,8 @@ test('PresenceGraphScene: the local peer is not selectable', () => {
   scene.selectPeer('local');
   assert.equal(scene.selectedPeerKey, undefined);
 
-  // And it must not silently clear an existing selection either.
+  // Clicking the unselectable local peer is treated like clicking empty
+  // canvas: it clears any existing selection rather than focusing local.
   scene.selectPeer('a');
   scene.selectPeer('local');
   assert.equal(scene.selectedPeerKey, undefined);
@@ -138,6 +139,55 @@ test('PresenceGraphScene: leaving Direct mode drops hover focus too', () => {
 
   assert.equal(scene.hoveredPeerKey, undefined);
   assert.deepEqual(scene.focusForPeer('b'), { selected: false, alpha: 1 });
+});
+
+test('PresenceGraphScene: hovering the local peer is not a focus and highlights no lines', () => {
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
+  scene.applyInput(graphInput());
+  scene.setHovered(scene.peers.get('local'));
+
+  // Every line touches local in Direct mode, so hover-focusing it would dim
+  // nothing and thicken every stroke at once — the glitch the selectPeer
+  // guard rejects for clicks. Hover gets the same treatment.
+  assert.deepEqual(scene.focusForPeer('b'), { selected: false, alpha: 1 }, 'no dimming');
+  const line = [...scene.lines.values()].find(l => l.toKey === 'a')!;
+  assert.deepEqual(scene.focusForLine(line), { selected: false, alpha: 1 });
+  assert.ok(!line.highlighted, 'no emphasized stroke');
+  assert.equal(scene.peers.get('local')!.highlighted, true, 'the pill itself still gets the hover fill');
+});
+
+test('PresenceGraphScene: hovering the local peer in full-mesh mode still highlights its lines', () => {
+  // The Direct-mode glitch rationale does not apply here: local's spokes are
+  // a minority of the mesh, and every other peer gets line emphasis on hover.
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: false });
+  scene.applyInput(graphInput());
+  scene.setHovered(scene.peers.get('local'));
+
+  const line = [...scene.lines.values()].find(l => l.toKey === 'a')!;
+  assert.equal(line.highlighted, true);
+});
+
+test('PresenceGraphScene: leaving Direct mode resets highlight flags, not just focus keys', () => {
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
+  scene.applyInput(graphInput());
+  scene.setHovered(scene.peers.get('a'));
+  assert.equal([...scene.lines.values()].find(l => l.toKey === 'a')!.highlighted, true);
+
+  scene.setShowDirectConnectedOnly(false);
+
+  assert.equal(scene.hoveredPeerKey, undefined);
+  assert.equal(scene.peers.get('a')!.highlighted, false, 'node highlight cleared');
+  assert.ok([...scene.lines.values()].every(l => !l.highlighted), 'line highlights cleared');
+});
+
+test('PresenceGraphScene: zoom snaps to whole percents at the clamp boundary', () => {
+  const scene = new PresenceGraphScene({});
+  for (let i = 0; i < 5; i += 1) { scene.setZoom(scene.zoom - 0.1); }
+  // 1 − 0.1 × 5 is 0.5000000000000001 in binary float; the zoom buttons
+  // disable at exactly 0.5, so the error would read as one dead click.
+  assert.equal(scene.zoom, 0.5);
+  scene.setZoom(scene.zoom + 0.05);
+  assert.equal(scene.zoom, 0.55);
 });
 
 test('PresenceGraphScene: hovered link emphasis survives a presence update', () => {

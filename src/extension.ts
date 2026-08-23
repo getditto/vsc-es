@@ -25,7 +25,7 @@ import { AddIndexPanel } from './panels/AddIndexPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 import { CollectionsRepository } from './ditto/CollectionsRepository.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
-import { performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
+import { confirmSwitch, performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
 import { attachSdkLogBridge } from './logging/sdk-bridge.js';
 import type { Logger, LogLevel } from './logging/types.js';
@@ -98,14 +98,19 @@ function buildSwitchDeps(
       },
     },
     panels: {
-      closeQuery: () => QueryEditorPanel.dispose(),
-      closePeers: () => PeerListingPanel.dispose(),
+      // preserveTabs/preserveState: the switch restore reopens these
+      // panels from the tracker — disposing must not delete the entries
+      // it's about to read.
+      closeQuery: () => QueryEditorPanel.dispose({ preserveTabs: true }),
+      closePeers: () => PeerListingPanel.dispose({ preserveState: true }),
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
       closeQueryMetrics: () => QueryMetricsPanel.dispose(),
       closeDatabaseMetrics: () => DatabaseMetricsPanel.dispose(),
       closeImportData: () => ImportDataPanel.dispose(),
       closeObserver: () => ObserverPanel.disposeAll(),
       closeObserverEditor: () => ObserverEditorPanel.dispose(),
+      closeAddIndex: () => AddIndexPanel.dispose(),
+      closeImportSubscriptions: () => ImportSubscriptionsPanel.dispose(),
       showQuery: (databaseId, queryText) => {
         const panel = QueryEditorPanel.show(
           context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, metrics, loggerArg,
@@ -149,7 +154,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         ? 'development' : 'production',
     extraSinks: [analyzerSink],
   });
-  context.subscriptions.push({ dispose: () => { void logger.dispose(); } });
+  // NOTE: the logger's disposal is registered at the END of activate() —
+  // VS Code disposes subscriptions in registration order, and everything
+  // else (manager.disconnect above all) logs during its own teardown.
 
   // SDK bridge: pipe Ditto SDK logs into our Logger under the 'sdk' tag.
   attachSdkLogBridge(DittoLogger as unknown as Parameters<typeof attachSdkLogBridge>[0], logger.withTag('sdk'));
@@ -301,6 +308,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   context.subscriptions.push(manager.onLifecycleStateChange(() => treeProvider.refresh()));
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
+  context.subscriptions.push({ dispose: () => treeProvider.dispose() });
 
   // ─── Settings reactivity ─────────────────────────────────────
   // When the user toggles dittoVsce.collectProfiling or
@@ -506,10 +514,17 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
             QueryEditorPanel.dispose();
             PeerListingPanel.dispose();
             SubscriptionEditorPanel.dispose();
+            QueryMetricsPanel.dispose();
+            DatabaseMetricsPanel.dispose();
+            ImportDataPanel.dispose();
             ObserverEditorPanel.dispose();
             ObserverPanel.disposeAll();
+            AddIndexPanel.dispose();
+            ImportSubscriptionsPanel.dispose();
             await manager.disconnect();
           }
+          // In-memory per-DB metrics aren't in the persistent stores below.
+          queryMetricsStore.clear(node.config.id);
           const cleanup = await Promise.allSettled([
             subscriptionStore.deleteAll(node.config.id),
             observerStore.deleteAll(node.config.id),
@@ -553,13 +568,24 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         return;
       }
       const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger);
+      const currentTarget = configStore.get(node.config.id);
+      if (!currentTarget) {
+        vscode.window.showErrorMessage('This connection no longer exists. Refresh the database list and try again.');
+        return;
+      }
+      // The confirmation modal runs OUTSIDE the persistence lock: a modal
+      // can stay open indefinitely and deactivate() waits on the lock tail,
+      // so a modal inside the lock can deadlock shutdown.
+      if (!await confirmSwitch(deps, fromActive, currentTarget)) { return; }
       await withConnectionPersistenceLock(async () => {
-        const currentTarget = configStore.get(node.config.id);
-        if (!currentTarget) {
+        // Re-check inside the lock — the config could have been deleted
+        // while the modal was open.
+        const stillTarget = configStore.get(node.config.id);
+        if (!stillTarget) {
           vscode.window.showErrorMessage('This connection no longer exists. Refresh the database list and try again.');
           return;
         }
-        await performSwitch(deps, fromActive, currentTarget);
+        await performSwitch(deps, fromActive, stillTarget);
       });
     }),
     vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
@@ -581,11 +607,19 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
           statusItem.text = `$(sync~spin) Ditto: disconnecting ${name}`;
           statusItem.show();
           try {
-            QueryEditorPanel.dispose();
-            PeerListingPanel.dispose();
+            // Mirror the switch orchestrator's teardown — every per-DB
+            // panel must close, not just the oldest few. Tabs/peers state
+            // is preserved so a later reconnect restores them.
+            QueryEditorPanel.dispose({ preserveTabs: true });
+            PeerListingPanel.dispose({ preserveState: true });
             SubscriptionEditorPanel.dispose();
+            QueryMetricsPanel.dispose();
+            DatabaseMetricsPanel.dispose();
+            ImportDataPanel.dispose();
             ObserverEditorPanel.dispose();
             ObserverPanel.disposeAll();
+            AddIndexPanel.dispose();
+            ImportSubscriptionsPanel.dispose();
             await manager.disconnect();
           } finally {
             statusItem.dispose();
@@ -1007,6 +1041,11 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   );
 
   context.subscriptions.push({ dispose: () => manager.disconnect() });
+  // Logger disposal goes LAST: subscriptions dispose in registration order
+  // and manager.disconnect() (plus everything else) still logs during
+  // teardown — disposing the logger first would route those lines into a
+  // disposed channel.
+  context.subscriptions.push({ dispose: () => { void logger.dispose(); } });
   log.info('Ditto Edge Studio extension activated.');
 
   // First-run / blank-slate onboarding. When the user has no database

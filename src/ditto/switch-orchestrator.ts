@@ -74,6 +74,14 @@ export interface SwitchPanels {
   /** Close any open ObserverEditorPanel. Same DB-switch teardown
    *  reasoning as closeSubscription. */
   closeObserverEditor(): void;
+  /** Dispose the Add Index panel if it's open. Its collection list is a
+   *  snapshot of the previous DB, and Create would run DDL against the
+   *  newly-active store. */
+  closeAddIndex(): void;
+  /** Dispose the Import Subscriptions panel if it's open. Its server-side
+   *  subscription list and target databaseId belong to the previous
+   *  connection — importing through it would write into the wrong store. */
+  closeImportSubscriptions(): void;
   /** Open a Query Editor on `databaseId`. The optional `queryText`
    *  preloads the editor — used during restore to bring back the
    *  user's saved query body. */
@@ -92,36 +100,51 @@ export interface SwitchDeps {
   panels: SwitchPanels;
 }
 
+/** Pre-switch confirmation modal. MUST be called BEFORE acquiring the
+ *  connection-persistence lock: a modal can stay open indefinitely, and
+ *  `deactivate()` waits on the lock tail — a modal shown inside the lock
+ *  can deadlock VS Code shutdown/window-reload behind a dialog the user
+ *  may never see. Returns true if the switch should proceed.
+ *
+ *  The panel set is re-derived at teardown time, so a panel opened or
+ *  closed while the modal is up only makes the message slightly stale —
+ *  never blocks or corrupts the switch. */
+export async function confirmSwitch(
+  deps: SwitchDeps,
+  fromActive: FromActive | null,
+  to: StoredDittoConfig,
+): Promise<boolean> {
+  if (!fromActive) { return true; }
+  const { tracker, logger, ui } = deps;
+  const log = logger.withTag('ext:switch');
+  const state = tracker.get(fromActive.id);
+  const labels: string[] = [];
+  if (state.query.length === 1) labels.push(`Query Editor — ${fromActive.name}`);
+  else if (state.query.length > 1) labels.push(`${state.query.length} Query Editors — ${fromActive.name}`);
+  if (state.peers) labels.push(`Presence — ${fromActive.name}`);
+  if (labels.length === 0) { return true; }
+  const totalCount = state.query.length + (state.peers ? 1 : 0);
+  const ok = await ui.showModalWarn({
+    message:
+      `Switching to "${to.name}" will close ${totalCount} open panel${totalCount === 1 ? '' : 's'} for "${fromActive.name}":\n` +
+      `   • ${labels.join('\n   • ')}\n\n` +
+      `These will reopen automatically the next time you connect to "${fromActive.name}".`,
+    buttons: ['Switch'],
+  });
+  if (ok !== 'Switch') {
+    log.debug('Switch cancelled by user', { fromId: fromActive.id, toId: to.id });
+    return false;
+  }
+  return true;
+}
+
 export async function performSwitch(
   deps: SwitchDeps,
   fromActive: FromActive | null,
   to: StoredDittoConfig,
 ): Promise<void> {
-  const { configStore, secretStore, subStore, tracker, manager, logger, ui, panels } = deps;
+  const { configStore, secretStore, subStore, manager, logger, ui, panels } = deps;
   const log = logger.withTag('ext:switch');
-
-  // 1. Pre-switch warning if fromActive has open panels.
-  if (fromActive) {
-    const state = tracker.get(fromActive.id);
-    const labels: string[] = [];
-    if (state.query.length === 1) labels.push(`Query Editor — ${fromActive.name}`);
-    else if (state.query.length > 1) labels.push(`${state.query.length} Query Editors — ${fromActive.name}`);
-    if (state.peers) labels.push(`Presence — ${fromActive.name}`);
-    if (labels.length > 0) {
-      const totalCount = state.query.length + (state.peers ? 1 : 0);
-      const ok = await ui.showModalWarn({
-        message:
-          `Switching to "${to.name}" will close ${totalCount} open panel${totalCount === 1 ? '' : 's'} for "${fromActive.name}":\n` +
-          `   • ${labels.join('\n   • ')}\n\n` +
-          `These will reopen automatically the next time you connect to "${fromActive.name}".`,
-        buttons: ['Switch'],
-      });
-      if (ok !== 'Switch') {
-        log.debug('Switch cancelled by user', { fromId: fromActive.id, toId: to.id });
-        return;
-      }
-    }
-  }
 
   // 2. Combined progress UI.
   const title = fromActive ? `Switching to "${to.name}"` : `Connecting to "${to.name}"`;
@@ -143,6 +166,8 @@ export async function performSwitch(
         panels.closeImportData();
         panels.closeObserver();
         panels.closeObserverEditor();
+        panels.closeAddIndex();
+        panels.closeImportSubscriptions();
         await manager.disconnect();
       }
 

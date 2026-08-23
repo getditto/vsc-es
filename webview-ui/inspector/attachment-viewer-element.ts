@@ -149,6 +149,17 @@ export class AttachmentViewerElement extends LitElement {
     window.removeEventListener('message', this.onMsg);
   }
 
+  protected willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('json')) {
+      // Attachment state is keyed by tokenIds derived from the CURRENT
+      // row's JSON. Keeping entries for every row ever selected would grow
+      // these records for the life of the panel.
+      this.loaded = {};
+      this.progress = {};
+      this.errors = {};
+    }
+  }
+
   private onMsg = (e: MessageEvent): void => {
     const m = e.data;
     if (!m) { return; }

@@ -24,6 +24,12 @@ export type QueryResultMetadata = {
    *  statements, profiling-disabled runs, and any case where Ditto
    *  didn't emit a parseable envelope (forward-compatible degrade). */
   profile?: QueryProfile;
+  /** True when the result set exceeded the host's row cap and only the
+   *  first `resultCount` rows were shipped to the webview. */
+  truncated?: boolean;
+  /** Total rows the query produced before truncation. Only set when
+   *  `truncated` is true. */
+  totalResultCount?: number;
 };
 
 export type InspectorContent =

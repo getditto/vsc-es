@@ -61,6 +61,15 @@ interface ActiveSession {
 
 const SYNC_STATUS_HANDLE_ID = '__sync_status';
 
+/** Hard cap on rows projected from a single query result and shipped to
+ *  a webview. A bare `SELECT *` against a large synced collection would
+ *  otherwise materialize the entire result set in the extension host and
+ *  structured-clone it into the webview — a one-click OOM of the shared
+ *  extension-host process. 10k rows is far beyond what the paged result
+ *  table (≤1000/page) can usefully show; the metadata flags truncation so
+ *  the UI can say so. */
+export const MAX_QUERY_ROWS = 10_000;
+
 export class DittoManager {
   private session: ActiveSession | null = null;
   private status: DatabaseStatus = 'idle';
@@ -298,6 +307,26 @@ export class DittoManager {
       this.log.info('Connected', { name: config.name, configId: config.id, mode: config.mode });
     } catch (err) {
       this.log.error('Connect failed', { configId: config.id, err: err instanceof Error ? err.stack : String(err) });
+      // If the failure happened AFTER the session was assigned (e.g. the
+      // presence-observer attach threw), the session is a zombie holding a
+      // live Ditto instance — tear it down so getActiveConfigId() doesn't
+      // report a config whose lifecycle is 'error'.
+      const partial = this.session;
+      if (partial) {
+        this.session = null;
+        if (partial.presenceCoalesceTimer) { clearTimeout(partial.presenceCoalesceTimer); }
+        for (const h of partial.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
+        try { partial.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
+        try { partial.presenceObserver?.stop?.(); } catch { /* ignore */ }
+        try {
+          await Promise.race([
+            partial.ditto.close(),
+            new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error('Ditto.close() timed out after 10s')), 10_000),
+            ),
+          ]);
+        } catch { /* discard */ }
+      }
       // Release the working-directory file lock left by a partially-opened
       // Ditto instance. Bounded at 10s like disconnect() — the SDK can hang
       // here when network teardown blocks, and we'd rather discard than wait.
@@ -422,7 +451,18 @@ export class DittoManager {
     const result = args === undefined
       ? await this.session.ditto.store.execute(query)
       : await this.session.ditto.store.execute(query, args as any);
-    return result.items.map(i => i.value as Record<string, unknown>);
+    // Dematerialize each item right after reading its value — otherwise
+    // items pin themselves in native memory for the life of the result
+    // (same discipline as registerStoreObserver).
+    const rows: Record<string, unknown>[] = [];
+    for (const item of result.items) {
+      try {
+        rows.push(item.value as Record<string, unknown>);
+      } finally {
+        try { item.dematerialize(); } catch { /* ignore */ }
+      }
+    }
+    return rows;
   }
 
   /**
@@ -613,16 +653,38 @@ export class DittoManager {
     const result = await this.session.ditto.store.execute(effectiveQuery);
     const durationMs = Math.round(performance.now() - start);
 
+    // Project at most MAX_QUERY_ROWS rows. A bare `SELECT *` against a
+    // large synced collection would otherwise materialize the entire result
+    // set in the host and structured-clone it into the webview — a
+    // one-click OOM of the shared extension-host process. Every item is
+    // dematerialized as we go (read or not) so none of them pin native
+    // memory for the life of the result — the same discipline the
+    // observer paths follow.
+    const items = result.items;
+    let itemCount = items.length;
     // Pop the trailing ~request_profile item before we project the user's
     // rows, so the result table never shows the profile envelope as a row.
-    let rows = result.items.map(i => i.value as Record<string, unknown>);
     let profile: QueryProfile | undefined;
-    if (expectsEnvelope && rows.length > 0) {
-      const last = rows[rows.length - 1];
-      const parsed = parseProfileItem(last);
-      if (parsed) {
-        profile = parsed;
-        rows = rows.slice(0, rows.length - 1);
+    if (expectsEnvelope && itemCount > 0) {
+      const lastItem = items[itemCount - 1];
+      try {
+        const parsed = parseProfileItem(lastItem.value as Record<string, unknown>);
+        if (parsed) {
+          profile = parsed;
+          itemCount -= 1;
+        }
+      } finally {
+        try { lastItem.dematerialize(); } catch { /* ignore */ }
+      }
+    }
+    const projected = Math.min(itemCount, MAX_QUERY_ROWS);
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 0; i < itemCount; i += 1) {
+      const item = items[i];
+      try {
+        if (i < projected) { rows.push(item.value as Record<string, unknown>); }
+      } finally {
+        try { item.dematerialize(); } catch { /* ignore */ }
       }
     }
 
@@ -638,6 +700,9 @@ export class DittoManager {
       explain,
       timestamp: Date.now(),
       profile,
+      ...(itemCount > projected
+        ? { truncated: true, totalResultCount: itemCount }
+        : {}),
     };
     return { rows, durationMs, metadata };
   }

@@ -133,18 +133,33 @@ export class LogTable extends LitElement {
   @state() private colWidths = { ts: 110, lvl: 60, tag: 220, utag: 120 };
   private dragging: { col: 'ts' | 'lvl' | 'tag' | 'utag'; startX: number; startW: number } | null = null;
 
+  private resizeObserver?: ResizeObserver;
+
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener('scroll', this.onScroll);
+    // Track the viewport height continuously — a one-shot read in
+    // firstUpdated goes stale when the panel is resized, leaving the
+    // virtualization window wrong (blank space or over-render).
+    // ResizeObserver fires immediately on observe, covering the initial
+    // measurement too.
+    this.resizeObserver = new ResizeObserver(() => {
+      const h = this.clientHeight;
+      if (h > 0 && h !== this.viewportHeight) { this.viewportHeight = h; }
+    });
+    this.resizeObserver.observe(this);
   }
 
   disconnectedCallback(): void {
     this.removeEventListener('scroll', this.onScroll);
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = undefined;
+    // A disconnect mid-drag (panel move/close) must not leave the window
+    // listeners attached to a detached element.
+    window.removeEventListener('pointermove', this.onResizeMove);
+    window.removeEventListener('pointerup', this.onResizeEnd);
+    this.dragging = null;
     super.disconnectedCallback();
-  }
-
-  firstUpdated(): void {
-    this.viewportHeight = this.clientHeight || 500;
   }
 
   private onScroll = (): void => {
@@ -179,19 +194,14 @@ export class LogTable extends LitElement {
     window.removeEventListener('pointermove', this.onResizeMove);
   };
 
-  /** Build the `style` attribute string that propagates the current
-   *  column widths to the :host CSS custom properties read by both the
-   *  header and the rows. Stays as one inline assignment so a drag
-   *  re-render touches only the host element, not every row. */
-  private hostStyle(): string {
-    return `--col-ts:${this.colWidths.ts}px; --col-lvl:${this.colWidths.lvl}px; --col-tag:${this.colWidths.tag}px; --col-utag:${this.colWidths.utag}px;`;
-  }
-
   private renderHead(): TemplateResult {
     const draggingClass = (col: 'ts' | 'lvl' | 'tag' | 'utag'): string =>
       this.dragging?.col === col ? 'resize dragging' : 'resize';
+    // The head reads the same --col-* custom properties as the rows;
+    // they're set on :host by updated() and inherit through the shadow
+    // tree, so no inline style is needed here.
     return html`
-      <div class="head" style=${this.hostStyle()}>
+      <div class="head">
         <div class="cell">Timestamp
           <div class=${draggingClass('ts')}
                @pointerdown=${(e: PointerEvent) => this.onResizeStart('ts', e)}></div>
@@ -213,12 +223,21 @@ export class LogTable extends LitElement {
     `;
   }
 
-  render(): TemplateResult {
-    // Apply column widths on the host so both head + rows pick them up
-    // via CSS variables. style.setProperty done declaratively here so the
-    // Lit render is the single source of truth.
-    (this as unknown as HTMLElement).style.cssText = this.hostStyle();
+  /** Apply column widths as CSS custom properties on the host so both
+   *  head + rows pick them up. Done in updated() (not render()) so render
+   *  stays pure, and via setProperty rather than cssText so unrelated
+   *  inline styles on the host are not clobbered. */
+  protected updated(changed: Map<string, unknown>): void {
+    if (changed.has('colWidths')) {
+      const s = (this as unknown as HTMLElement).style;
+      s.setProperty('--col-ts', `${this.colWidths.ts}px`);
+      s.setProperty('--col-lvl', `${this.colWidths.lvl}px`);
+      s.setProperty('--col-tag', `${this.colWidths.tag}px`);
+      s.setProperty('--col-utag', `${this.colWidths.utag}px`);
+    }
+  }
 
+  render(): TemplateResult {
     if (this.lines.length === 0) {
       return html`
         ${this.renderHead()}

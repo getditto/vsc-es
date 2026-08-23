@@ -22,7 +22,13 @@ export class AnalyzerSink implements Sink {
     const id = this.nextId++;
     const line = parseLine(formatted, id);
     this.buf.push(line);
-    if (this.buf.length > this.capacity) this.buf.shift();
+    // Trim in chunks rather than shift() per line — at a 50k capacity a
+    // per-line shift is an O(n) memmove on every log line under sustained
+    // volume. snapshot()/firstLiveId() project the exact-capacity window,
+    // so the observable contract is unchanged.
+    if (this.buf.length > this.capacity * 2) {
+      this.buf.splice(0, this.buf.length - this.capacity);
+    }
     const listeners = this.emitter.listeners('line') as Array<(l: LogLine) => void>;
     for (const listener of listeners) {
       try { listener(line); } catch { /* isolate; Logger's try/catch already handles */ }
@@ -34,7 +40,14 @@ export class AnalyzerSink implements Sink {
     return { dispose: () => this.emitter.off('line', listener) };
   }
 
-  snapshot(): LogLine[] { return this.buf.slice(); }
+  /** Newest `capacity` lines — the internal buffer may briefly hold more
+   *  between chunked trims, so project the exact window here. */
+  snapshot(): LogLine[] {
+    return this.buf.length > this.capacity ? this.buf.slice(-this.capacity) : this.buf.slice();
+  }
 
-  firstLiveId(): number { return this.buf.length === 0 ? 0 : this.buf[0].id; }
+  firstLiveId(): number {
+    if (this.buf.length === 0) { return 0; }
+    return this.buf[Math.max(0, this.buf.length - this.capacity)].id;
+  }
 }

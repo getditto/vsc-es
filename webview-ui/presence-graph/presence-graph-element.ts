@@ -214,6 +214,22 @@ export class PresenceGraphElement extends LitElement {
   }
 
   protected firstUpdated(): void {
+    this.setupScene();
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    // VS Code reparents webview panels when they move between editor groups,
+    // which re-runs this on the same element — but firstUpdated does NOT
+    // re-fire, and disconnectedCallback tore the scene down. Recreate it or
+    // the canvas stays blank for the rest of the panel's life. On the first
+    // connect hasUpdated is false and firstUpdated does the setup instead.
+    if (this.hasUpdated && !this.scene) {
+      this.setupScene();
+    }
+  }
+
+  private setupScene(): void {
     this.scene = new PresenceGraphScene({ showDirectConnectedOnly: this.directConnectedOnly });
     this.fitCanvasToHost();
     this.resizeObserver = new ResizeObserver(() => { this.fitCanvasToHost(); });
@@ -239,13 +255,9 @@ export class PresenceGraphElement extends LitElement {
     }
   }
 
-  private applyInputAndStartRaf(force = false): void {
-    if (!this.scene) { return; }
-    if (this.input) {
-      this.scene.applyInput(this.input);
-    } else if (!force) {
-      return;
-    }
+  private applyInputAndStartRaf(): void {
+    if (!this.scene || !this.input) { return; }
+    this.scene.applyInput(this.input);
     this.ensureRafRunning();
   }
 
@@ -315,6 +327,9 @@ export class PresenceGraphElement extends LitElement {
     const node = this.scene.nodeAt(ctx, world);
     this.pointerStart = { x: e.clientX, y: e.clientY, nodeKey: node?.key };
     this.pointerMoved = false;
+    // A mousedown on the canvas implies the pointer is over it, even if no
+    // mousemove has been seen yet.
+    this.pointerOverCanvas = true;
     this.scene.beginInteraction();
     if (node) {
       this.dragNodeKey = node.key;
@@ -344,7 +359,7 @@ export class PresenceGraphElement extends LitElement {
     // Never commit a click on this path: the release happened somewhere we
     // never saw, so an under-threshold press would otherwise be retroactively
     // fired as a selection the moment the pointer wandered back.
-    if (e.buttons === 0) { this.endDrag(false); return; }
+    if (e.buttons === 0) { this.endDrag(false, e); return; }
     if (this.pointerStart && Math.hypot(
       e.clientX - this.pointerStart.x,
       e.clientY - this.pointerStart.y,
@@ -370,12 +385,12 @@ export class PresenceGraphElement extends LitElement {
     // right-click mid-drag toggles the selection and detaches the listeners
     // while the left button is still held.
     if (e && e.button !== 0) { return; }
-    this.endDrag();
+    this.endDrag(true, e);
   };
 
   /** Finish the current interaction. When `commitClick` and the pointer never
    *  travelled far enough to count as a drag, treat it as a click. */
-  private endDrag(commitClick = true): void {
+  private endDrag(commitClick = true, e?: MouseEvent): void {
     this.detachDragListeners();
     const clickedKey = this.pointerStart?.nodeKey;
     this.pointerStart = undefined;
@@ -391,12 +406,15 @@ export class PresenceGraphElement extends LitElement {
     if (commitClick && !moved) {
       this.scene.selectPeer(clickedKey);
     }
-    // Hover is suppressed while dragging, so a drag that ends with the pointer
-    // already off the canvas would otherwise leave the graph dimmed with the
-    // cursor nowhere near it.
+    // Hover is suppressed while dragging, so resolve it from the release
+    // point: a drag that ends off-canvas must not leave the graph dimmed,
+    // and one that ends over the canvas should reflect what is under the
+    // pointer now — not whatever was under it when the press started.
     if (!this.pointerOverCanvas) {
       this.scene.setHovered(undefined);
       this.hoveringNode = false;
+    } else if (e) {
+      this.updateHoverFromEvent(e);
     }
   }
 
@@ -411,8 +429,13 @@ export class PresenceGraphElement extends LitElement {
     this.pointerOverCanvas = true;
     // Only updates hover state — the drag listeners take over while
     // a drag is in progress (they're registered on `window`).
-    if (!this.scene || !this.canvasEl) { return; }
     if (this.dragNodeKey || this.isPanning) { return; }
+    this.updateHoverFromEvent(e);
+  };
+
+  /** Recompute hover (scene dimming + cursor class) from a pointer event. */
+  private updateHoverFromEvent(e: MouseEvent): void {
+    if (!this.scene || !this.canvasEl) { return; }
     const ctx = this.canvasEl.getContext('2d');
     if (!ctx) { return; }
     const local = this.localCoords(e);
@@ -420,7 +443,7 @@ export class PresenceGraphElement extends LitElement {
     const node = this.scene.nodeAt(ctx, world);
     this.scene.setHovered(node);
     this.hoveringNode = !!node;
-  };
+  }
 
   /** Hover drives the same dimming treatment as a click selection, so it
    *  must be released when the pointer leaves the canvas — including onto

@@ -50,6 +50,14 @@ export class ImportSubscriptionsPanel {
     );
   }
 
+  /** Dispose the open panel, if any. Called on database
+   *  switch/disconnect/delete — the panel's server-side subscription list
+   *  and target databaseId belong to the connection it was opened against,
+   *  so leaving it open would write subscriptions into the wrong store. */
+  static dispose(): void {
+    ImportSubscriptionsPanel.current?.dispose();
+  }
+
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
 

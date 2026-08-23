@@ -71,7 +71,17 @@ export class ObserverEditorPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (msg: SubIn | LogIn) => this.handle(msg), undefined, this.disposables,
+      (msg: SubIn | LogIn) => {
+        // handle() is async — without the catch a failed save becomes an
+        // unhandled rejection and the user sees nothing.
+        void this.handle(msg).catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.withTag('ext:observerEditor').error('Save failed', { err: message });
+          vscode.window.showErrorMessage(`Save observer failed: ${message}`);
+        });
+      },
+      undefined,
+      this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 

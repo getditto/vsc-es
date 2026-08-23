@@ -103,7 +103,22 @@ export class JsonViewer extends LitElement {
     return this;
   }
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    // VS Code reparents webview panels when they move between editor groups,
+    // re-running this on the same element — but firstUpdated does NOT
+    // re-fire, and disconnectedCallback destroyed the EditorView. Recreate
+    // it or the viewer stays blank for the rest of the panel's life. On the
+    // first connect the .cm-host div isn't rendered yet; firstUpdated does
+    // the setup instead.
+    if (!this.view) { this.setupView(); }
+  }
+
   firstUpdated(): void {
+    this.setupView();
+  }
+
+  private setupView(): void {
     const host = this.querySelector('.cm-host') as HTMLElement | null;
     if (!host) { return; }
     const initialRanges = this.ranges;

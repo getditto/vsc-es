@@ -4,6 +4,7 @@ import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
+import { MAX_QUERY_ROWS } from '../ditto/DittoManager.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { QueryIn, QueryOut, LogIn, LogOut, QueryMode } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
@@ -108,9 +109,16 @@ export class QueryEditorPanel {
 
   /** Dispose every open Query Editor tab. Used by the lifecycle orchestrator
    *  when switching databases — all editors for the previous DB close before
-   *  the new DB activates. */
-  static dispose(): void {
+   *  the new DB activates.
+   *
+   *  `preserveTabs` keeps each tab's slot in the OpenPanelsTracker so the
+   *  switch/reconnect restore can reopen them — disposing through here
+   *  would otherwise delete the very entries restorePanels is about to
+   *  read, and the pre-switch modal's "these will reopen" promise would
+   *  only hold across extension-host reloads. */
+  static dispose(opts: { preserveTabs?: boolean } = {}): void {
     for (const inst of [...QueryEditorPanel._instances]) {
+      inst.preserveTabOnDispose = opts.preserveTabs === true;
       inst.dispose();
     }
   }
@@ -414,10 +422,13 @@ export class QueryEditorPanel {
     const start = performance.now();
     const response = await executeRemoteQuery({ ...httpReq, query }, this.logger);
     const durationMs = Math.round(performance.now() - start);
-    const rows = response.items.filter(
+    const allRows = response.items.filter(
       (it): it is Record<string, unknown> =>
         typeof it === 'object' && it !== null && !Array.isArray(it),
     );
+    // Same cap as the local path — an uncapped SELECT * over HTTP would
+    // still structured-clone the entire result set into the webview.
+    const rows = allRows.slice(0, MAX_QUERY_ROWS);
 
     const explain = await this.fetchHttpExplain(httpReq, query);
 
@@ -428,6 +439,9 @@ export class QueryEditorPanel {
       explain,
       timestamp: Date.now(),
       location: 'http',
+      ...(allRows.length > MAX_QUERY_ROWS
+        ? { truncated: true, totalResultCount: allRows.length }
+        : {}),
     };
     return { rows, durationMs, metadata };
   }
@@ -765,12 +779,20 @@ export class QueryEditorPanel {
     }
   }
 
+  /** Set by the static dispose when the lifecycle orchestrator is tearing
+   *  the panel down — a user-closed tab forgets its tracker slot, an
+   *  orchestrated close keeps it for restore. */
+  private preserveTabOnDispose = false;
+
   private dispose() {
     QueryEditorPanel._instances.delete(this);
-    // Each tab owns its own slot in the panel-state store, so we always
-    // remove on dispose. Multi-tab restoration replays each saved entry,
-    // so leaving slots behind would inflate the tab list on reconnect.
-    void this.tracker.removeQueryTab(this.databaseId, this.tabId);
+    // Each tab owns its own slot in the panel-state store. User-closed
+    // tabs remove their slot (multi-tab restoration replays saved entries,
+    // so leaving slots behind would inflate the tab list on reconnect);
+    // orchestrated teardowns keep them so restorePanels can reopen them.
+    if (!this.preserveTabOnDispose) {
+      void this.tracker.removeQueryTab(this.databaseId, this.tabId);
+    }
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }

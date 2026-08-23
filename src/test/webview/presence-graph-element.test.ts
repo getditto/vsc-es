@@ -304,6 +304,30 @@ test('PresenceGraphElement: leaving the canvas releases hover focus', async () =
   el.remove();
 });
 
+test('PresenceGraphElement: re-attaching the element recreates the scene and keeps painting', async () => {
+  // VS Code reparents webview panels when they move between editor groups:
+  // connectedCallback re-runs on the same element, but firstUpdated does
+  // not — so a scene torn down in disconnectedCallback must be recreated
+  // here or the canvas stays blank for the rest of the panel's life.
+  const el = await mount();
+  const firstScene = el.scene;
+
+  el.remove();
+  assert.equal(el.scene, undefined, 'scene torn down on disconnect');
+
+  document.body.appendChild(el);
+  await el.updateComplete;
+  assert.ok(el.scene, 'scene recreated on re-attach');
+  assert.notEqual(el.scene, firstScene);
+  assert.ok(el.resizeObserver, 'resize observer recreated');
+
+  const ctx = contextFor(el.shadowRoot.querySelector('canvas'));
+  ctx.__reset();
+  drawFrame();
+  assert.ok(ctx.__ops.some(o => o.op === 'fillText' && o.args[0] === 'Me'), 'paints after re-attach');
+  el.remove();
+});
+
 test('PresenceGraphElement: disconnect detaches window drag listeners', async () => {
   const el = await mount();
   const canvas = el.shadowRoot.querySelector('canvas');
@@ -490,10 +514,27 @@ test('PresenceGraphElement: hover is kept while dragging across the canvas edge'
   canvas.dispatchEvent(mouse('mouseout', {}));
   assert.equal(el.scene.hoveredPeerKey, 'alpha', 'the dragged peer keeps its highlight');
 
-  // Dragged back in and released over the canvas — hover stays.
+  // Dragged back in and released over the canvas — hover stays. The release
+  // carries real coordinates, as a browser's mouseup always does: hover is
+  // recomputed from the release point, not restored from before the drag.
   canvas.dispatchEvent(mouse('mousemove', { ...screenPos(el, 'alpha'), buttons: 1 }));
-  window.dispatchEvent(mouse('mouseup', { button: 0, buttons: 0 }));
+  window.dispatchEvent(mouse('mouseup', { ...screenPos(el, 'alpha'), button: 0, buttons: 0 }));
   assert.equal(el.scene.hoveredPeerKey, 'alpha');
+  el.remove();
+});
+
+test('PresenceGraphElement: releasing a press recomputes hover from the release point', async () => {
+  const el = await mount();
+  const canvas = el.shadowRoot.querySelector('canvas');
+  // Press on empty canvas, then release over a peer with no intervening
+  // move — hover updates are suppressed while the press is active, so
+  // without a recompute the peer under the pointer would stay un-hovered
+  // (and the cursor un-pointered) until the next mousemove.
+  canvas.dispatchEvent(mouse('mousedown', { clientX: 5, clientY: 5, button: 0, buttons: 1 }));
+  window.dispatchEvent(mouse('mouseup', { ...screenPos(el, 'alpha'), button: 0, buttons: 0 }));
+
+  assert.equal(el.scene.hoveredPeerKey, 'alpha');
+  assert.equal(el.hoveringNode, true, 'cursor affordance matches');
   el.remove();
 });
 

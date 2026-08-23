@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { performSwitch, type SwitchDeps, type FromActive } from '../ditto/switch-orchestrator.js';
+import { confirmSwitch, performSwitch, type SwitchDeps, type FromActive } from '../ditto/switch-orchestrator.js';
 import type { OpenPanelsTracker, PerDbPanelState, QueryTabState } from '../ditto/OpenPanelsTracker.js';
 import type { Logger, LogLevel, LogContext } from '../logging/types.js';
 import type { StoredDittoConfig, SecretSet, StoredSubscription } from '../models/DittoConfig.js';
@@ -162,6 +162,8 @@ function buildDeps(opts: DepsOptions = {}): { deps: SwitchDeps; rec: Recorded } 
       closeImportData: () => { calls.push('panels.closeImportData'); },
       closeObserver: () => { calls.push('panels.closeObserver'); },
       closeObserverEditor: () => { calls.push('panels.closeObserverEditor'); },
+      closeAddIndex: () => { calls.push('panels.closeAddIndex'); },
+      closeImportSubscriptions: () => { calls.push('panels.closeImportSubscriptions'); },
       showQuery: (id: string, queryText?: string) => {
         calls.push(queryText !== undefined && queryText.length > 0
           ? `panels.showQuery(${id}, "${queryText}")`
@@ -189,11 +191,29 @@ test('switch with empty open-panels set: skips warning modal', async () => {
     configs: new Map([['A', A], ['B', B]]),
   });
   const fromActive: FromActive = { id: 'A', name: 'db-A' };
+  assert.equal(await confirmSwitch(deps, fromActive, B), true);
   await performSwitch(deps, fromActive, B);
 
   const modalCount = rec.calls.filter(c => c === 'ui.showModalWarn').length;
   assert.equal(modalCount, 0, 'warning modal should not be shown when no panels are open');
   // Sanity: target connect must have run.
+  assert.ok(rec.calls.includes('manager.connect(B)'));
+});
+
+test('performSwitch never shows the pre-switch modal itself', async () => {
+  // The modal must run BEFORE the persistence lock (confirmSwitch) —
+  // a modal inside the lock can deadlock deactivate() against a dialog
+  // the user may never see.
+  const A = makeConfig('A', 'db-A');
+  const B = makeConfig('B', 'db-B');
+  const { deps, rec } = buildDeps({
+    open: new Map([['A', stateWith({ query: [{ id: 't1', text: 'SELECT 1' }] })]]),
+    configs: new Map([['A', A], ['B', B]]),
+  });
+  await performSwitch(deps, { id: 'A', name: 'db-A' }, B);
+
+  assert.equal(rec.calls.filter(c => c === 'ui.showModalWarn').length, 0,
+    'the panel-warning modal belongs to confirmSwitch, called before the lock');
   assert.ok(rec.calls.includes('manager.connect(B)'));
 });
 
@@ -209,7 +229,10 @@ test('switch with open panels: cancel aborts entire flow', async () => {
     modalAnswer: undefined,                       // user dismissed without choosing 'Switch'
   });
   const fromActive: FromActive = { id: 'A', name: 'db-A' };
-  await performSwitch(deps, fromActive, B);
+  // Production flow: confirmSwitch runs before the lock; a cancel there
+  // means performSwitch is never invoked.
+  const proceed = await confirmSwitch(deps, fromActive, B);
+  assert.equal(proceed, false, 'cancel answers no');
 
   // Modal was shown.
   const modalCount = rec.calls.filter(c => c === 'ui.showModalWarn').length;
@@ -304,6 +327,7 @@ test('switch failure with rollback: target connect rejects, user picks Reconnect
     connectImpl,
   });
   const fromActive: FromActive = { id: 'A', name: 'db-A' };
+  assert.equal(await confirmSwitch(deps, fromActive, B), true, 'panel warning consumed');
   await performSwitch(deps, fromActive, B);
 
   // Second connect was for fromActive.
@@ -343,6 +367,7 @@ test('rollback failure: target connect rejects, from-connect also rejects, secon
     connectImpl,
   });
   const fromActive: FromActive = { id: 'A', name: 'db-A' };
+  assert.equal(await confirmSwitch(deps, fromActive, B), true, 'panel warning consumed');
   await performSwitch(deps, fromActive, B);
 
   // Both connects attempted.

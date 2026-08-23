@@ -10,6 +10,10 @@ import './components/log-table.js';
 import './components/line-detail-drawer.js';
 import type { FilterKey } from './components/filter-tabs.js';
 import type { AnalyzerOut } from '../../src/ipc/messages.js';
+
+/** Mirrors the host's PROBLEM_CAP in LogAnalyzerService — the per-pattern
+ *  hit lists must never grow for the life of the panel. */
+const PROBLEM_CAP = 1000;
 import type {
   AnalyzerState,
   LogLine,
@@ -223,10 +227,13 @@ export class DittoLogAnalyzer extends LitElement {
       case 'analyzer.problemsAdded': {
         // Append to an existing group or open a new one. We mutate the
         // map in place then call requestUpdate() since @state on a Map
-        // doesn't trigger on internal mutations.
+        // doesn't trigger on internal mutations. Capped per pattern,
+        // mirroring the host's PROBLEM_CAP — the host stops sending past
+        // it, but the cap is enforced here too so this map can never grow
+        // for the life of the panel.
         for (const it of m.items) {
           const arr = this.problems.get(it.patternKey) ?? [];
-          arr.push(it);
+          if (arr.length < PROBLEM_CAP) { arr.push(it); }
           this.problems.set(it.patternKey, arr);
         }
         this.requestUpdate();

@@ -174,8 +174,9 @@ test('Service: pause stops emitting diffs but state still accumulates', () => {
   sink.write('error', '2026-06-09T14:00:00.000Z  ERROR  [sdk]  deadlock');
   // state still accumulates
   assert.equal(svc.getStateForTesting().counts.errors, 1);
-  // but no throttled diffs emitted (problemsAdded is immediate, but summary/histograms are throttled)
-  const throttled = diffs.filter(d => d.type === 'summary' || d.type === 'histogramsUpdated');
+  // but no throttled diffs emitted (summary/histograms/problemsAdded all
+  // flow through the throttled flush)
+  const throttled = diffs.filter(d => d.type === 'summary' || d.type === 'histogramsUpdated' || d.type === 'problemsAdded');
   assert.equal(throttled.length, 0);
 });
 

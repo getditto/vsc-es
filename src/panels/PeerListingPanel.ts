@@ -38,13 +38,22 @@ export class PeerListingPanel {
     autoRevealInspectorOnce(context);
   }
 
-  static dispose(): void {
-    PeerListingPanel.current?.dispose();
+  /** Dispose the open panel, if any. `preserveState` keeps the panel's
+   *  slot in the OpenPanelsTracker so the switch/reconnect restore can
+   *  reopen it — same reasoning as QueryEditorPanel's preserveTabs. */
+  static dispose(opts: { preserveState?: boolean } = {}): void {
+    const cur = PeerListingPanel.current;
+    if (cur) {
+      cur.preserveStateOnDispose = opts.preserveState === true;
+      cur.dispose();
+    }
   }
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private databaseId: string;
+  /** See the static dispose's preserveState option. */
+  private preserveStateOnDispose = false;
 
   private constructor(
     context: vscode.ExtensionContext,
@@ -100,7 +109,11 @@ export class PeerListingPanel {
     this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     void tracker.setPeers(databaseId, true);
-    this.disposables.push({ dispose: () => { void tracker.setPeers(databaseId, false); } });
+    this.disposables.push({ dispose: () => {
+      // User-closed panels forget their slot; orchestrated teardowns
+      // (DB switch/disconnect) keep it so restorePanels can reopen them.
+      if (!this.preserveStateOnDispose) { void tracker.setPeers(databaseId, false); }
+    } });
 
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {
@@ -163,6 +176,10 @@ export class PeerListingPanel {
       return;
     }
     if (msg.type === 'peer.toggleSync') {
+      // A transport apply stops sync mid-cycle with observers detached —
+      // don't let the webview's toggle race it (the command path guards
+      // on the same flag).
+      if (this.manager.isApplyingTransports()) { return; }
       await this.manager.toggleSync();
       // pushState fires automatically via onSyncChange listener.
       return;

@@ -86,15 +86,23 @@ export class HelpContentElement extends LitElement {
     }
   }
 
+  /** Monotonic load counter — a slow fetch for a superseded `uri` must not
+   *  overwrite the content of a newer one. */
+  private loadSeq = 0;
+
   private async load(): Promise<void> {
+    const seq = ++this.loadSeq;
     this.failed = false;
     try {
       const r = await fetch(this.uri);
       if (!r.ok) {
         throw new Error(`HTTP ${r.status}`);
       }
-      this.htmlContent = await r.text();
+      const text = await r.text();
+      if (seq !== this.loadSeq) { return; }
+      this.htmlContent = text;
     } catch {
+      if (seq !== this.loadSeq) { return; }
       this.failed = true;
       this.htmlContent = '';
     }

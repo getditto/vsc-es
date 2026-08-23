@@ -426,18 +426,20 @@ export class PresenceGraphScene {
         changed = true;
       }
     }
-    if (node) {
-      // Highlight every line connected to the hovered node.
-      for (const line of this.lines.values()) {
-        const want = line.fromKey === node.key || line.toKey === node.key;
-        if (!!line.highlighted !== want) {
-          line.highlighted = want;
-          changed = true;
-        }
-      }
-    } else {
-      for (const line of this.lines.values()) {
-        if (line.highlighted) { line.highlighted = false; changed = true; }
+    // Line emphasis is skipped for the local peer in Direct mode: every
+    // line touches it there, so highlighting its lines would thicken every
+    // stroke at once — the same glitch the selectPeer guard rejects for
+    // clicks. In full-mesh mode its spokes are a minority of the graph and
+    // worth emphasizing, same as any other peer's. The pill itself still
+    // gets the hover fill above.
+    const skipLineFocus = node?.key === this.localKey && this.showDirectConnectedOnly;
+    const lineFocusKey = node && !skipLineFocus ? node.key : undefined;
+    for (const line of this.lines.values()) {
+      const want = lineFocusKey !== undefined
+        && (line.fromKey === lineFocusKey || line.toKey === lineFocusKey);
+      if (!!line.highlighted !== want) {
+        line.highlighted = want;
+        changed = true;
       }
     }
     return changed;
@@ -448,7 +450,10 @@ export class PresenceGraphScene {
     this.showDirectConnectedOnly = value;
     if (!value) {
       this.selectedPeerKey = undefined;
-      this.hoveredPeerKey = undefined;
+      // Goes through setHovered rather than clearing the key directly so the
+      // node/line `highlighted` flags are reset too — otherwise the previously
+      // hovered peer keeps its emphasized stroke until the next input push.
+      this.setHovered(undefined);
     }
   }
 
@@ -504,7 +509,10 @@ export class PresenceGraphScene {
   /** A click selection is sticky and wins over incidental hover. */
   private activeFocusKey(): string | undefined {
     if (!this.showDirectConnectedOnly) { return undefined; }
-    return this.selectedPeerKey ?? this.hoveredPeerKey;
+    if (this.selectedPeerKey) { return this.selectedPeerKey; }
+    // Hovering the local peer is not a focus: every line touches it in
+    // Direct mode, so it would exempt the whole graph from dimming.
+    return this.hoveredPeerKey === this.localKey ? undefined : this.hoveredPeerKey;
   }
 
   /** Pin a peer's position (drag start) so transitions can't move it. */
@@ -526,7 +534,11 @@ export class PresenceGraphScene {
 
   /** Clamp helper for zoom changes — same 0.5–2.0 range as SwiftUI. */
   setZoom(z: number): void {
-    this.zoom = Math.max(0.5, Math.min(2.0, z));
+    // Round to whole percents: the 0.1/0.05 zoom steps accumulate binary
+    // float error (1 − 0.1 × 5 = 0.5000000000000001), which defeats the
+    // exact-boundary disabled state on the zoom buttons and shows up as a
+    // dead final click.
+    this.zoom = Math.round(Math.max(0.5, Math.min(2.0, z)) * 100) / 100;
   }
 
   /** Pan the camera by a delta in canvas (CSS) pixels. Adjust by zoom

@@ -44,6 +44,7 @@ export interface CollectionsSource {
 export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTreeNode> {
   private readonly _changeEmitter = new vscode.EventEmitter<DatabaseTreeNode | undefined>();
   readonly onDidChangeTreeData = this._changeEmitter.event;
+  private readonly disposables: vscode.Disposable[] = [];
 
   constructor(
     private readonly configs: ConfigStore,
@@ -53,10 +54,21 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     private readonly lifecycleFor?: LifecycleResolver,
     private readonly collections?: CollectionsSource,
   ) {
-    configs.onDidChange(() => this._changeEmitter.fire(undefined));
-    subs.onDidChange(() => this._changeEmitter.fire(undefined));
-    observers.onDidChange(() => this._changeEmitter.fire(undefined));
-    collections?.onChange(() => this._changeEmitter.fire(undefined));
+    this.disposables.push(
+      configs.onDidChange(() => this._changeEmitter.fire(undefined)),
+      subs.onDidChange(() => this._changeEmitter.fire(undefined)),
+      observers.onDidChange(() => this._changeEmitter.fire(undefined)),
+    );
+    if (collections) {
+      this.disposables.push(
+        collections.onChange(() => this._changeEmitter.fire(undefined)),
+      );
+    }
+  }
+
+  dispose(): void {
+    while (this.disposables.length) { this.disposables.pop()?.dispose(); }
+    this._changeEmitter.dispose();
   }
 
   refresh(node?: DatabaseTreeNode) { this._changeEmitter.fire(node); }

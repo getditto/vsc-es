@@ -8,6 +8,10 @@ import './events-table-element.js';
 import type { ObserverEvent } from '../../src/ditto/ObserverEventStore.js';
 import type { ObserverOut } from '../../src/ipc/messages.js';
 
+/** Cap on rows rendered in the detail pane — matches the Query panel's
+ *  page size. The event's full result set can be arbitrarily large. */
+const DETAIL_ROW_CAP = 1000;
+
 type DetailView = 'json' | 'table';
 type EventFilter = 'items' | 'inserted' | 'updated';
 
@@ -146,7 +150,13 @@ export class DittoObserverPanel extends LitElement {
   }
 
   private renderDetail(event: ObserverEvent): TemplateResult {
-    const data = this.filterData(event);
+    // Cap the rows rendered in the detail pane. The full result set of an
+    // observed collection can be arbitrarily large, and every incoming
+    // event batch re-renders this pane — an uncapped JSON.stringify or
+    // table mount per batch is a render firehose.
+    const full = this.filterData(event);
+    const truncated = full.length > DETAIL_ROW_CAP;
+    const data = truncated ? full.slice(0, DETAIL_ROW_CAP) : full;
     const columns = this.computeColumns(data);
     return html`
       <div class="detail-toolbar">
@@ -172,6 +182,11 @@ export class DittoObserverPanel extends LitElement {
         </label>
       </div>
       <div class="detail-body">
+        ${truncated ? html`
+          <div style="padding:4px 8px; font-size:11px; color: var(--vscode-editorWarning-foreground, #cca700);">
+            ⚠ showing first ${DETAIL_ROW_CAP.toLocaleString()} of ${full.length.toLocaleString()} rows
+          </div>
+        ` : ''}
         ${this.detailView === 'json'
           ? html`<json-viewer
               .value=${JSON.stringify(data, null, 2)}

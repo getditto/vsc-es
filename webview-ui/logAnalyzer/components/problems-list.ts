@@ -72,7 +72,10 @@ export class ProblemsList extends LitElement {
               <div class="hits">
                 ${g.items.map(it => html`
                   <div class="hit">
-                    <span class="ts">${it.line.timestamp?.toISOString() ?? '—'}</span>
+                    <!-- timestamp crosses postMessage as an ISO string, not
+                         a Date — normalize before formatting (the sibling
+                         components all do the same). -->
+                    <span class="ts">${it.line.timestamp ? new Date(it.line.timestamp).toISOString() : '—'}</span>
                     <span>${it.line.text}</span>
                     <a href="#" @click=${(e: Event) => { e.preventDefault(); this.revealLine(it.line.id); }}>↗</a>
                   </div>

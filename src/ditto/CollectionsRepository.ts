@@ -3,6 +3,21 @@ import type { DittoManager } from './DittoManager.js';
 import type { Logger } from '../logging/types.js';
 import type { DittoCollection, DittoIndex } from '../models/DittoCollection.js';
 
+const VALID_IDENTIFIER = /^[A-Za-z0-9_]+$/;
+const VALID_FIELD_PATH = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/;
+
+/** Guard for identifiers interpolated into DQL — same standard as
+ *  ImportService.validateCollectionName. */
+function assertValidIdentifier(name: string, kind: string, allowDots = false): void {
+  const ok = allowDots ? VALID_FIELD_PATH.test(name) : VALID_IDENTIFIER.test(name);
+  if (!ok) {
+    throw new Error(
+      `Invalid ${kind} name "${name}". Only letters, numbers, and underscores`
+      + (allowDots ? ' (and dots for nested paths)' : '') + ' are allowed.',
+    );
+  }
+}
+
 /**
  * Cache of collections (with counts + indexes) for the active database.
  *
@@ -53,6 +68,11 @@ export class CollectionsRepository {
   }
 
   async createIndex(collection: string, fieldName: string): Promise<void> {
+    // These identifiers are interpolated into DQL — validate them the same
+    // way ImportService validates collection names rather than trusting the
+    // webview's free-text input. Field names may be dotted paths.
+    assertValidIdentifier(collection, 'collection');
+    assertValidIdentifier(fieldName, 'field', /* allowDots */ true);
     const safeField = fieldName.replace(/[. ]/g, '_');
     const indexName = `idx_${collection}_${safeField}`;
     const query = `CREATE INDEX IF NOT EXISTS ${indexName} ON ${collection} (${fieldName})`;
@@ -68,6 +88,8 @@ export class CollectionsRepository {
    *  the equivalent `<collection>.<name>` form would also work.
    *  Re-hydrates so the tree updates immediately. */
   async dropIndex(indexName: string, collection: string): Promise<void> {
+    assertValidIdentifier(indexName, 'index');
+    assertValidIdentifier(collection, 'collection');
     const query = `DROP INDEX IF EXISTS ${indexName} ON ${collection}`;
     this.log.info('Dropping index', { indexName, collection });
     await this.manager.executeRaw(query);

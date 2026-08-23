@@ -37,6 +37,12 @@ export class HttpQueryError extends Error {
   }
 }
 
+/** A hung server must not leave the query panel in 'running' forever. */
+const REQUEST_TIMEOUT_MS = 30_000;
+/** Responses are buffered fully in memory before parsing — cap them so a
+ *  pathological server can't OOM the extension host. */
+const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+
 /**
  * POST a DQL statement to the Ditto Server's REST endpoint and return
  * the items array. Implemented against `node:https` (rather than the
@@ -64,6 +70,12 @@ export async function executeRemoteQuery(
   });
 
   return new Promise<HttpQueryResponse>((resolve, reject) => {
+    let settled = false;
+    const settle = (fn: () => void): void => {
+      if (settled) { return; }
+      settled = true;
+      fn();
+    };
     const r = https.request(
       {
         method: 'POST',
@@ -81,28 +93,41 @@ export async function executeRemoteQuery(
       },
       (res) => {
         const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        let total = 0;
+        res.on('data', (chunk: Buffer) => {
+          total += chunk.length;
+          if (total > MAX_RESPONSE_BYTES) {
+            settle(() => reject(new HttpQueryError('Server response exceeded the 64 MB limit')));
+            res.destroy();
+            return;
+          }
+          chunks.push(chunk);
+        });
         res.on('end', () => {
           const text = Buffer.concat(chunks).toString('utf8');
           const status = res.statusCode ?? 0;
           if (status < 200 || status >= 300) {
-            reject(new HttpQueryError(`Ditto Server returned ${status}`, status, text));
+            settle(() => reject(new HttpQueryError(`Ditto Server returned ${status}`, status, text)));
             return;
           }
           try {
             const parsed = JSON.parse(text) as { items?: unknown[] };
-            resolve({ items: Array.isArray(parsed.items) ? parsed.items : [] });
+            settle(() => resolve({ items: Array.isArray(parsed.items) ? parsed.items : [] }));
           } catch (err) {
-            reject(new HttpQueryError(
+            settle(() => reject(new HttpQueryError(
               `Failed to parse server response: ${err instanceof Error ? err.message : String(err)}`,
               status,
               text,
-            ));
+            )));
           }
         });
       },
     );
-    r.on('error', (err) => reject(new HttpQueryError(err.message)));
+    r.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      settle(() => reject(new HttpQueryError(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`)));
+      r.destroy();
+    });
+    r.on('error', (err) => settle(() => reject(new HttpQueryError(err.message))));
     r.write(body);
     r.end();
   });

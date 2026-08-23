@@ -8,6 +8,11 @@ import { binVolumeByLevel, binProblemsOverTime, binDurations, pickBinWidth, type
 
 const PROBLEM_CAP = 1000;
 const LINE_BUFFER_CAP = 50_000;
+/** Cap on the problems-over-time histogram's source data. Unlike
+ *  state.problems (capped per pattern at PROBLEM_CAP), this array feeds
+ *  only the histogram — past the cap the oldest hits are trimmed in
+ *  chunks, keeping the per-line cost amortized O(1). */
+const PROBLEM_HITS_CAP = 10_000;
 
 export type AnalyzerDiff =
   | { type: 'reset' }
@@ -36,6 +41,12 @@ export class LogAnalyzerService {
   private lastFlush = 0;
   private throttleMs: number;
   private lineBuffer: LogLine[] = [];
+  /** Problem hits since the last flush, emitted as one batched
+   *  problemsAdded diff — per-line emits were an unthrottled postMessage
+   *  storm to the webview under a chatty pattern. Bounded because items
+   *  only land here while their pattern is under PROBLEM_CAP. */
+  private pendingProblems: ProblemInstance[] = [];
+  private lastTrackerVersion = -1;
 
   constructor(private readonly opts: ServiceOptions) {
     this.throttleMs = opts.throttleMs ?? 250;
@@ -55,6 +66,7 @@ export class LogAnalyzerService {
     this.state = emptyState();
     this.problemHits = [];
     this.lineBuffer = [];
+    this.pendingProblems = [];
     this.emit({ type: 'reset' });
   }
 
@@ -137,7 +149,8 @@ export class LogAnalyzerService {
   }
 
   /** Used by the detail-drawer to fetch surrounding context. Linear scan
-   *  on the bounded buffer (≤50k entries) — acceptable for on-demand use. */
+   *  on the bounded buffer (≤2× LINE_BUFFER_CAP between chunked trims) —
+   *  acceptable for on-demand use. */
   public getLineDetail(lineId: number, contextBefore = 5, contextAfter = 5): {
     line: LogLine | null;
     before: LogLine[];
@@ -177,7 +190,12 @@ export class LogAnalyzerService {
 
   private processLine(line: LogLine, isBackfill = false): void {
     this.lineBuffer.push(line);
-    if (this.lineBuffer.length > LINE_BUFFER_CAP) this.lineBuffer.shift();
+    // Trim in chunks rather than shift() per line — at the 50k cap a
+    // per-line shift is an O(n) memmove on every log line under
+    // sustained volume. The buffer may briefly hold up to 2× the cap.
+    if (this.lineBuffer.length > LINE_BUFFER_CAP * 2) {
+      this.lineBuffer.splice(0, this.lineBuffer.length - LINE_BUFFER_CAP);
+    }
     this.state.counts.totalLines++;
     if (line.timestamp == null) this.state.counts.unparseableLines++;
     if (line.tag) this.state.tags.add(line.tag);
@@ -201,18 +219,19 @@ export class LogAnalyzerService {
     for (const h of hits) {
       const list = this.state.problems.get(h.key) ?? [];
       if (list.length < PROBLEM_CAP) {
-        list.push({ patternKey: h.key, severity: h.severity, recommendation: h.recommendation, line });
+        const item = { patternKey: h.key, severity: h.severity, recommendation: h.recommendation, line };
+        list.push(item);
         this.state.problems.set(h.key, list);
-        if (!isBackfill) {
-          this.emitter.emit('diff', {
-            type: 'problemsAdded',
-            items: [{ patternKey: h.key, severity: h.severity, recommendation: h.recommendation, line }],
-          });
-        }
+        if (!isBackfill) { this.pendingProblems.push(item); }
       }
       this.state.counts.problems++;
       if (h.severity === 5) this.state.counts.critical++;
-      if (line.timestamp) this.problemHits.push({ time: line.timestamp, severity: h.severity });
+      if (line.timestamp) {
+        this.problemHits.push({ time: line.timestamp, severity: h.severity });
+        if (this.problemHits.length > PROBLEM_HITS_CAP * 2) {
+          this.problemHits.splice(0, this.problemHits.length - PROBLEM_HITS_CAP);
+        }
+      }
       if (h.userTag) userTagSet.add(h.userTag);
     }
     if (userTagSet.size > 0) {
@@ -221,13 +240,20 @@ export class LogAnalyzerService {
 
     try { this.opts.tracker.consume(line); }
     catch { /* tracker swallows by design */ }
-    const prevSessions = this.state.sessions;
-    this.state.sessions = this.opts.tracker.snapshot();
-    this.state.reinits = this.opts.tracker.reinits();
-    // Emit sessionsUpdated diff when sessions array changes (length differs or any session end change).
-    // For simplicity: emit on each new session detected. Backfill emits aren't gated separately.
-    if (this.state.sessions.length !== prevSessions.length) {
-      this.emitter.emit('diff', { type: 'sessionsUpdated', sessions: [...this.state.sessions] });
+    // The tracker exposes a mutation version so we only copy the session
+    // and reinit arrays when something actually changed — snapshotting per
+    // log line was an O(sessions) copy on every line.
+    const trackerVersion = this.opts.tracker.getVersion();
+    if (trackerVersion !== this.lastTrackerVersion) {
+      const prevSessionCount = this.state.sessions.length;
+      this.lastTrackerVersion = trackerVersion;
+      this.state.sessions = this.opts.tracker.snapshot();
+      this.state.reinits = this.opts.tracker.reinits();
+      // Emit sessionsUpdated diff when sessions array changes (length differs or any session end change).
+      // For simplicity: emit on each new session detected. Backfill emits aren't gated separately.
+      if (this.state.sessions.length !== prevSessionCount) {
+        this.emitter.emit('diff', { type: 'sessionsUpdated', sessions: [...this.state.sessions] });
+      }
     }
 
     this.maybeFlush();
@@ -242,6 +268,11 @@ export class LogAnalyzerService {
   }
 
   private flush(): void {
+    // Batched problem hits first — one diff per flush, not one per line.
+    if (this.pendingProblems.length > 0) {
+      this.emit({ type: 'problemsAdded', items: this.pendingProblems });
+      this.pendingProblems = [];
+    }
     this.recomputeHistograms();
     this.emit({ type: 'summary', counts: { ...this.state.counts } });
     this.emit({ type: 'histogramsUpdated', histograms: this.state.histograms });

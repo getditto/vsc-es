@@ -46,6 +46,10 @@ export class QueryEditor extends LitElement {
   // Profile envelope from the last `query.result` (null when the host
   // didn't include one, e.g. non-SELECT or profiling disabled).
   @state() private profile: QueryProfile | null = null;
+  // Set when the host capped the result set (MAX_QUERY_ROWS): the query
+  // produced more rows than were shipped. Shown as a warning so the user
+  // knows to add a LIMIT rather than trusting a partial picture.
+  @state() private truncated: number | null = null;
   // Snapshot of the query text at the moment `run()` was invoked.
   // The Profile viewer's empty-state branches use this to show the
   // statement that was actually executed (which may differ from the
@@ -208,6 +212,10 @@ export class QueryEditor extends LitElement {
     .running-indicator {
       color: var(--vscode-charts-orange);
       font-style: italic;
+    }
+    .truncation-warning {
+      margin-left: 8px;
+      color: var(--vscode-editorWarning-foreground, #cca700);
     }
     .view-toggle {
       display: flex;
@@ -413,6 +421,9 @@ export class QueryEditor extends LitElement {
           this.columns = msg.columns;
           this.durationMs = msg.durationMs;
           this.profile = msg.metadata.profile ?? null;
+          this.truncated = msg.metadata.truncated
+            ? (msg.metadata.totalResultCount ?? null)
+            : null;
           this.errorMessage = null;
           this.state = 'success';
           this.selectedRowIndex = null;
@@ -480,6 +491,12 @@ export class QueryEditor extends LitElement {
     document.removeEventListener('click', this.closeContextMenu);
     document.removeEventListener('contextmenu', this.closeContextMenu);
     document.removeEventListener('click', this.onDocumentClick);
+    // Clear the pending title-debounce so a detached element can't fire a
+    // stale query.textChanged after the panel moves or closes.
+    if (this.titleDebounceHandle !== undefined) {
+      window.clearTimeout(this.titleDebounceHandle);
+      this.titleDebounceHandle = undefined;
+    }
     super.disconnectedCallback();
   }
 
@@ -774,6 +791,11 @@ export class QueryEditor extends LitElement {
             ${this.state === 'running'
               ? html`<span class="running-indicator">Running…</span>`
               : html`${this.rows.length} ${this.rows.length === 1 ? 'row' : 'rows'} · ${this.durationMs} ms`}
+            ${this.state === 'success' && this.truncated !== null ? html`
+              <span class="truncation-warning" title="The host caps results to keep the extension responsive">
+                ⚠ showing first ${this.rows.length.toLocaleString()} of ${this.truncated.toLocaleString()} rows — add a LIMIT clause
+              </span>
+            ` : nothing}
           </div>
           <div class="view-toggle">
             <button class=${this.view === 'json' ? 'active' : ''} @click=${() => this.view = 'json'}>JSON</button>
@@ -824,8 +846,24 @@ export class QueryEditor extends LitElement {
 
   /** Stringifies the CURRENT PAGE's rows (not the full result set) so
    *  CodeMirror only tokenizes pageSize rows of JSON. The `ranges` are
-   *  page-local — `setSelected` translates to absolute on click. */
+   *  page-local — `setSelected` translates to absolute on click.
+   *
+   *  Memoized on the exact dependency set (rows identity, page, pageSize):
+   *  this runs on EVERY render, and renders happen per keystroke while the
+   *  user edits the query text — re-stringifying a 1000-row page per
+   *  keystroke is visible typing jank. */
+  private jsonDocCache: {
+    rows: Record<string, unknown>[];
+    page: number;
+    size: number;
+    result: { doc: string; ranges: { from: number; to: number }[] };
+  } | null = null;
+
   private buildJsonDoc(): { doc: string; ranges: { from: number; to: number }[] } {
+    const cache = this.jsonDocCache;
+    if (cache && cache.rows === this.rows && cache.page === this.currentPage && cache.size === this.pageSize) {
+      return cache.result;
+    }
     const paged = this.pagedRows;
     if (paged.length === 0) { return { doc: '[]', ranges: [] }; }
     const ranges: { from: number; to: number }[] = [];
@@ -840,7 +878,9 @@ export class QueryEditor extends LitElement {
       doc += i < paged.length - 1 ? ',\n' : '\n';
     }
     doc += ']';
-    return { doc, ranges };
+    const result = { doc, ranges };
+    this.jsonDocCache = { rows: this.rows, page: this.currentPage, size: this.pageSize, result };
+    return result;
   }
 
   private renderJson() {

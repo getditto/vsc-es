@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ChannelSink } from './ChannelSink.js';
 import { FileSink } from './FileSink.js';
 import { formatLogLine } from './format.js';
-import { containsSecret, SECRET_KEYS } from './secrets.js';
+import { containsSecret, redactSecrets, SECRET_KEYS } from './secrets.js';
 import type { Sink } from './Sink.js';
 import type { Logger, LogLevel, LogContext } from './types.js';
 import { LOG_LEVEL_ORDER, shouldEmit } from './types.js';
@@ -84,7 +84,10 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
         }
         ctxToUse = cleaned;
       }
-      messageToUse = message.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+      // Scrub the message string itself, not just the ctx object — a
+      // `"token":"…"` or `?token=…` substring in the message would
+      // otherwise reach the sinks (and log exports) untouched.
+      messageToUse = redactSecrets(message);
     }
     const finalLine = formatLogLine({ timestamp: new Date(), level, tag, message: messageToUse, ctx: ctxToUse });
 

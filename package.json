@@ -424,7 +424,7 @@
     "typescript": "^5.5.3"
   },
   "dependencies": {
-    "@dittolive/ditto": "5.1.0-rc.2"
+    "@dittolive/ditto": "5.1.0"
   },
   "overrides": {
     "brace-expansion@1": "1.1.18",
