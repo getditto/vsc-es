@@ -23,7 +23,7 @@ g.CustomEvent = dom.window.CustomEvent;
 g.Event = dom.window.Event;
 g.MouseEvent = dom.window.MouseEvent;
 g.WheelEvent = dom.window.WheelEvent;
-g.requestAnimationFrame = (cb: any) => setTimeout(cb, 0);
+g.requestAnimationFrame = (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0);
 g.cancelAnimationFrame = (id: any) => clearTimeout(id);
 g.getComputedStyle = dom.window.getComputedStyle;
 

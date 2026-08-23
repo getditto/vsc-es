@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { CollectionsRepository } from '../ditto/CollectionsRepository.js';
@@ -104,7 +104,9 @@ export class ImportDataPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (msg: ImportDataIn | LogIn) => { void this.handle(msg); },
+      webviewMessageHandler<ImportDataIn | LogIn>(
+        this.logger, 'ext:importData', 'Import data failed', (msg) => this.handle(msg),
+      ),
       undefined,
       this.disposables,
     );

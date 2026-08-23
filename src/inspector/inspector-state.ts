@@ -130,7 +130,7 @@ function walk(v: unknown, path: string, out: DetectedAttachment[]): void {
     const meta = obj.metadata;
     out.push({
       path,
-      token: { id: obj.id, len: Number(obj.len), metadata: meta as Record<string, string> },
+      token: { id: obj.id, len: Number(obj.len), metadata: meta },
       metadata: {
         id: obj.id,
         length: Number(obj.len),

@@ -3,6 +3,18 @@ import { customElement, property } from 'lit/decorators.js';
 
 const TRUNCATE_AT = 120;
 
+/** Stringify a value that is known not to be a plain object/array. */
+function primitiveText(value: unknown): string {
+  if (value === null || value === undefined) { return ''; }
+  if (typeof value === 'string') { return value; }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  // Objects, arrays, functions and symbols all stringify to something useless
+  // ('[object Object]'), which is what the user would see in the field.
+  try { return JSON.stringify(value) ?? ''; } catch { return ''; }
+}
+
 function renderCell(value: unknown): { display: string; full: string; nullish: boolean } {
   if (value === null) { return { display: 'null', full: 'null', nullish: true }; }
   if (value === undefined) { return { display: 'undefined', full: 'undefined', nullish: true }; }
@@ -14,7 +26,10 @@ function renderCell(value: unknown): { display: string; full: string; nullish: b
       nullish: false,
     };
   }
-  const s = String(value);
+  // Objects and arrays took the JSON branch above, but `unknown` stays
+  // `unknown` in the else, so narrow explicitly: a widened value reaching
+  // String() would render as '[object Object]' in the table.
+  const s = primitiveText(value);
   return {
     display: s.length > TRUNCATE_AT ? s.slice(0, TRUNCATE_AT) + '…' : s,
     full: s,

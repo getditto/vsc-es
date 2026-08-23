@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import '../presence-graph/presence-graph-element.js';
 import type { PresenceGraphInput } from '../presence-graph/scene.js';
 
@@ -708,55 +708,52 @@ export class PeerListing extends LitElement {
     .popover-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
   `;
 
-  /** Disposes the host-message subscription; without it every re-attach
-   *  leaves another live handler bound to a stale element. */
-  private disposeHostMessages: (() => void) | undefined;
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, msg => {
+    if (msg.type === 'peer.state') {
+      this.snapshot = msg.snapshot;
+      this.sync = msg.sync;
+      return;
+    }
+    if (msg.type === 'peer.platformInit') {
+      this.support = msg.support;
+      this.baseline = { ...msg.current };
+      this.form = { ...msg.current };
+      this.platformReceived = true;
+      return;
+    }
+    if (msg.type === 'peer.transportApplyStatus') {
+      this.applyStep = msg.step;
+      this.applyMessage = msg.message;
+      if (msg.step === 'complete') {
+        // Auto-clear back to idle after 1.5s.
+        if (this.completeClearTimer !== null) { window.clearTimeout(this.completeClearTimer); }
+        this.completeClearTimer = window.setTimeout(() => {
+          this.applyStep = 'idle';
+          this.applyMessage = undefined;
+          this.completeClearTimer = null;
+        }, 1500);
+      }
+      return;
+    }
+    if (msg.type === 'peer.transportApplyError') {
+      this.applyStep = 'error';
+      this.applyMessage = msg.message;
+      return;
+    }
+    if (msg.type === 'peer.localNetwork') {
+      this.localInterfaces = msg.interfaces;
+      return;
+    }
+  });
 
   connectedCallback(): void {
     super.connectedCallback();
-    this.disposeHostMessages = onHostMessage<In>(msg => {
-      if (msg.type === 'peer.state') {
-        this.snapshot = msg.snapshot;
-        this.sync = msg.sync;
-        return;
-      }
-      if (msg.type === 'peer.platformInit') {
-        this.support = msg.support;
-        this.baseline = { ...msg.current };
-        this.form = { ...msg.current };
-        this.platformReceived = true;
-        return;
-      }
-      if (msg.type === 'peer.transportApplyStatus') {
-        this.applyStep = msg.step;
-        this.applyMessage = msg.message;
-        if (msg.step === 'complete') {
-          // Auto-clear back to idle after 1.5s.
-          if (this.completeClearTimer !== null) { window.clearTimeout(this.completeClearTimer); }
-          this.completeClearTimer = window.setTimeout(() => {
-            this.applyStep = 'idle';
-            this.applyMessage = undefined;
-            this.completeClearTimer = null;
-          }, 1500);
-        }
-        return;
-      }
-      if (msg.type === 'peer.transportApplyError') {
-        this.applyStep = 'error';
-        this.applyMessage = msg.message;
-        return;
-      }
-      if (msg.type === 'peer.localNetwork') {
-        this.localInterfaces = msg.interfaces;
-        return;
-      }
-    });
     this.tickInterval = window.setInterval(() => { this.nowTick++; }, 30_000);
   }
 
   disconnectedCallback(): void {
-    this.disposeHostMessages?.();
-    this.disposeHostMessages = undefined;
     super.disconnectedCallback();
     if (this.tickInterval !== null) { window.clearInterval(this.tickInterval); }
     if (this.completeClearTimer !== null) {

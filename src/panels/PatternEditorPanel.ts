@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { PatternStore } from '../logAnalyzer/PatternStore.js';
 import type { Logger } from '../logging/types.js';
 import type { PatternEditorIn, PatternEditorOut } from '../ipc/messages.js';
@@ -67,7 +67,11 @@ export class PatternEditorPanel {
       title: 'Log Patterns', scriptUri, styleUri, cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (m: PatternEditorIn) => { void this.handle(m); }, undefined, this.disposables,
+      webviewMessageHandler<PatternEditorIn>(
+        this.logger, 'ext:patternEditor', 'Log pattern action failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
     this.storeSub = this.store.onDidChange(() => this.sendSnapshot());

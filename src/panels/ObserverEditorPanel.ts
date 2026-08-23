@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
 import type { ObserverStore } from '../storage/ObserverStore.js';
 import type { StoredObserver } from '../models/StoredObserver.js';
 import type { Logger } from '../logging/types.js';
@@ -71,15 +71,9 @@ export class ObserverEditorPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (msg: SubIn | LogIn) => {
-        // handle() is async — without the catch a failed save becomes an
-        // unhandled rejection and the user sees nothing.
-        void this.handle(msg).catch((err: unknown) => {
-          const message = err instanceof Error ? err.message : String(err);
-          this.logger.withTag('ext:observerEditor').error('Save failed', { err: message });
-          vscode.window.showErrorMessage(`Save observer failed: ${message}`);
-        });
-      },
+      webviewMessageHandler<SubIn | LogIn>(
+        this.logger, 'ext:observerEditor', 'Save observer failed', (msg) => this.handle(msg),
+      ),
       undefined,
       this.disposables,
     );

@@ -1,3 +1,4 @@
+import { quoteIdentifier } from '../ditto/dql-identifier.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { DittoManager } from '../ditto/DittoManager.js';
@@ -154,9 +155,8 @@ export async function computeCollectionBreakdown(
 
   const stats: CollectionStats[] = [];
   for (const name of names) {
-    const escaped = name.replace(/`/g, '``');
     try {
-      const cborRes = await manager.cborBytesForCollection(`\`${escaped}\``);
+      const cborRes = await manager.cborBytesForCollection(quoteIdentifier(name, 'collection'));
       stats.push({
         name,
         documentCount: cborRes.documentCount,

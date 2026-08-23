@@ -70,21 +70,50 @@ test('validateCollectionName: accepts letters, numbers, underscores', () => {
   validateCollectionName('a1b2c3');
 });
 
-test('validateCollectionName: rejects SQL-injection attempts', () => {
-  for (const bad of ['users; DROP TABLE', 'users--comment', "x'", 'a b', 'has-dash', '$weird']) {
-    assert.throws(() => validateCollectionName(bad), ImportValidationError);
+test('validateCollectionName: accepts names that need backtick quoting', () => {
+  // Ditto allows these; the query builders backtick-quote the target, so
+  // rejecting them only locked the user out of collections they already had.
+  for (const ok of ['has-dash', 'a b', 'Bestellungen', 'order.items', '9starts_with_digit']) {
+    validateCollectionName(ok);
   }
+});
+
+test('validateCollectionName: injection attempts are neutralised by quoting, not rejection', () => {
+  // The defence is the backtick quoting in the builder, so assert on the
+  // statement rather than on a thrown error: a `;` or a `--` inside a quoted
+  // identifier is just part of the name.
+  for (const bad of ['users; DROP TABLE', 'users--comment', "x'", '$weird']) {
+    validateCollectionName(bad);
+    const q = buildSingleInsertQuery(bad, 'regular');
+    assert.match(q, /^INSERT INTO `/, `quoted: ${bad}`);
+    assert.equal(q.split('\n')[0], `INSERT INTO \`${bad}\``);
+  }
+});
+
+test('buildSingleInsertQuery: a backtick in the name is doubled, not escaped out', () => {
+  // The one character with meaning inside a quoted identifier. Doubling it is
+  // the only correct escape; anything else lets the identifier terminate early.
+  assert.equal(
+    buildSingleInsertQuery('we`ird', 'regular').split('\n')[0],
+    'INSERT INTO `we``ird`',
+  );
 });
 
 test('validateCollectionName: rejects empty string', () => {
   assert.throws(() => validateCollectionName(''), ImportValidationError);
 });
 
+test('validateCollectionName: rejects control characters', () => {
+  for (const bad of ['a\0b', 'a\nb', 'a\rb']) {
+    assert.throws(() => validateCollectionName(bad), ImportValidationError);
+  }
+});
+
 // ─── Query builders ────────────────────────────────────────────
 
 test('buildBatchInsertQuery: regular insert produces ON ID CONFLICT clause', () => {
   const q = buildBatchInsertQuery('Users', 2, 'regular');
-  assert.match(q, /INSERT INTO Users/);
+  assert.match(q, /INSERT INTO `Users`/);
   assert.match(q, /\(deserialize_json\(:doc0\)\), \(deserialize_json\(:doc1\)\)/);
   assert.match(q, /ON ID CONFLICT DO UPDATE/);
 });
@@ -148,16 +177,19 @@ test('importDocuments: happy path inserts all docs in batches; success count mat
   assert.equal(calls.length, 3);
   // Each call goes through the BATCH path; no single-doc fallback.
   for (const c of calls) {
-    assert.match(c.query, /INSERT INTO Users/);
+    assert.match(c.query, /INSERT INTO `Users`/);
     assert.doesNotMatch(c.query, /:jsonDoc/);
   }
 });
 
-test('importDocuments: invalid collection name throws before any execute call', async () => {
+test('importDocuments: unquotable collection name throws before any execute call', async () => {
   let executed = false;
   await assert.rejects(importDocuments({
     documents: [{ _id: 'a' }],
-    collection: 'evil; DROP TABLE',
+    // A NUL can't be expressed as a DQL identifier at all. An injection-shaped
+    // name like 'evil; DROP TABLE' is NOT rejected any more — it's quoted, and
+    // the builder tests assert that it stays inside the backticks.
+    collection: 'evil\0name',
     insertType: 'regular',
     execute: async () => { executed = true; },
   }), ImportValidationError);

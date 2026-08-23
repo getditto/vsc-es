@@ -2,7 +2,7 @@ import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import './components/pattern-list.js';
 import './components/pattern-form.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import type { PatternEditorIn, PatternEditorOut } from '../../src/ipc/messages.js';
 import type { KeyedRawPattern } from '../../src/logAnalyzer/PatternEngine.js';
 
@@ -58,25 +58,22 @@ export class DittoPatternEditor extends LitElement {
   @state() private showForm = false;
   @state() private errMessage: string | null = null;
 
-  /** Disposes the host-message subscription; without it every re-attach
-   *  leaves another live handler bound to a stale element. */
-  private disposeHostMessages: (() => void) | undefined;
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<PatternEditorOut>(this, msg => this.handleMessage(msg));
 
   connectedCallback(): void {
     super.connectedCallback();
-    this.disposeHostMessages = onHostMessage<PatternEditorOut>(this.handleMessage);
-    this.addEventListener('edit', this.onEdit as EventListener);
-    this.addEventListener('delete', this.onDelete as EventListener);
-    this.addEventListener('save', this.onSave as EventListener);
+    this.addEventListener('edit', this.onEdit);
+    this.addEventListener('delete', this.onDelete);
+    this.addEventListener('save', this.onSave);
     this.addEventListener('cancel', this.onCancel as EventListener);
   }
 
   disconnectedCallback(): void {
-    this.disposeHostMessages?.();
-    this.disposeHostMessages = undefined;
-    this.removeEventListener('edit', this.onEdit as EventListener);
-    this.removeEventListener('delete', this.onDelete as EventListener);
-    this.removeEventListener('save', this.onSave as EventListener);
+    this.removeEventListener('edit', this.onEdit);
+    this.removeEventListener('delete', this.onDelete);
+    this.removeEventListener('save', this.onSave);
     this.removeEventListener('cancel', this.onCancel as EventListener);
     super.disconnectedCallback();
   }

@@ -63,3 +63,18 @@ test('ConnectionTracker: double-start without end records both as open', () => {
   t.consume(L('2026-06-09T14:01:00.000Z  INFO   [sdk]  physical connection started remote=abc role=Client'));
   assert.equal(t.snapshot().length, 2);
 });
+
+test('ConnectionTracker: reset drops history and advances the version', () => {
+  const t = new ConnectionTracker();
+  t.consume(L('2026-06-09T14:00:00.000Z  INFO   [sdk]  physical connection started remote=abc role=Client'));
+  t.consume(L('2026-06-09T14:01:00.000Z  INFO   [sdk]  ditto_init begin'));
+  t.consume(L('2026-06-09T14:02:00.000Z  INFO   [sdk]  physical connection ended remote=ghost role=Client'));
+  const before = t.getVersion();
+
+  t.reset();
+
+  assert.equal(t.snapshot().length, 0);
+  assert.equal(t.reinits().length, 0);
+  assert.equal(t.unmatchedEnds(), 0);
+  assert.ok(t.getVersion() > before, 'consumers gate on the version, so it must advance');
+});

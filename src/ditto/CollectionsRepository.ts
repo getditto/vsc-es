@@ -2,21 +2,7 @@ import * as vscode from 'vscode';
 import type { DittoManager } from './DittoManager.js';
 import type { Logger } from '../logging/types.js';
 import type { DittoCollection, DittoIndex } from '../models/DittoCollection.js';
-
-const VALID_IDENTIFIER = /^[A-Za-z0-9_]+$/;
-const VALID_FIELD_PATH = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/;
-
-/** Guard for identifiers interpolated into DQL — same standard as
- *  ImportService.validateCollectionName. */
-function assertValidIdentifier(name: string, kind: string, allowDots = false): void {
-  const ok = allowDots ? VALID_FIELD_PATH.test(name) : VALID_IDENTIFIER.test(name);
-  if (!ok) {
-    throw new Error(
-      `Invalid ${kind} name "${name}". Only letters, numbers, and underscores`
-      + (allowDots ? ' (and dots for nested paths)' : '') + ' are allowed.',
-    );
-  }
-}
+import { quoteIdentifier, quoteFieldPath } from './dql-identifier.js';
 
 /**
  * Cache of collections (with counts + indexes) for the active database.
@@ -68,14 +54,14 @@ export class CollectionsRepository {
   }
 
   async createIndex(collection: string, fieldName: string): Promise<void> {
-    // These identifiers are interpolated into DQL — validate them the same
-    // way ImportService validates collection names rather than trusting the
-    // webview's free-text input. Field names may be dotted paths.
-    assertValidIdentifier(collection, 'collection');
-    assertValidIdentifier(fieldName, 'field', /* allowDots */ true);
+    // DQL has no bind parameters for identifiers, so these are concatenated
+    // into the statement. Backtick-quote rather than restrict the character
+    // set: a collection named `order-items` is perfectly legal in Ditto, and
+    // rejecting it would lock the user out of indexing it entirely.
     const safeField = fieldName.replace(/[. ]/g, '_');
     const indexName = `idx_${collection}_${safeField}`;
-    const query = `CREATE INDEX IF NOT EXISTS ${indexName} ON ${collection} (${fieldName})`;
+    const query = `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(indexName, 'index')} `
+      + `ON ${quoteIdentifier(collection, 'collection')} (${quoteFieldPath(fieldName)})`;
     this.log.info('Creating index', { collection, fieldName, indexName });
     await this.manager.executeRaw(query);
     await this.hydrate('createIndex');
@@ -88,9 +74,8 @@ export class CollectionsRepository {
    *  the equivalent `<collection>.<name>` form would also work.
    *  Re-hydrates so the tree updates immediately. */
   async dropIndex(indexName: string, collection: string): Promise<void> {
-    assertValidIdentifier(indexName, 'index');
-    assertValidIdentifier(collection, 'collection');
-    const query = `DROP INDEX IF EXISTS ${indexName} ON ${collection}`;
+    const query = `DROP INDEX IF EXISTS ${quoteIdentifier(indexName, 'index')} `
+      + `ON ${quoteIdentifier(collection, 'collection')}`;
     this.log.info('Dropping index', { indexName, collection });
     await this.manager.executeRaw(query);
     await this.hydrate('dropIndex');
@@ -215,7 +200,9 @@ export class CollectionsRepository {
     // collection doesn't poison the rest. `count` is a reserved word in
     // DQL; alias as `numDocs`.
     const countResults = await Promise.allSettled(
-      collections.map(c => this.manager.executeRaw(`SELECT COUNT(*) AS numDocs FROM ${c.name}`)),
+      collections.map(c => this.manager.executeRaw(
+        `SELECT COUNT(*) AS numDocs FROM ${quoteIdentifier(c.name, 'collection')}`,
+      )),
     );
     countResults.forEach((res, i) => {
       if (res.status === 'fulfilled') {

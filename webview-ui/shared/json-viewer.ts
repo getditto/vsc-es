@@ -40,8 +40,8 @@ const dittoJsonHighlight = HighlightStyle.define([
   { tag: t.bool,         color: 'var(--vscode-debugTokenExpression-boolean, #569cd6)', fontWeight: 'bold' },
   { tag: t.null,         color: 'var(--vscode-debugTokenExpression-boolean, #569cd6)', fontWeight: 'bold' },
   // structural punctuation — soft foreground
-  { tag: t.punctuation,  color: 'var(--vscode-foreground)', opacity: '0.7' as unknown as string },
-  { tag: t.bracket,      color: 'var(--vscode-foreground)', opacity: '0.85' as unknown as string },
+  { tag: t.punctuation,  color: 'var(--vscode-foreground)', opacity: '0.7' },
+  { tag: t.bracket,      color: 'var(--vscode-foreground)', opacity: '0.85' },
 ]);
 
 /** State effect: replace the currently-known document ranges. */
@@ -119,7 +119,7 @@ export class JsonViewer extends LitElement {
   }
 
   private setupView(): void {
-    const host = this.querySelector('.cm-host') as HTMLElement | null;
+    const host = this.querySelector('.cm-host');
     if (!host) { return; }
     const initialRanges = this.ranges;
     const initialSelected = this.selectedIndex;

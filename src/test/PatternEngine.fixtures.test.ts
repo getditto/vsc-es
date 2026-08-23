@@ -42,7 +42,7 @@ test('fixtures: each fixture matches its expected key set', async () => {
     assert.deepEqual(
       [...actual].sort(),
       [...expected].sort(),
-      `Fixture ${file}: expected matches ${[...expected]} got ${[...actual]}`,
+      `Fixture ${file}: expected matches ${[...expected].join(', ')} got ${[...actual].join(', ')}`,
     );
   }
 });

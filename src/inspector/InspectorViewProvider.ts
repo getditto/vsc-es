@@ -8,6 +8,7 @@ import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { InspectorIn, InspectorOut } from '../ipc/messages.js';
 import { attachmentContentType, attachmentFilename } from './inspector-state.js';
+import { webviewMessageHandler } from '../panels/webview-utils.js';
 import type { MetricsPreferencesStore } from '../storage/MetricsPreferencesStore.js';
 import type { AttachmentCache } from './AttachmentCache.js';
 
@@ -89,7 +90,9 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     };
 
     this.disposables.push(
-      view.webview.onDidReceiveMessage((m: InspectorIn) => { void this.handle(m); }),
+      view.webview.onDidReceiveMessage(webviewMessageHandler<InspectorIn>(
+        this.logger, 'ext:inspector', 'Inspector action failed', (m) => this.handle(m),
+      )),
     );
     this.disposables.push(
       this.controller.onContentChange((c) => {
@@ -352,10 +355,10 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
 <html><head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp};">
-<link rel="stylesheet" href="${codiconUri}">
+<link rel="stylesheet" href="${codiconUri.toString()}">
 </head><body>
 <ditto-inspector></ditto-inspector>
-<script src="${scriptUri}"></script>
+<script src="${scriptUri.toString()}"></script>
 </body></html>`;
   }
 }

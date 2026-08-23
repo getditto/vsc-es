@@ -12,6 +12,8 @@
 // logging. Keeping it pure lets us unit-test the query-builder + batch
 // + fallback logic without an SDK or a webview.
 
+import { quoteIdentifier } from './dql-identifier.js';
+
 export type InsertType = 'regular' | 'initial';
 
 export interface ImportProgress {
@@ -46,7 +48,6 @@ export const DEFAULT_BATCH_SIZE = 50;
  *  position. Surfacing as a custom error keeps the message actionable
  *  ("only letters, numbers, and underscores") instead of a cryptic
  *  DQL parser error. */
-const VALID_COLLECTION_NAME = /^[A-Za-z0-9_]+$/;
 
 export class ImportValidationError extends Error {
   constructor(message: string, readonly kind: 'invalidJson' | 'missingId' | 'invalidCollectionName' | 'encoding') {
@@ -109,17 +110,19 @@ export function buildBatchInsertQuery(
   insertType: InsertType,
 ): string {
   const placeholders = Array.from({ length: batchSize }, (_, i) => `(deserialize_json(:doc${i}))`).join(', ');
+  const target = quoteIdentifier(collection, 'collection');
   if (insertType === 'initial') {
-    return `INSERT INTO ${collection}\nINITIAL DOCUMENTS ${placeholders}`;
+    return `INSERT INTO ${target}\nINITIAL DOCUMENTS ${placeholders}`;
   }
-  return `INSERT INTO ${collection}\nDOCUMENTS ${placeholders}\nON ID CONFLICT DO UPDATE`;
+  return `INSERT INTO ${target}\nDOCUMENTS ${placeholders}\nON ID CONFLICT DO UPDATE`;
 }
 
 export function buildSingleInsertQuery(collection: string, insertType: InsertType): string {
+  const target = quoteIdentifier(collection, 'collection');
   if (insertType === 'initial') {
-    return `INSERT INTO ${collection}\nINITIAL DOCUMENTS (deserialize_json(:jsonDoc))`;
+    return `INSERT INTO ${target}\nINITIAL DOCUMENTS (deserialize_json(:jsonDoc))`;
   }
-  return `INSERT INTO ${collection}\nDOCUMENTS (deserialize_json(:jsonDoc))\nON ID CONFLICT DO UPDATE`;
+  return `INSERT INTO ${target}\nDOCUMENTS (deserialize_json(:jsonDoc))\nON ID CONFLICT DO UPDATE`;
 }
 
 /** Stringify each document for a batch and pack as `{doc0: ..., doc1: ...}`.
@@ -141,10 +144,22 @@ export function buildBatchArguments(batch: readonly Record<string, unknown>[]): 
   return args;
 }
 
+/**
+ * Reject only names that cannot be expressed as a DQL identifier at all.
+ *
+ * The target is backtick-quoted by the query builders (see dql-identifier),
+ * so a hyphen, a space, or a non-ASCII letter is safe and legal — Ditto
+ * genuinely allows those collection names, and refusing them locked the user
+ * out of importing into a collection they already have. What is left to
+ * reject is the empty name and control characters, neither of which is a real
+ * collection name and both of which mangle the statement.
+ */
 export function validateCollectionName(collection: string): void {
-  if (!VALID_COLLECTION_NAME.test(collection)) {
+  try {
+    quoteIdentifier(collection, 'collection');
+  } catch (err) {
     throw new ImportValidationError(
-      'Collection name contains invalid characters. Only letters, numbers, and underscores are allowed.',
+      err instanceof Error ? err.message : 'Collection name is not a valid identifier.',
       'invalidCollectionName',
     );
   }
@@ -253,5 +268,11 @@ function idOf(doc: Record<string, unknown> | undefined): string | undefined {
   const id = doc._id;
   if (typeof id === 'string') { return id; }
   if (id === undefined || id === null) { return undefined; }
-  return String(id);
+  // A document id can legitimately be a number or a composite object. Only
+  // primitives stringify usefully; an object would surface to the user as
+  // '[object Object]', so serialise it instead.
+  if (typeof id === 'number' || typeof id === 'boolean' || typeof id === 'bigint') {
+    return String(id);
+  }
+  try { return JSON.stringify(id); } catch { return undefined; }
 }

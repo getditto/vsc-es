@@ -68,7 +68,7 @@ function makePeerInfo(overrides: Partial<PeerInfo> = {}): PeerInfo {
 
 test('mergePeerList produces empty remote[] when presence has no remote peers', () => {
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [] },
     new Map(),
     null,
     [],
@@ -89,7 +89,7 @@ test('mergePeerList: presenceGraph includes multi-hop peers that remote[] filter
     connections: [{ id: 'c-AB', connectionType: 'AccessPoint', peer1: 'A', peer2: 'B' }],
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [A, B] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [A, B] },
     new Map(),
     null,
     [],
@@ -99,11 +99,11 @@ test('mergePeerList: presenceGraph includes multi-hop peers that remote[] filter
   // Full graph: both A and B.
   assert.ok(snapshot.presenceGraph);
   assert.deepEqual(
-    snapshot.presenceGraph!.remotePeers.map(p => p.peerKey).sort(),
+    snapshot.presenceGraph.remotePeers.map(p => p.peerKey).sort(),
     ['A', 'B'],
   );
   // Both edges present in the full graph (deduped pair-sorted by type).
-  const edges = snapshot.presenceGraph!.connections
+  const edges = snapshot.presenceGraph.connections
     .map(c => `${[c.peer1, c.peer2].sort().join('-')}/${c.connectionType}`)
     .sort();
   // Sorted alphabetically: 'A-B/AccessPoint' < 'A-LOCAL/AccessPoint'
@@ -133,7 +133,7 @@ test('mergePeerList: presenceGraph drops orphan peers (discovered but no edges) 
   });
   const orphan = makePeer({ peerKey: 'orphan', connections: [] });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [A, orphan] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [A, orphan] },
     new Map(),
     null,
     [],
@@ -142,7 +142,7 @@ test('mergePeerList: presenceGraph drops orphan peers (discovered but no edges) 
   assert.deepEqual(snapshot.remote.map(p => p.id), ['A']);
   // Full graph also excludes the orphan — that's the new behaviour.
   assert.ok(snapshot.presenceGraph);
-  assert.deepEqual(snapshot.presenceGraph!.remotePeers.map(p => p.peerKey), ['A']);
+  assert.deepEqual(snapshot.presenceGraph.remotePeers.map(p => p.peerKey), ['A']);
 });
 
 test('mergePeerList: presenceGraph keeps a peer that only appears as the OTHER endpoint of someone else\'s edge', () => {
@@ -159,14 +159,14 @@ test('mergePeerList: presenceGraph keeps a peer that only appears as the OTHER e
   });
   const B = makePeer({ peerKey: 'B', connections: [] });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [A, B] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [A, B] },
     new Map(),
     null,
     [],
   );
   assert.ok(snapshot.presenceGraph);
   assert.deepEqual(
-    snapshot.presenceGraph!.remotePeers.map(p => p.peerKey).sort(),
+    snapshot.presenceGraph.remotePeers.map(p => p.peerKey).sort(),
     ['A', 'B'],
   );
 });
@@ -188,7 +188,7 @@ test('mergePeerList: presenceGraph dedupes A→B and B→A of the same type', ()
     ],
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [A, B] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [A, B] },
     new Map(),
     null,
     [],
@@ -203,7 +203,7 @@ test('each remote peer becomes a PeerInfo with id/deviceName/os/sdkVersion mappe
     dittoSdkVersion: '4.10.0',
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [remote] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [remote] },
     new Map(),
     null,
     [],
@@ -230,7 +230,7 @@ test('sync status row matched by peer key flows through; missing match defaults 
     last_update_received_time: 1700000000000,
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [r1, r2] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [r1, r2] },
     syncMap,
     null,
     [],
@@ -252,7 +252,7 @@ test('isDittoServer precedence: __sync_status.is_ditto_server overrides presence
     sync_session_status: 'Connected' as const,
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [peer] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [peer] },
     syncMap,
     null,
     [],
@@ -266,7 +266,7 @@ test('isDittoServer defaults to false when no sync row, even if peer.isConnected
   // be used as a fallback for `is_ditto_server` (which means the peer IS the server).
   const peer = makeRemotePeer('k1', 'AccessPoint', { isConnectedToDittoServer: true });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [peer] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [peer] },
     new Map(),
     null,
     [],
@@ -277,7 +277,7 @@ test('isDittoServer defaults to false when no sync row, even if peer.isConnected
 test('order preservation: existing peers keep position, new peers append, absent peers drop', () => {
   // First emission: peers a, b, c.
   let snap = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [makeRemotePeer('a'), makeRemotePeer('b'), makeRemotePeer('c')] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [makeRemotePeer('a'), makeRemotePeer('b'), makeRemotePeer('c')] },
     new Map(),
     null,
     [],
@@ -285,7 +285,7 @@ test('order preservation: existing peers keep position, new peers append, absent
   assert.deepEqual(snap.remote.map(p => p.id), ['a', 'b', 'c']);
   // Second emission: b drops, d appears. Expected: a, c, d.
   snap = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [makeRemotePeer('a'), makeRemotePeer('c'), makeRemotePeer('d')] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [makeRemotePeer('a'), makeRemotePeer('c'), makeRemotePeer('d')] },
     new Map(),
     null,
     ['a', 'b', 'c'],
@@ -335,7 +335,7 @@ test('mergePeerList drops multihop peers (peer with no connection involving loca
     ],
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [directPeer, multihopPeer] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [directPeer, multihopPeer] },
     new Map(),
     null,
     [],
@@ -357,7 +357,7 @@ test('mergePeerList filters out connections that don\'t involve local peer', () 
     ],
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [peer] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [peer] },
     new Map(),
     null,
     [],
@@ -402,7 +402,7 @@ test('mergePeerList second pass adds Ditto Cloud Server peers from __sync_status
     synced_up_to_local_commit_id: 12345,
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [direct] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [direct] },
     syncMap,
     null,
     [],
@@ -432,7 +432,7 @@ test('mergePeerList second pass skips cloud servers that are not actively syncin
     sync_session_status: undefined,    // SDK returned "Not Connected" or junk
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [] },
     syncMap,
     null,
     [],
@@ -451,7 +451,7 @@ test('mergePeerList drops cloud peers when syncActive=false even if status says 
     sync_session_status: 'Connected' as const,
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [] },
     syncMap,
     null,
     [],
@@ -483,7 +483,7 @@ test('mergePeerList second pass does NOT duplicate cloud peer if it appears in p
     sync_session_status: 'Connected' as const,
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [cloudInPresence] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [cloudInPresence] },
     syncMap,
     null,
     [],
@@ -502,7 +502,7 @@ test('mergePeerList deduplicates connections by type', () => {
     ],
   });
   const snapshot = mergePeerList(
-    { localPeer: makeLocalPeer(), remotePeers: [peer] } as any,
+    { localPeer: makeLocalPeer(), remotePeers: [peer] },
     new Map(),
     null,
     [],

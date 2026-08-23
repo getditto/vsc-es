@@ -47,3 +47,13 @@ test('redactSecrets: every detected pattern is actually scrubbed', () => {
   // And the non-secret surroundings survive.
   assert.match(redactSecrets('GET https://api.example.com/x?token=abc123&y=1'), /&y=1/);
 });
+
+test('containsSecret/redactSecrets: JSON keys are matched regardless of casing', () => {
+  // The query-parameter patterns were already case-insensitive; the JSON
+  // ones were not, so `{"Token":"…"}` was neither detected nor scrubbed.
+  for (const key of ['Token', 'TOKEN', 'SecretKey', 'HttpApiKey']) {
+    const msg = `Login OK {"${key}":"sk_live_xxx"}`;
+    assert.equal(containsSecret(msg), true, `detected: ${key}`);
+    assert.doesNotMatch(redactSecrets(msg), /sk_live_xxx/, `scrubbed: ${key}`);
+  }
+});

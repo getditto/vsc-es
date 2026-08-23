@@ -23,8 +23,8 @@ suite('E2E sync', function () {
 
   test('connects to CI app and observes presence or sync activity within 30s', async () => {
     assert.ok(api);
-    const id = await api!.registerFromEnv();
-    await api!.connect(id);
-    await api!.waitForPeerOrSyncStatus(30_000);
+    const id = await api.registerFromEnv();
+    await api.connect(id);
+    await api.waitForPeerOrSyncStatus(30_000);
   });
 });

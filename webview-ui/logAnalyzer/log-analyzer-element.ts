@@ -1,6 +1,6 @@
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import './components/summary-header.js';
 import './components/problems-list.js';
 import './components/histograms-row.js';
@@ -140,28 +140,25 @@ export class DittoLogAnalyzer extends LitElement {
   private latestDetailReq: string | null = null;
   private searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  /** Disposes the host-message subscription; without it every re-attach
-   *  leaves another live handler bound to a stale element. */
-  private disposeHostMessages: (() => void) | undefined;
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<AnalyzerOut>(this, msg => this.handleMessage(msg));
 
   connectedCallback(): void {
     super.connectedCallback();
-    this.disposeHostMessages = onHostMessage<AnalyzerOut>(this.handleMessage);
-    this.addEventListener('reveal-line', this.onRevealLine as EventListener);
-    this.addEventListener('filter-change', this.onFilterChange as EventListener);
-    this.addEventListener('line-clicked', this.onLineClicked as EventListener);
-    this.addEventListener('drawer-close', this.onDrawerClose as EventListener);
+    this.addEventListener('reveal-line', this.onRevealLine);
+    this.addEventListener('filter-change', this.onFilterChange);
+    this.addEventListener('line-clicked', this.onLineClicked);
+    this.addEventListener('drawer-close', this.onDrawerClose);
     // Kick off an initial query so the table is populated on first open.
     this.requestLines();
   }
 
   disconnectedCallback(): void {
-    this.disposeHostMessages?.();
-    this.disposeHostMessages = undefined;
-    this.removeEventListener('reveal-line', this.onRevealLine as EventListener);
-    this.removeEventListener('filter-change', this.onFilterChange as EventListener);
-    this.removeEventListener('line-clicked', this.onLineClicked as EventListener);
-    this.removeEventListener('drawer-close', this.onDrawerClose as EventListener);
+    this.removeEventListener('reveal-line', this.onRevealLine);
+    this.removeEventListener('filter-change', this.onFilterChange);
+    this.removeEventListener('line-clicked', this.onLineClicked);
+    this.removeEventListener('drawer-close', this.onDrawerClose);
     if (this.searchDebounce != null) {
       clearTimeout(this.searchDebounce);
       this.searchDebounce = null;

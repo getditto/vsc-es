@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { StoredSubscription } from '../models/DittoConfig.js';
@@ -72,15 +72,13 @@ export class SubscriptionEditorPanel {
       scriptUri,
       cspSource: this.panel.webview.cspSource
     });
-    this.panel.webview.onDidReceiveMessage((msg: SubIn | LogIn) => {
-      // handle() is async — without the catch a failed save becomes an
-      // unhandled rejection and the user sees nothing.
-      void this.handle(msg).catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.withTag('ext:subscriptionEditor').error('Save failed', { err: message });
-        vscode.window.showErrorMessage(`Save subscription failed: ${message}`);
-      });
-    }, undefined, this.disposables);
+    this.panel.webview.onDidReceiveMessage(
+      webviewMessageHandler<SubIn | LogIn>(
+        this.logger, 'ext:subscriptionEditor', 'Save subscription failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
+    );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 
     // Push initial channel level to webview.

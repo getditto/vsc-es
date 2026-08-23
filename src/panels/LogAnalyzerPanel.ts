@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { LogAnalyzerService, AnalyzerDiff } from '../logAnalyzer/LogAnalyzerService.js';
 import type { Logger } from '../logging/types.js';
 import type { AnalyzerIn, AnalyzerOut } from '../ipc/messages.js';
@@ -93,7 +93,11 @@ export class LogAnalyzerPanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      (m: AnalyzerIn) => { void this.handle(m); }, undefined, this.disposables,
+      webviewMessageHandler<AnalyzerIn>(
+        this.logger, 'ext:logAnalyzer', 'Log analyzer action failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 

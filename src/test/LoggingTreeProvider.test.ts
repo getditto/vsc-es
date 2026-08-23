@@ -29,7 +29,7 @@ test('LoggingTreeProvider: returns 6 root nodes in fixed order', async () => {
   // to all logs across connections.
   const f = fakeLogger();
   const p = new LoggingTreeProvider(f.api);
-  const nodes = await p.getChildren();
+  const nodes = p.getChildren();
   assert.equal(nodes.length, 6);
   assert.deepEqual(nodes.map(n => n.kind), ['appLevel', 'sdkLevel', 'openOutput', 'exportLogs', 'showLogFile', 'openPatternEditor']);
 });
@@ -37,7 +37,7 @@ test('LoggingTreeProvider: returns 6 root nodes in fixed order', async () => {
 test('LoggingTreeProvider: appLevel item description shows current level', async () => {
   const f = fakeLogger();
   const p = new LoggingTreeProvider(f.api);
-  const [app] = await p.getChildren();
+  const [app] = p.getChildren();
   const item = p.getTreeItem(app);
   assert.match(String(item.description), /info/);
 });
@@ -54,7 +54,7 @@ test('LoggingTreeProvider: fires onDidChange when channel level changes', async 
 test('LoggingTreeProvider: openOutput item has command id dittoVsce.openOutputChannel', async () => {
   const f = fakeLogger();
   const p = new LoggingTreeProvider(f.api);
-  const nodes = await p.getChildren();
+  const nodes = p.getChildren();
   const oo = nodes.find(n => n.kind === 'openOutput')!;
   const item = p.getTreeItem(oo);
   assert.equal(item.command?.command, 'dittoVsce.openOutputChannel');
@@ -63,10 +63,10 @@ test('LoggingTreeProvider: openOutput item has command id dittoVsce.openOutputCh
 test('LoggingTreeProvider: exposes openPatternEditor node', async () => {
   const f = fakeLogger();
   const p = new LoggingTreeProvider(f.api);
-  const nodes = await p.getChildren();
+  const nodes = p.getChildren();
   const editor = nodes.find(n => n.kind === 'openPatternEditor');
   assert.ok(editor, 'openPatternEditor node missing');
-  const item = p.getTreeItem(editor!);
+  const item = p.getTreeItem(editor);
   assert.equal(item.command?.command, 'dittoVsce.openLogPatternEditor');
   assert.equal(item.label, 'Manage Log Patterns');
 });

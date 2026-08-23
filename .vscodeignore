@@ -18,6 +18,7 @@ dist/test/**
 **/*.ts
 tsconfig.json
 esbuild.config.mjs
+eslint.config.mjs
 *.vsix
 .gitignore
 .vscodeignore

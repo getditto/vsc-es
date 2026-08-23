@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { Logger } from '../logging/types.js';
 import type { WelcomeIn, WelcomeOut, LogIn, LogOut } from '../ipc/messages.js';
@@ -78,7 +78,9 @@ export class WelcomePanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      (msg: WelcomeIn | LogIn) => { void this.handle(msg); },
+      webviewMessageHandler<WelcomeIn | LogIn>(
+        this.logger, 'ext:welcome', 'Welcome action failed', (msg) => this.handle(msg),
+      ),
       undefined,
       this.disposables,
     );

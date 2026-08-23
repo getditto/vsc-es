@@ -33,8 +33,8 @@ import {
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
-import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, parseProfileItem } from './QueryProfileParser.js';
-import type { QueryProfile } from './QueryProfile.js';
+import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect } from './QueryProfileParser.js';
+import { projectQueryRows } from './query-projection.js';
 import { startSyncWithCollectionScopes } from './sync-scopes.js';
 import { applySystemSettings, parseShowAllOptions } from './system-settings.js';
 import { withConnectionPersistenceLock } from '../storage/connection-persistence-lock.js';
@@ -61,14 +61,6 @@ interface ActiveSession {
 
 const SYNC_STATUS_HANDLE_ID = '__sync_status';
 
-/** Hard cap on rows projected from a single query result and shipped to
- *  a webview. A bare `SELECT *` against a large synced collection would
- *  otherwise materialize the entire result set in the extension host and
- *  structured-clone it into the webview — a one-click OOM of the shared
- *  extension-host process. 10k rows is far beyond what the paged result
- *  table (≤1000/page) can usefully show; the metadata flags truncation so
- *  the UI can say so. */
-export const MAX_QUERY_ROWS = 10_000;
 
 export class DittoManager {
   private session: ActiveSession | null = null;
@@ -502,7 +494,7 @@ export class DittoManager {
     metadata: Record<string, string>,
   ): Promise<unknown> {
     if (!this.session) { throw new Error('No active database.'); }
-    return this.session.ditto.store.newAttachment(filePath, metadata as any);
+    return this.session.ditto.store.newAttachment(filePath, metadata);
   }
 
   /**
@@ -579,7 +571,7 @@ export class DittoManager {
         this.log.warn('Differ.diff threw — resetting differ and emitting empty diff', {
           query, err: err instanceof Error ? err.message : String(err),
         });
-        diff = { insertions: [], deletions: [], updates: [], moves: [] } as Diff;
+        diff = { insertions: [], deletions: [], updates: [], moves: [] };
         differ = new Differ();
       }
       const rows: Record<string, unknown>[] = [];
@@ -653,40 +645,10 @@ export class DittoManager {
     const result = await this.session.ditto.store.execute(effectiveQuery);
     const durationMs = Math.round(performance.now() - start);
 
-    // Project at most MAX_QUERY_ROWS rows. A bare `SELECT *` against a
-    // large synced collection would otherwise materialize the entire result
-    // set in the host and structured-clone it into the webview — a
-    // one-click OOM of the shared extension-host process. Every item is
-    // dematerialized as we go (read or not) so none of them pin native
-    // memory for the life of the result — the same discipline the
-    // observer paths follow.
-    const items = result.items;
-    let itemCount = items.length;
-    // Pop the trailing ~request_profile item before we project the user's
-    // rows, so the result table never shows the profile envelope as a row.
-    let profile: QueryProfile | undefined;
-    if (expectsEnvelope && itemCount > 0) {
-      const lastItem = items[itemCount - 1];
-      try {
-        const parsed = parseProfileItem(lastItem.value as Record<string, unknown>);
-        if (parsed) {
-          profile = parsed;
-          itemCount -= 1;
-        }
-      } finally {
-        try { lastItem.dematerialize(); } catch { /* ignore */ }
-      }
-    }
-    const projected = Math.min(itemCount, MAX_QUERY_ROWS);
-    const rows: Record<string, unknown>[] = [];
-    for (let i = 0; i < itemCount; i += 1) {
-      const item = items[i];
-      try {
-        if (i < projected) { rows.push(item.value as Record<string, unknown>); }
-      } finally {
-        try { item.dematerialize(); } catch { /* ignore */ }
-      }
-    }
+    // Bounded projection + profile-envelope handling live in
+    // query-projection so the row cap is unit-testable without an SDK.
+    const { rows, profile, totalRowCount, truncated } =
+      projectQueryRows(result.items, { expectsEnvelope });
 
     // Capture the EXPLAIN plan as a non-fatal side-trip, gated on the
     // metrics setting. We pass the ORIGINAL (non-PROFILE-prefixed)
@@ -700,9 +662,7 @@ export class DittoManager {
       explain,
       timestamp: Date.now(),
       profile,
-      ...(itemCount > projected
-        ? { truncated: true, totalResultCount: itemCount }
-        : {}),
+      ...(truncated ? { truncated: true, totalResultCount: totalRowCount } : {}),
     };
     return { rows, durationMs, metadata };
   }
@@ -765,6 +725,9 @@ export class DittoManager {
 
     this.applyingTransports = true;
     let phase: 'stoppingSync' | 'tearingDownObservers' | 'applyingConfig' | 'persisting' | 'restartingSync' | 'reattachingObservers' = 'stoppingSync';
+    /** The apply failure, if any. Held rather than rethrown so recovery can
+     *  run first without a `finally` throw clobbering it. */
+    let primaryError: unknown;
     try {
       this.log.info('Transport apply: stopping sync', { configId });
       try { ditto.sync.stop(); } catch { /* ignore — best-effort */ }
@@ -819,22 +782,29 @@ export class DittoManager {
       this.log.error('Transport apply: failed', {
         phase, configId, err: err instanceof Error ? err.stack : String(err),
       });
-      // Still attempt to restart sync + re-attach observers inside finally
-      // so the user isn't left with a stranded session.
-      throw err;
-    } finally {
-      // Restart + reattach are best-effort recovery; if they throw we log and
-      // surface the original error (or the new restart error if no original).
-      try {
-        this.log.info('Transport apply: restarting sync', { configId });
-        ditto.sync.start();
-      } catch (err) {
-        this.log.error('Transport apply: sync.start() failed', {
-          configId, err: err instanceof Error ? err.stack : String(err),
-        });
-        this.applyingTransports = false;
-        throw err;
-      }
+      // Recorded rather than rethrown here. Recovery below still has to run so
+      // the user isn't left with a stranded session, and a `throw` from a
+      // `finally` block REPLACES this error instead of deferring to it — which
+      // is precisely the bug this shape used to have: a failing sync.start()
+      // during recovery discarded the real cause and reported itself instead.
+      primaryError = err;
+    }
+
+    // ── Recovery: restart sync and re-attach observers ──────────
+    // Deliberately outside `finally` so the ordering above is explicit and
+    // the original error always wins.
+    let recoveryError: unknown;
+    try {
+      this.log.info('Transport apply: restarting sync', { configId });
+      ditto.sync.start();
+    } catch (err) {
+      this.log.error('Transport apply: sync.start() failed', {
+        configId, err: err instanceof Error ? err.stack : String(err),
+      });
+      recoveryError = err;
+    }
+
+    if (recoveryError === undefined) {
       try {
         this.attachPresenceObserver(ditto);
         this.attachSyncStatusObserver(ditto);
@@ -843,12 +813,24 @@ export class DittoManager {
         this.firePresence();
         this.log.info('Transport apply: complete', { configId });
       } catch (err) {
+        // Best-effort: observers can be re-attached on the next presence tick,
+        // so this never masks the apply result.
         this.log.error('Transport apply: re-attach observers failed', {
           configId, err: err instanceof Error ? err.stack : String(err),
         });
       }
-      this.applyingTransports = false;
     }
+
+    this.applyingTransports = false;
+    // The apply failure is the cause the user needs; a recovery failure is
+    // only interesting when the apply itself succeeded.
+    // Rethrown verbatim rather than wrapped: callers up the stack test for
+    // DittoError codes, and re-wrapping would erase both the type and the
+    // SDK's stack.
+    /* eslint-disable @typescript-eslint/only-throw-error */
+    if (primaryError !== undefined) { throw primaryError; }
+    if (recoveryError !== undefined) { throw recoveryError; }
+    /* eslint-enable @typescript-eslint/only-throw-error */
   }
 
   /** Read each transport's `isEnabled` back from `ditto.transportConfig` and
@@ -899,7 +881,7 @@ export class DittoManager {
         this.session.presenceCoalesceTimer = setTimeout(() => { void flush(); }, 250);
       }
     });
-    if (this.session) { this.session.presenceObserver = observer as any; }
+    if (this.session) { this.session.presenceObserver = observer; }
   }
 
   /**

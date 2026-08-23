@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
 import type { DittoCollection } from '../models/DittoCollection.js';
 import type { AddIndexIn, AddIndexOut, LogIn, LogOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
@@ -72,7 +72,9 @@ export class AddIndexPanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      (msg: AddIndexIn | LogIn) => this.handle(msg),
+      webviewMessageHandler<AddIndexIn | LogIn>(
+        this.logger, 'ext:addIndex', 'Add index failed', (msg) => this.handle(msg),
+      ),
       undefined,
       this.disposables,
     );

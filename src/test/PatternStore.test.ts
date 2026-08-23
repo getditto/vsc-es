@@ -11,7 +11,7 @@ function makeStore(opts: { dir: string; pathSetting?: string }) {
   return new PatternStore({
     bundledPath: path.resolve(import.meta.dirname, '../logAnalyzer/patterns/problem_patterns.json'),
     resolveUserPath: () => opts.pathSetting ?? path.join(opts.dir, 'user_patterns.json'),
-    logger: { warn: () => {}, error: () => {} } as any,
+    logger: { warn: () => {}, error: () => {} },
   });
 }
 

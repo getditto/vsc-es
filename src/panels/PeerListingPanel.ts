@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
@@ -93,7 +93,13 @@ export class PeerListingPanel {
       cspSource: this.panel.webview.cspSource
     });
 
-    this.panel.webview.onDidReceiveMessage((msg: PeerIn | LogIn) => this.handle(msg), undefined, this.disposables);
+    this.panel.webview.onDidReceiveMessage(
+      webviewMessageHandler<PeerIn | LogIn>(
+        this.logger, 'ext:peerListing', 'Presence action failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
+    );
     this.disposables.push(this.manager.onPresence(() => this.pushState()));
     this.disposables.push(this.manager.onStatusChange(() => this.pushState()));
     this.disposables.push(this.manager.onSyncChange(() => this.pushState()));

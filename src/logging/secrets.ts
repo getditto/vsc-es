@@ -6,8 +6,11 @@ export const SECRET_KEYS = ['token', 'secretKey', 'httpApiKey'] as const;
 const SECRET_QUERY_PARAMS = ['token', 'access_token', 'api_key', 'secretKey', 'httpApiKey'] as const;
 
 function jsonKeyPattern(key: string): RegExp {
-  // Match `"key":"<non-empty>"` in JSON context.
-  return new RegExp(`"${key}"\\s*:\\s*"[^"]+"`);
+  // Match `"key":"<non-empty>"` in JSON context. Case-insensitive to match
+  // the query-parameter patterns below: SDK and server payloads are not
+  // consistent about casing, and `{"Token":"…"}` is exactly as much of a
+  // leak as `{"token":"…"}`.
+  return new RegExp(`"${key}"\\s*:\\s*"[^"]+"`, 'i');
 }
 
 function queryParamPattern(key: string): RegExp {
@@ -33,8 +36,11 @@ export function containsSecret(formatted: string): boolean {
 export function redactSecrets(message: string): string {
   let out = message.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
   for (const key of SECRET_KEYS) {
+    // 'gi', matching jsonKeyPattern's case-insensitivity — detection and
+    // redaction must cover the same ground or a detected secret reaches the
+    // sinks untouched.
     out = out.replace(
-      new RegExp(`("${key}"\\s*:\\s*")[^"]+(")`, 'g'),
+      new RegExp(`("${key}"\\s*:\\s*")[^"]+(")`, 'gi'),
       '$1[redacted]$2',
     );
   }

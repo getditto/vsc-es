@@ -21,7 +21,7 @@ test('formatLogLine: with context, JSON-stringified', () => {
     message: 'Connected',
     ctx: { databaseId: 'abc-123', mode: 'server' },
   });
-  assert.match(line, /^2026-05-09T19:42:11.382Z  INFO   \[ext:DittoManager\]  Connected  /);
+  assert.match(line, /^2026-05-09T19:42:11.382Z {2}INFO {3}\[ext:DittoManager\] {2}Connected {2}/);
   assert.match(line, /\{"databaseId":"abc-123","mode":"server"\}$/);
 });
 

@@ -15,9 +15,9 @@ class FakeMemento {
   keys(): readonly string[] { return [...this.map.keys()]; }
 }
 
-function makeStore(): ConfigStore { return new ConfigStore(new FakeMemento() as any); }
-function emptySubs(): SubscriptionStore { return new SubscriptionStore(new FakeMemento() as any); }
-function emptyObservers(): ObserverStore { return new ObserverStore(new FakeMemento() as any); }
+function makeStore(): ConfigStore { return new ConfigStore(new FakeMemento()); }
+function emptySubs(): SubscriptionStore { return new SubscriptionStore(new FakeMemento()); }
+function emptyObservers(): ObserverStore { return new ObserverStore(new FakeMemento()); }
 
 test('getRootChildren returns [] when no configs', async () => {
   const cfg = makeStore();
@@ -137,7 +137,7 @@ test('indexesParent expands to one index node per declared index', async () => {
 test('Subscriptions parent expands to leaves from SubscriptionStore', async () => {
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
-  const subs = new SubscriptionStore(new FakeMemento() as any);
+  const subs = new SubscriptionStore(new FakeMemento());
   await subs.save('1', { id: 's1', name: 'tasks-all', query: 'SELECT * FROM tasks' });
   const provider = new DatabaseTreeProvider(cfg, () => 'active', subs, emptyObservers());
   const [root] = await provider.getRootChildren();
@@ -153,7 +153,7 @@ test('Subscriptions parent expands to leaves from SubscriptionStore', async () =
 test('Subscription expands to a single subscriptionQuery leaf carrying the full DQL', async () => {
   const cfg = makeStore();
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
-  const subs = new SubscriptionStore(new FakeMemento() as any);
+  const subs = new SubscriptionStore(new FakeMemento());
   await subs.save('1', { id: 's1', name: 'tasks-all', query: 'SELECT * FROM tasks WHERE done = false' });
   const provider = new DatabaseTreeProvider(cfg, () => 'active', subs, emptyObservers());
   const [root] = await provider.getRootChildren();

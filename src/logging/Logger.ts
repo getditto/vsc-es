@@ -72,10 +72,12 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
     let messageToUse = message;
     const formatted = formatLogLine({ timestamp: new Date(), level, tag, message, ctx });
     if (containsSecret(formatted)) {
-      if (mode === 'development' || (vscode.env as any)?.appName === undefined) {
-        if (mode === 'development') {
-          throw new Error('Logger: secret pattern detected in formatted message — fix the call site.');
-        }
+      // Development tripwire: fail loudly so the call site gets fixed rather
+      // than relying on redaction. Redaction below is the production path —
+      // and still runs in development for anything the tripwire is disabled
+      // for, so the two are not either/or.
+      if (mode === 'development') {
+        throw new Error('Logger: secret pattern detected in formatted message — fix the call site.');
       }
       if (ctx) {
         const cleaned: LogContext = { ...ctx };

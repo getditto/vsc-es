@@ -12,18 +12,18 @@ class FakeMemento {
 }
 
 test('list(dbId) returns [] when nothing stored', () => {
-  const s = new SubscriptionStore(new FakeMemento() as any);
+  const s = new SubscriptionStore(new FakeMemento());
   assert.deepEqual(s.list('db1'), []);
 });
 
 test('save() then list() round-trips a subscription', async () => {
-  const s = new SubscriptionStore(new FakeMemento() as any);
+  const s = new SubscriptionStore(new FakeMemento());
   await s.save('db1', { id: 'sub1', name: 'tasks-all', query: 'SELECT * FROM tasks' });
   assert.deepEqual(s.list('db1'), [{ id: 'sub1', name: 'tasks-all', query: 'SELECT * FROM tasks' }]);
 });
 
 test('subscriptions are scoped per database', async () => {
-  const s = new SubscriptionStore(new FakeMemento() as any);
+  const s = new SubscriptionStore(new FakeMemento());
   await s.save('db1', { id: 'sub1', name: 'a', query: 'SELECT 1' });
   await s.save('db2', { id: 'sub2', name: 'b', query: 'SELECT 2' });
   assert.equal(s.list('db1').length, 1);
@@ -32,7 +32,7 @@ test('subscriptions are scoped per database', async () => {
 });
 
 test('save() updates an existing subscription by id', async () => {
-  const s = new SubscriptionStore(new FakeMemento() as any);
+  const s = new SubscriptionStore(new FakeMemento());
   await s.save('db1', { id: 'sub1', name: 'a', query: 'SELECT 1' });
   await s.save('db1', { id: 'sub1', name: 'a-renamed', query: 'SELECT 1' });
   assert.equal(s.list('db1').length, 1);
@@ -40,14 +40,14 @@ test('save() updates an existing subscription by id', async () => {
 });
 
 test('delete() removes a subscription', async () => {
-  const s = new SubscriptionStore(new FakeMemento() as any);
+  const s = new SubscriptionStore(new FakeMemento());
   await s.save('db1', { id: 'sub1', name: 'a', query: 'SELECT 1' });
   await s.delete('db1', 'sub1');
   assert.deepEqual(s.list('db1'), []);
 });
 
 test('deleteAll(dbId) clears all subscriptions for that DB', async () => {
-  const s = new SubscriptionStore(new FakeMemento() as any);
+  const s = new SubscriptionStore(new FakeMemento());
   await s.save('db1', { id: 'sub1', name: 'a', query: 'SELECT 1' });
   await s.save('db1', { id: 'sub2', name: 'b', query: 'SELECT 2' });
   await s.deleteAll('db1');

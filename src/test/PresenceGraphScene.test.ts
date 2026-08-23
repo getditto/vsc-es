@@ -229,3 +229,36 @@ test('PresenceGraphScene: reset view uses the local peer actual position', () =>
   assert.equal(scene.zoom, 1);
   assert.deepEqual(scene.camera, { x: -75, y: 30 });
 });
+
+test('PresenceGraphScene: focus neighbours are recomputed when the topology changes', () => {
+  // The neighbour set behind focusForPeer is cached on (focus key, lines
+  // epoch). The epoch is the only guard against a stale answer when the
+  // topology changes underneath an unchanged selection, so assert exactly
+  // that: same selected peer, different connections.
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
+  scene.applyInput(graphInput());
+  scene.selectPeer('a');
+
+  // 'local' is a neighbour of 'a' via the local↔a link, so it is not dimmed.
+  assert.deepEqual(scene.focusForPeer('local'), { selected: false, alpha: 1 });
+
+  // Now 'a' is still present but no longer connected to anything. The
+  // selection has not changed, so a cache keyed only on the focus key would
+  // keep reporting 'local' as a neighbour.
+  const noLinkToA: PresenceGraphInput = {
+    ...graphInput(),
+    connections: [{ from: 'local', to: 'b', type: 'AccessPoint' as const }],
+  };
+  scene.applyInput(noLinkToA);
+
+  assert.equal(scene.selectedPeerKey, 'a', 'selection survived the update');
+  assert.deepEqual(
+    scene.focusForPeer('local'),
+    { selected: false, alpha: 0.25 },
+    'local is no longer a neighbour of the selected peer',
+  );
+
+  // And back again — the cache must not latch in either direction.
+  scene.applyInput(graphInput());
+  assert.deepEqual(scene.focusForPeer('local'), { selected: false, alpha: 1 });
+});

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { QueryMetricsStore, QueryMetricRecord } from '../storage/QueryMetricsStore.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
@@ -90,7 +90,9 @@ export class QueryMetricsPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (m: MetricsIn | LogIn) => { void this.handle(m); },
+      webviewMessageHandler<MetricsIn | LogIn>(
+        this.logger, 'ext:queryMetrics', 'Query metrics action failed', (msg) => this.handle(msg),
+      ),
       undefined,
       this.disposables,
     );

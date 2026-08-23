@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
-import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
-import { MAX_QUERY_ROWS } from '../ditto/DittoManager.js';
+import { MAX_QUERY_ROWS } from '../ditto/query-projection.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { QueryIn, QueryOut, LogIn, LogOut, QueryMode } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
@@ -195,7 +195,13 @@ export class QueryEditorPanel {
       cspSource: this.panel.webview.cspSource,
     });
 
-    this.panel.webview.onDidReceiveMessage((msg: QueryIn | LogIn) => this.handle(msg), undefined, this.disposables);
+    this.panel.webview.onDidReceiveMessage(
+      webviewMessageHandler<QueryIn | LogIn>(
+        this.logger, 'ext:queryEditor', 'Query editor action failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
+    );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 
     // Push initial channel level to webview.
@@ -528,7 +534,7 @@ export class QueryEditorPanel {
    *  filename across platforms. */
   private suggestedExportFilename(): string {
     const collection = extractCollectionName(this.lastMetadata?.dql ?? '');
-    const base = collection && /^[A-Za-z0-9_\-]+$/.test(collection)
+    const base = collection && /^[A-Za-z0-9_-]+$/.test(collection)
       ? collection
       : 'query_results';
     return `${base}.json`;

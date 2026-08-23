@@ -17,10 +17,10 @@ test('AttachmentCache: set + get roundtrip preserves bytes/mime/filename', () =>
   c.set('db1', 'att1', { bytes: buf, mimeType: 'image/png', filename: 'pic.png', sizeBytes: buf.length });
   const got = c.get('db1', 'att1');
   assert.ok(got, 'expected cache hit');
-  assert.equal(got!.bytes, buf);
-  assert.equal(got!.mimeType, 'image/png');
-  assert.equal(got!.filename, 'pic.png');
-  assert.equal(got!.sizeBytes, 1024);
+  assert.equal(got.bytes, buf);
+  assert.equal(got.mimeType, 'image/png');
+  assert.equal(got.filename, 'pic.png');
+  assert.equal(got.sizeBytes, 1024);
 });
 
 test('AttachmentCache: clearDatabase only drops entries for that database', () => {

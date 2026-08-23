@@ -1,6 +1,6 @@
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import { assertNever } from '../shared/assert-never.js';
 import '../shared/json-viewer.js';
 import '../shared/result-table-element.js';
@@ -81,39 +81,28 @@ export class DittoObserverPanel extends LitElement {
     .empty { padding: 48px; text-align: center; color: var(--vscode-descriptionForeground); }
   `;
 
-  /** Disposes the host-message subscription; without it every re-attach
-   *  leaves another live handler bound to a stale element. */
-  private disposeHostMessages: (() => void) | undefined;
-
-  connectedCallback(): void {
-    super.connectedCallback();
-    this.disposeHostMessages = onHostMessage<ObserverOut>(msg => {
-      switch (msg.type) {
-        case 'observer.init':
-          this.observer = msg.observer;
-          break;
-        case 'observer.statusChanged':
-          this.active = msg.active;
-          break;
-        case 'observer.events':
-          this.appendEvents(msg.events);
-          break;
-        case 'observer.cleared':
-          this.events = [];
-          this.selectedEventId = null;
-          this.selectedRowIndex = null;
-          break;
-        default:
-          assertNever(msg);
-      }
-    });
-  }
-
-  disconnectedCallback(): void {
-    this.disposeHostMessages?.();
-    this.disposeHostMessages = undefined;
-    super.disconnectedCallback();
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<ObserverOut>(this, msg => {
+    switch (msg.type) {
+      case 'observer.init':
+        this.observer = msg.observer;
+        break;
+      case 'observer.statusChanged':
+        this.active = msg.active;
+        break;
+      case 'observer.events':
+        this.appendEvents(msg.events);
+        break;
+      case 'observer.cleared':
+        this.events = [];
+        this.selectedEventId = null;
+        this.selectedRowIndex = null;
+        break;
+      default:
+        assertNever(msg);
+    }
+  });
 
   render(): TemplateResult {
     const selectedEvent = this.selectedEventId

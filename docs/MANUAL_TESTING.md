@@ -488,6 +488,68 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 9. Disconnect, then reconnect. Verify the SDK level reverts to the per-DB config default (not the live `verbose` we set).
 10. Lower channel level back to `info` via Logging panel; subsequent `debug`/`trace` lines stop appearing in the channel but **still appear in the file**.
 
+## DQL identifier quoting (needs a live connection)
+
+Collection, field, and index names are now backtick-quoted rather than
+character-whitelisted (`src/ditto/dql-identifier.ts`). The unit tests cover the
+quoting itself, but only a real store proves the resulting DQL parses. Run these
+against a connected database:
+
+1. Create a collection whose name needs quoting — from the Query Editor:
+   `INSERT INTO \`order-items\` DOCUMENTS ({'_id': 'a', 'qty': 1})`.
+   It should succeed. Refresh the tree; `order-items` appears under Collections.
+2. Right-click `order-items` → **SELECT * FROM …**. The Query Editor prefills
+   ``SELECT * FROM `order-items` `` (backticked, because the name needs it) and
+   running it returns the document.
+3. Right-click a plain collection (e.g. `tasks`) → **SELECT * FROM …**. The
+   prefill is `SELECT * FROM tasks` with **no** backticks — quoting only appears
+   where it is needed, so the common case stays readable.
+4. Right-click `order-items` → **Add Index…**, index field `qty`. It succeeds.
+   Before this change it failed with "Invalid collection name".
+5. Expand Indexes under `order-items`, right-click the new index → **Delete
+   Index**. It succeeds and disappears from the tree.
+6. **Add Index…** on a nested path (`address.city`) against any collection.
+   Succeeds; the index shows the dotted path.
+7. **Import Data…** into `order-items` with a small JSON array. The documents
+   land in that collection (not a new one, and not an error).
+
+## Log Analyzer: Clear actually clears
+
+Regression check — `state.sessions` mirrored a tracker that Clear didn't reset,
+so the Sessions view went blank and then resurrected all pre-Clear history on
+the next connection event.
+
+1. Open the Log Analyzer with a connection up, and let some
+   `physical connection started/ended` lines accumulate. The Sessions view
+   lists them.
+2. Click **Clear**. Sessions empties, along with the rest of the view.
+3. Wait for unrelated log lines to arrive (any SDK chatter). Sessions stays
+   empty — the old sessions must **not** reappear.
+4. Force a new connection event (toggle sync off and on). Exactly the new
+   session appears — not the pre-Clear history.
+
+## Inspector container placement
+
+`engines.vscode` is `^1.106.0` because `viewsContainers.secondarySidebar` only
+became stable in 1.106; below that the container silently falls back to the
+Explorer.
+
+1. Check the Extension Development Host's version (**Code → About**) is ≥ 1.106.
+2. The **Ditto Inspector** appears in the *secondary* side bar (right-hand
+   side), not in the Explorer.
+3. `Cmd+Alt+I` / `Ctrl+Alt+I` toggles it.
+
+## Panel error surfacing
+
+Every async webview-message handler now reports failures instead of dropping
+them (`webviewMessageHandler`).
+
+1. Disconnect the database, then use a still-open Query Editor's Run button.
+   An error notification appears **and** a matching line is in the Output
+   channel — neither should be silent.
+2. Repeat for the Observer, Add Index, Import Data, and Log Analyzer panels.
+   Each surfaces an error rather than appearing to do nothing.
+
 ## Troubleshooting
 
 ### The Output panel shows `SPIKE: failed: …`

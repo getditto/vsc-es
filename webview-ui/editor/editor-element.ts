@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 interface StoredDittoConfig {
   id: string;
@@ -21,8 +21,22 @@ interface StoredDittoConfig {
 
 interface CollectionSyncScopeEntry { collection: string; scope: string; }
 type SystemSettingType = 'boolean' | 'integer' | 'string' | 'json';
+
+/** Render a system-setting value for a text input. A 'json'-typed setting
+ *  holds an object, which `String()` would turn into '[object Object]' in the
+ *  field the user is about to edit. */
+function settingValueText(value: unknown): string {
+  if (value === null || value === undefined) { return ''; }
+  if (typeof value === 'string') { return value; }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  // Objects, arrays, functions and symbols all stringify to something useless
+  // ('[object Object]'), which is what the user would see in the field.
+  try { return JSON.stringify(value) ?? ''; } catch { return ''; }
+}
 interface SystemSetting { parameter: string; type: SystemSettingType; value: unknown; }
-interface SystemSettingOption extends SystemSetting {}
+type SystemSettingOption = SystemSetting;
 const COLLECTION_SYNC_SCOPES = new Set<string>([
   'AllPeers', 'BigPeerOnly', 'SmallPeersOnly', 'LocalPeerOnly',
 ]);
@@ -103,49 +117,38 @@ export class DatabaseEditor extends LitElement {
     }
   `;
 
-  /** Disposes the host-message subscription; without it every re-attach
-   *  leaves another live handler bound to a stale element. */
-  private disposeHostMessages: (() => void) | undefined;
-
-  connectedCallback(): void {
-    super.connectedCallback();
-    this.disposeHostMessages = onHostMessage<In>(msg => {
-      if (msg.type === 'editor.init') {
-        this.config = msg.config;
-        this.secrets = msg.secrets;
-        this.isActiveConnection = msg.isActiveConnection;
-        this.initialSystemSettings = structuredClone(this.systemSettings());
-        this.systemSettingOptions = [];
-        this.systemSettingsLoadError = null;
-        this.jsonDrafts = {};
-        this.integerDrafts = {};
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, msg => {
+    if (msg.type === 'editor.init') {
+      this.config = msg.config;
+      this.secrets = msg.secrets;
+      this.isActiveConnection = msg.isActiveConnection;
+      this.initialSystemSettings = structuredClone(this.systemSettings());
+      this.systemSettingOptions = [];
+      this.systemSettingsLoadError = null;
+      this.jsonDrafts = {};
+      this.integerDrafts = {};
+      this.saving = false;
+      this.initError = null;
+      this.advancedOpen = this.scopeError() !== null || this.systemSettingsError() !== null;
+    }
+    if (msg.type === 'editor.initError') { this.initError = msg.message; }
+    if (msg.type === 'editor.activeConnectionChanged') {
+      this.isActiveConnection = msg.isActiveConnection;
+    }
+    if (msg.type === 'editor.systemSettingsLoaded') {
+      this.systemSettingOptions = msg.options;
+    }
+    if (msg.type === 'editor.systemSettingsLoadError') {
+      this.systemSettingsLoadError = msg.message;
+    }
+      if (msg.type === 'editor.validationError') {
         this.saving = false;
-        this.initError = null;
-        this.advancedOpen = this.scopeError() !== null || this.systemSettingsError() !== null;
-      }
-      if (msg.type === 'editor.initError') { this.initError = msg.message; }
-      if (msg.type === 'editor.activeConnectionChanged') {
-        this.isActiveConnection = msg.isActiveConnection;
-      }
-      if (msg.type === 'editor.systemSettingsLoaded') {
-        this.systemSettingOptions = msg.options;
-      }
-      if (msg.type === 'editor.systemSettingsLoadError') {
-        this.systemSettingsLoadError = msg.message;
-      }
-        if (msg.type === 'editor.validationError') {
-          this.saving = false;
-          this.validationError = msg.message;
-        if (msg.field === 'advancedConfig') { this.advancedOpen = true; }
-      }
-    });
-  }
-
-  disconnectedCallback(): void {
-    this.disposeHostMessages?.();
-    this.disposeHostMessages = undefined;
-    super.disconnectedCallback();
-  }
+        this.validationError = msg.message;
+      if (msg.field === 'advancedConfig') { this.advancedOpen = true; }
+    }
+  });
 
   private update_(field: keyof StoredDittoConfig, value: any) {
     if (!this.config) { return; }
@@ -668,8 +671,8 @@ export class DatabaseEditor extends LitElement {
                       aria-describedby=${this.settingValueInvalid(index) ? 'setting-error' : nothing}
                       step=${entry.type === 'integer' ? '1' : nothing}
                       .value=${entry.type === 'integer'
-                        ? this.integerDrafts[index] ?? String(entry.value ?? '')
-                        : String(entry.value ?? '')}
+                        ? this.integerDrafts[index] ?? settingValueText(entry.value)
+                        : settingValueText(entry.value)}
                       @input=${(e: Event) => entry.type === 'integer'
                         ? this.updateIntegerSetting(index, (e.target as HTMLInputElement).value)
                         : this.updateSystemSetting(index, { value: (e.target as HTMLInputElement).value })} />

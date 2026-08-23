@@ -14,7 +14,7 @@
 
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 type InsertType = 'regular' | 'initial';
 
@@ -233,20 +233,9 @@ export class ImportDataElement extends LitElement {
     }
   `;
 
-  /** Disposes the host-message subscription; without it every re-attach
-   *  leaves another live handler bound to a stale element. */
-  private disposeHostMessages: (() => void) | undefined;
-
-  connectedCallback(): void {
-    super.connectedCallback();
-    this.disposeHostMessages = onHostMessage<Msg>((msg) => this.onHost(msg));
-  }
-
-  disconnectedCallback(): void {
-    this.disposeHostMessages?.();
-    this.disposeHostMessages = undefined;
-    super.disconnectedCallback();
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<Msg>(this, (msg) => this.onHost(msg));
 
   private onHost(msg: Msg): void {
     switch (msg.type) {

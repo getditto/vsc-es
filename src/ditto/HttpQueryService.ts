@@ -38,10 +38,94 @@ export class HttpQueryError extends Error {
 }
 
 /** A hung server must not leave the query panel in 'running' forever. */
-const REQUEST_TIMEOUT_MS = 30_000;
+export const REQUEST_TIMEOUT_MS = 30_000;
 /** Responses are buffered fully in memory before parsing — cap them so a
  *  pathological server can't OOM the extension host. */
-const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+export const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Bounded response-body accumulator.
+ *
+ * Extracted from the socket plumbing so the byte cap is testable without a
+ * server: the cap is the difference between a pathological response being an
+ * error and being an extension-host OOM, and that is not something to leave
+ * to an integration test that needs a TLS listener to run.
+ */
+export function createBodyAccumulator(maxBytes: number = MAX_RESPONSE_BYTES): {
+  /** Returns false once the cap is exceeded; the caller destroys the socket. */
+  push(chunk: Buffer): boolean;
+  text(): string;
+  byteLength(): number;
+} {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  let overLimit = false;
+  return {
+    push(chunk: Buffer): boolean {
+      if (overLimit) { return false; }
+      total += chunk.length;
+      if (total > maxBytes) { overLimit = true; return false; }
+      chunks.push(chunk);
+      return true;
+    },
+    text: () => Buffer.concat(chunks).toString('utf8'),
+    byteLength: () => total,
+  };
+}
+
+/** What to do with a fully-received response. */
+export type ResponseOutcome =
+  | { kind: 'ok'; items: unknown[] }
+  | { kind: 'error'; error: HttpQueryError };
+
+/**
+ * Classify a complete response. Pure, so the status/parse branches are
+ * testable directly — they are the ones that decide whether the user sees a
+ * useful message or a spinner that never stops.
+ */
+export function interpretResponse(status: number, text: string): ResponseOutcome {
+  if (status < 200 || status >= 300) {
+    return { kind: 'error', error: new HttpQueryError(`Ditto Server returned ${status}`, status, text) };
+  }
+  try {
+    const parsed = JSON.parse(text) as { items?: unknown[] };
+    // A 2xx without an `items` array is a successful statement that returned
+    // no rows (INSERT, ALTER SYSTEM), not a malformed response.
+    return { kind: 'ok', items: Array.isArray(parsed.items) ? parsed.items : [] };
+  } catch (err) {
+    return {
+      kind: 'error',
+      error: new HttpQueryError(
+        `Failed to parse server response: ${err instanceof Error ? err.message : String(err)}`,
+        status,
+        text,
+      ),
+    };
+  }
+}
+
+/**
+ * One-shot guard for a Promise that several socket events can settle.
+ *
+ * A single request can race a timeout, a socket error, an over-limit abort,
+ * and a normal end — and `res.destroy()` on the over-limit path *causes* an
+ * error event. Without this, the first outcome resolves and the rest are
+ * silent no-ops at best; the point of naming it is that the invariant is
+ * testable rather than implied by reading the callback nest.
+ */
+export function createSettleOnce(): {
+  (fn: () => void): void;
+  get settled(): boolean;
+} {
+  let settled = false;
+  const settle = (fn: () => void): void => {
+    if (settled) { return; }
+    settled = true;
+    fn();
+  };
+  Object.defineProperty(settle, 'settled', { get: () => settled });
+  return settle as ReturnType<typeof createSettleOnce>;
+}
 
 /**
  * POST a DQL statement to the Ditto Server's REST endpoint and return
@@ -70,12 +154,7 @@ export async function executeRemoteQuery(
   });
 
   return new Promise<HttpQueryResponse>((resolve, reject) => {
-    let settled = false;
-    const settle = (fn: () => void): void => {
-      if (settled) { return; }
-      settled = true;
-      fn();
-    };
+    const settle = createSettleOnce();
     const r = https.request(
       {
         method: 'POST',
@@ -92,34 +171,21 @@ export async function executeRemoteQuery(
         rejectUnauthorized: !req.allowUntrustedCerts,
       },
       (res) => {
-        const chunks: Buffer[] = [];
-        let total = 0;
+        const bodyBuffer = createBodyAccumulator(MAX_RESPONSE_BYTES);
         res.on('data', (chunk: Buffer) => {
-          total += chunk.length;
-          if (total > MAX_RESPONSE_BYTES) {
-            settle(() => reject(new HttpQueryError('Server response exceeded the 64 MB limit')));
+          if (!bodyBuffer.push(chunk)) {
+            settle(() => reject(new HttpQueryError(
+              `Server response exceeded the ${MAX_RESPONSE_BYTES / (1024 * 1024)} MB limit`,
+            )));
             res.destroy();
-            return;
           }
-          chunks.push(chunk);
         });
         res.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8');
-          const status = res.statusCode ?? 0;
-          if (status < 200 || status >= 300) {
-            settle(() => reject(new HttpQueryError(`Ditto Server returned ${status}`, status, text)));
-            return;
-          }
-          try {
-            const parsed = JSON.parse(text) as { items?: unknown[] };
-            settle(() => resolve({ items: Array.isArray(parsed.items) ? parsed.items : [] }));
-          } catch (err) {
-            settle(() => reject(new HttpQueryError(
-              `Failed to parse server response: ${err instanceof Error ? err.message : String(err)}`,
-              status,
-              text,
-            )));
-          }
+          const outcome = interpretResponse(res.statusCode ?? 0, bodyBuffer.text());
+          settle(() => {
+            if (outcome.kind === 'ok') { resolve({ items: outcome.items }); }
+            else { reject(outcome.error); }
+          });
         });
       },
     );

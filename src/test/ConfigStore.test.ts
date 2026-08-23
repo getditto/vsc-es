@@ -17,12 +17,12 @@ function makeConfig(overrides: Partial<StoredDittoConfig> = {}): StoredDittoConf
 }
 
 test('list() returns [] when nothing stored', () => {
-  const store = new ConfigStore(new FakeMemento() as any);
+  const store = new ConfigStore(new FakeMemento());
   assert.deepEqual(store.list(), []);
 });
 
 test('save() then list() round-trips a config', async () => {
-  const store = new ConfigStore(new FakeMemento() as any);
+  const store = new ConfigStore(new FakeMemento());
   const cfg = makeConfig({ name: 'A', databaseId: 'db-A' });
   await store.save(cfg);
   assert.deepEqual(store.list(), [cfg]);
@@ -33,13 +33,13 @@ test('legacy configs without advancedConfig remain readable', async () => {
   const legacy = makeConfig({ name: 'Legacy', databaseId: 'legacy-db' });
   delete legacy.advancedConfig;
   await memento.update('dittoConfigs.v1', [legacy]);
-  const store = new ConfigStore(memento as any);
+  const store = new ConfigStore(memento);
   assert.deepEqual(store.get(legacy.id), legacy);
   assert.equal(store.get(legacy.id)?.advancedConfig, undefined);
 });
 
 test('save() updates an existing config by id', async () => {
-  const store = new ConfigStore(new FakeMemento() as any);
+  const store = new ConfigStore(new FakeMemento());
   const cfg = makeConfig({ name: 'A' });
   await store.save(cfg);
   await store.save({ ...cfg, name: 'A renamed' });
@@ -48,7 +48,7 @@ test('save() updates an existing config by id', async () => {
 });
 
 test('get(id) returns the matching config or undefined', async () => {
-  const store = new ConfigStore(new FakeMemento() as any);
+  const store = new ConfigStore(new FakeMemento());
   const cfg = makeConfig();
   await store.save(cfg);
   assert.deepEqual(store.get(cfg.id), cfg);
@@ -56,7 +56,7 @@ test('get(id) returns the matching config or undefined', async () => {
 });
 
 test('delete(id) removes the config', async () => {
-  const store = new ConfigStore(new FakeMemento() as any);
+  const store = new ConfigStore(new FakeMemento());
   const cfg = makeConfig();
   await store.save(cfg);
   await store.delete(cfg.id);
@@ -64,7 +64,7 @@ test('delete(id) removes the config', async () => {
 });
 
 test('save() rejects a different config with a duplicate databaseId', async () => {
-  const store = new ConfigStore(new FakeMemento() as any);
+  const store = new ConfigStore(new FakeMemento());
   await store.save(makeConfig({ name: 'A', databaseId: 'shared-db' }));
   const dup = makeConfig({ name: 'B', databaseId: 'shared-db' });
   await assert.rejects(() => store.save(dup), /already exists.*"A"/);
@@ -74,7 +74,7 @@ test('save() rejects a different config with a duplicate databaseId', async () =
 });
 
 test('save() allows updating the same config with its own databaseId', async () => {
-  const store = new ConfigStore(new FakeMemento() as any);
+  const store = new ConfigStore(new FakeMemento());
   const cfg = makeConfig({ name: 'A', databaseId: 'shared-db' });
   await store.save(cfg);
   // Re-saving the same record (same id, same databaseId) must not self-conflict.
@@ -84,14 +84,14 @@ test('save() allows updating the same config with its own databaseId', async () 
 });
 
 test('save() treats whitespace-only databaseId differences as duplicates', async () => {
-  const store = new ConfigStore(new FakeMemento() as any);
+  const store = new ConfigStore(new FakeMemento());
   await store.save(makeConfig({ name: 'A', databaseId: 'db-A' }));
   const dup = makeConfig({ name: 'B', databaseId: '  db-A  ' });
   await assert.rejects(() => store.save(dup), /already exists/);
 });
 
 test('listeners fire on save and delete', async () => {
-  const store = new ConfigStore(new FakeMemento() as any);
+  const store = new ConfigStore(new FakeMemento());
   const events: string[] = [];
   store.onDidChange(() => events.push('change'));
   await store.save(makeConfig());

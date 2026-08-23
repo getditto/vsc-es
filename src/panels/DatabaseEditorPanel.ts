@@ -38,7 +38,14 @@ export class DatabaseEditorPanel {
     }
     if (DatabaseEditorPanel.current) {
       DatabaseEditorPanel.current.panel.reveal();
-      DatabaseEditorPanel.current.init(existing);
+      // init() is async — a bare call drops the rejection, so a failed
+      // re-init would leave the reopened editor showing the previous
+      // connection's values with nothing logged.
+      void DatabaseEditorPanel.current.init(existing).catch((err: unknown) => {
+        logger.warn('Database editor re-init failed', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
       return;
     }
     DatabaseEditorPanel.current = new DatabaseEditorPanel(context, configs, secrets, logger, manager, existing);

@@ -13,7 +13,7 @@ import type { DittoCollection } from '../models/DittoCollection.js';
  * affordance to a "chip" — so the count reads as a styled pill at the
  * end of the label.
  *
- * The label is a single nbsp-padded string (`<text> <count>`) so
+ * The label is a single nbsp-padded string (`<text> <count>`) so
  * the highlight has visible padding on the left of the number,
  * approximating chip whitespace. Counts are formatted with locale
  * thousands separators because the previous 2-char badge cap forced

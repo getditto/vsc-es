@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
@@ -115,7 +115,11 @@ export class ObserverPanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      (msg: ObserverIn | LogIn) => this.handle(msg), undefined, this.disposables,
+      webviewMessageHandler<ObserverIn | LogIn>(
+        this.logger, 'ext:observer', 'Observer action failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 

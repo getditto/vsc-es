@@ -208,6 +208,9 @@ test('PresenceGraphElement: an owner binding false reaches the property and the 
     html`<ditto-presence-graph .directConnectedOnly=${false} .input=${structuredClone(INPUT)}></ditto-presence-graph>`,
     host,
   );
+  // `as any` is load-bearing: the test reaches for the element's own
+  // properties and its shadow root, neither of which is on `Element`.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
   const el = host.querySelector('ditto-presence-graph') as any;
   await el.updateComplete;
 

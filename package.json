@@ -9,14 +9,32 @@
     "url": "https://github.com/getditto/vsc-es.git"
   },
   "engines": {
-    "vscode": "^1.95.0",
+    "vscode": "^1.106.0",
     "node": ">=22"
   },
   "type": "module",
   "main": "./dist/extension.js",
   "publisher": "ditto",
+  "homepage": "https://github.com/getditto/vsc-es#readme",
+  "bugs": {
+    "url": "https://github.com/getditto/vsc-es/issues"
+  },
+  "qna": "https://github.com/getditto/vsc-es/issues",
   "categories": [
+    "Debuggers",
+    "Visualization",
+    "Testing",
     "Other"
+  ],
+  "keywords": [
+    "ditto",
+    "sync",
+    "crdt",
+    "offline-first",
+    "dql",
+    "edge",
+    "peer-to-peer",
+    "database"
   ],
   "activationEvents": [],
   "contributes": {
@@ -386,13 +404,31 @@
         "dittoVsce.logAnalyzer.customPatternsFile": {
           "type": "string",
           "default": "",
-          "description": "Path to a JSON file containing user-defined log analyzer patterns. Leave empty to use the editor's default location (globalStorage/log-analyzer/user_patterns.json)."
+          "scope": "machine",
+          "description": "Path to a JSON file containing user-defined log analyzer patterns. Leave empty to use the editor's default location (globalStorage/log-analyzer/user_patterns.json). Machine-scoped: the extension reads this file and compiles its entries into regular expressions, so a workspace must not be able to point it somewhere."
         }
       }
     }
   },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Connection credentials, log analyzer patterns, and the SDK working directory are all machine-scoped and never read from workspace settings, but the extension loads the native Ditto SDK and writes to global storage. Trust the workspace before connecting.",
+      "restrictedConfigurations": [
+        "dittoVsce.logAnalyzer.customPatternsFile"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": "limited",
+      "description": "The Ditto SDK needs a real on-disk working directory, so connections are unavailable in virtual workspaces. The Log Analyzer works."
+    }
+  },
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "validate": "npm run typecheck && npm run lint && npm test",
     "build:integration": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/*.test.ts' 'src/test/webview/*.test.ts'",
@@ -405,23 +441,26 @@
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.42.1",
+    "@eslint/js": "^9.39.5",
     "@types/glob": "^8.1.0",
     "@types/jsdom": "^21.1.7",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.10.0",
-    "@types/vscode": "^1.95.0",
+    "@types/vscode": "^1.106.0",
     "@vscode/codicons": "^0.0.45",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.1",
     "codemirror": "^6.0.2",
     "esbuild": "^0.28.1",
+    "eslint": "^9.39.5",
     "glob": "^13.0.6",
     "jsdom": "^25.0.1",
     "lit": "^3.3.2",
     "markdown-it": "^14.1.1",
     "mocha": "^11.7.5",
     "tsx": "^4.16.2",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "typescript-eslint": "^8.67.0"
   },
   "dependencies": {
     "@dittolive/ditto": "5.1.0"

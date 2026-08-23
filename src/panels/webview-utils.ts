@@ -1,10 +1,48 @@
 import * as vscode from 'vscode';
+import { randomBytes } from 'node:crypto';
+import type { Logger } from '../logging/types.js';
 
+/** Per-document CSP nonce.
+ *
+ *  Must come from a CSPRNG, not Math.random(): `script-src 'nonce-…'` is the
+ *  only directive standing between an injected `<script>` and execution, and
+ *  a predictable nonce is one an attacker who can inject markup can simply
+ *  guess or replay. 128 bits, base64url so it needs no HTML escaping. */
 export function nonce(): string {
-  let text = '';
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  for (let i = 0; i < 32; i++) { text += possible.charAt(Math.floor(Math.random() * possible.length)); }
-  return text;
+  return randomBytes(16).toString('base64url');
+}
+
+/**
+ * Wrap an async webview-message handler for `webview.onDidReceiveMessage`.
+ *
+ * `onDidReceiveMessage` ignores the listener's return value, so handing it a
+ * bare `async handle(msg)` turns any rejection into an unhandled rejection:
+ * nothing is logged and the user sees the action silently do nothing. This
+ * reports both, and also catches synchronous throws from the handler itself.
+ *
+ * `what` is the user-facing prefix, e.g. 'Save observer failed'.
+ */
+export function webviewMessageHandler<M extends { type?: string }>(
+  logger: Logger,
+  tag: string,
+  what: string,
+  handler: (msg: M) => Promise<void> | void,
+): (msg: M) => void {
+  const report = (msg: M, err: unknown): void => {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.withTag(tag).error(what, { messageType: msg?.type, err: message });
+    void vscode.window.showErrorMessage(`${what}: ${message}`);
+  };
+  return (msg: M): void => {
+    try {
+      const result = handler(msg);
+      if (result instanceof Promise) {
+        void result.catch((err: unknown) => report(msg, err));
+      }
+    } catch (err) {
+      report(msg, err);
+    }
+  };
 }
 
 export interface PanelHtmlOptions {
@@ -33,7 +71,7 @@ export function autoRevealInspectorOnce(context: vscode.ExtensionContext): void 
 
 export function panelHtml({ title, scriptUri, cspSource, styleUri }: PanelHtmlOptions): string {
   const n = nonce();
-  const styleLink = styleUri ? `<link rel="stylesheet" href="${styleUri}">` : '';
+  const styleLink = styleUri ? `<link rel="stylesheet" href="${styleUri.toString()}">` : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -46,7 +84,7 @@ export function panelHtml({ title, scriptUri, cspSource, styleUri }: PanelHtmlOp
 </head>
 <body>
   <div id="root"></div>
-  <script nonce="${n}" src="${scriptUri}"></script>
+  <script nonce="${n}" src="${scriptUri.toString()}"></script>
 </body>
 </html>`;
 }

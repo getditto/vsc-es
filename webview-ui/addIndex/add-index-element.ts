@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 type In =
   | { type: 'addIndex.init'; collections: string[]; preselected?: string }
@@ -99,30 +99,19 @@ export class AddIndexElement extends LitElement {
     }
   `;
 
-  /** Disposes the host-message subscription; without it every re-attach
-   *  leaves another live handler bound to a stale element. */
-  private disposeHostMessages: (() => void) | undefined;
-
-  connectedCallback(): void {
-    super.connectedCallback();
-    this.disposeHostMessages = onHostMessage<In>(msg => {
-      if (msg.type === 'addIndex.init') {
-        this.collections = msg.collections;
-        const fallback = msg.collections[0] ?? '';
-        this.selectedCollection = msg.preselected ?? fallback;
-      } else if (msg.type === 'addIndex.error') {
-        this.errorMessage = msg.message;
-        this.isCreating = false;
-      }
-      // 'addIndex.created' results in panel disposal — no-op here.
-    });
-  }
-
-  disconnectedCallback(): void {
-    this.disposeHostMessages?.();
-    this.disposeHostMessages = undefined;
-    super.disconnectedCallback();
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, msg => {
+    if (msg.type === 'addIndex.init') {
+      this.collections = msg.collections;
+      const fallback = msg.collections[0] ?? '';
+      this.selectedCollection = msg.preselected ?? fallback;
+    } else if (msg.type === 'addIndex.error') {
+      this.errorMessage = msg.message;
+      this.isCreating = false;
+    }
+    // 'addIndex.created' results in panel disposal — no-op here.
+  });
 
   private isValid(): boolean {
     return this.selectedCollection.trim().length > 0

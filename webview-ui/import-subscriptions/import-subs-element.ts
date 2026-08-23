@@ -1,6 +1,6 @@
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 interface ImportableSubscription {
   id: string;
@@ -56,38 +56,27 @@ export class ImportSubscriptionsElement extends LitElement {
     .progress { font-size: 12px; color: var(--vscode-descriptionForeground); margin-right: auto; }
   `;
 
-  /** Disposes the host-message subscription; without it every re-attach
-   *  leaves another live handler bound to a stale element. */
-  private disposeHostMessages: (() => void) | undefined;
-
-  connectedCallback(): void {
-    super.connectedCallback();
-    this.disposeHostMessages = onHostMessage<In>((msg) => {
-      switch (msg.type) {
-        case 'importSubs.loading':
-          this.view = { kind: 'loading' };
-          break;
-        case 'importSubs.loaded':
-          this.view = { kind: 'loaded', rows: msg.subscriptions, selected: new Set() };
-          break;
-        case 'importSubs.error':
-          this.view = { kind: 'error', message: msg.message };
-          break;
-        case 'importSubs.importing':
-          this.view = { kind: 'importing', status: msg.status };
-          break;
-        case 'importSubs.imported':
-          // Host closes the panel right after — no UI work needed.
-          break;
-      }
-    });
-  }
-
-  disconnectedCallback(): void {
-    this.disposeHostMessages?.();
-    this.disposeHostMessages = undefined;
-    super.disconnectedCallback();
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, (msg) => {
+    switch (msg.type) {
+      case 'importSubs.loading':
+        this.view = { kind: 'loading' };
+        break;
+      case 'importSubs.loaded':
+        this.view = { kind: 'loaded', rows: msg.subscriptions, selected: new Set() };
+        break;
+      case 'importSubs.error':
+        this.view = { kind: 'error', message: msg.message };
+        break;
+      case 'importSubs.importing':
+        this.view = { kind: 'importing', status: msg.status };
+        break;
+      case 'importSubs.imported':
+        // Host closes the panel right after — no UI work needed.
+        break;
+    }
+  });
 
   private toggle(id: string): void {
     if (this.view.kind !== 'loaded') { return; }

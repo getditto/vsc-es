@@ -80,6 +80,18 @@ export class ConnectionTracker {
     }
   }
 
+  /** Drop all session history. Called when the analyzer's state is cleared
+   *  so "Clear" actually clears — without this the next connection event
+   *  resurrects every pre-Clear session, because snapshot() is rebuilt from
+   *  these arrays rather than from what the consumer already displayed. */
+  reset(): void {
+    this.open = [];
+    this.closed = [];
+    this.reinitTs = [];
+    this.unmatched = 0;
+    this.version++;
+  }
+
   snapshot(): Session[] { return [...this.closed, ...this.open]; }
   reinits(): Date[] { return this.reinitTs.slice(); }
   unmatchedEnds(): number { return this.unmatched; }

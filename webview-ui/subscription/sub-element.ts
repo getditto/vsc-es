@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 type In = { type: 'sub.init'; id?: string; name: string; query: string };
 
@@ -29,22 +29,11 @@ export class SubscriptionEditor extends LitElement {
     .footer .cancel { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
   `;
 
-  /** Disposes the host-message subscription; without it every re-attach
-   *  leaves another live handler bound to a stale element. */
-  private disposeHostMessages: (() => void) | undefined;
-
-  connectedCallback(): void {
-    super.connectedCallback();
-    this.disposeHostMessages = onHostMessage<In>(msg => {
-      if (msg.type === 'sub.init') { this.subId = msg.id; this.name = msg.name; this.query = msg.query; }
-    });
-  }
-
-  disconnectedCallback(): void {
-    this.disposeHostMessages?.();
-    this.disposeHostMessages = undefined;
-    super.disconnectedCallback();
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, msg => {
+    if (msg.type === 'sub.init') { this.subId = msg.id; this.name = msg.name; this.query = msg.query; }
+  });
 
   private isValid() { return this.name.trim().length > 0 && this.query.trim().length > 0; }
   private save() { postToHost({ type: 'sub.save', id: this.subId, name: this.name, query: this.query }); }

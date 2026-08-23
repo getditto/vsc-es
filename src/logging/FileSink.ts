@@ -74,7 +74,7 @@ export class FileSink {
       await fs.writeFile(active, this.opts.headerLines.join('\n') + '\n', 'utf8');
     }
 
-    let payload = toWrite.join('');
+    const payload = toWrite.join('');
     // Rotate-then-write loop: if current + payload exceeds threshold, rotate first.
     // Bail when rotate makes no progress (active file already gone), otherwise a
     // single oversized payload would loop forever.

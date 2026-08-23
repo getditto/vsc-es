@@ -24,6 +24,7 @@ import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 import { CollectionsRepository } from './ditto/CollectionsRepository.js';
+import { isBareIdentifier, quoteIdentifier } from './ditto/dql-identifier.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
 import { confirmSwitch, performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
@@ -135,7 +136,7 @@ async function pickLogLevel(current: LogLevel, title: string): Promise<LogLevel 
     description: l === current ? '(current)' : undefined,
   }));
   const picked = await vscode.window.showQuickPick(items, { title });
-  return picked?.label as LogLevel | undefined;
+  return picked?.label;
 }
 
 export function activate(context: vscode.ExtensionContext): TestApi | undefined {
@@ -159,7 +160,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   // else (manager.disconnect above all) logs during its own teardown.
 
   // SDK bridge: pipe Ditto SDK logs into our Logger under the 'sdk' tag.
-  attachSdkLogBridge(DittoLogger as unknown as Parameters<typeof attachSdkLogBridge>[0], logger.withTag('sdk'));
+  attachSdkLogBridge(DittoLogger, logger.withTag('sdk'));
 
   const log = logger.withTag('ext');
 
@@ -1036,7 +1037,12 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       const name = collectionName
         ?? (typeof databaseIdOrNode === 'object' ? databaseIdOrNode?.collection?.name : undefined);
       if (!dbId || !name) { return; }
-      void vscode.commands.executeCommand('dittoVsce.openQueryEditorWithText', `SELECT * FROM ${name}`);
+      // Quote only when the name needs it: the prefill lands in the editor as
+      // text the user will read and edit, and `SELECT * FROM tasks` is nicer
+      // to look at than the backticked form. Names that need backticks get
+      // them, so the prefilled query runs as-is either way.
+      const from = isBareIdentifier(name) ? name : quoteIdentifier(name, 'collection');
+      void vscode.commands.executeCommand('dittoVsce.openQueryEditorWithText', `SELECT * FROM ${from}`);
     }),
   );
 

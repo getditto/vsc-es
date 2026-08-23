@@ -283,3 +283,29 @@ test('Service: getLineDetail returns target line + before/after context', () => 
   assert.equal(d.before.length, 2);
   assert.equal(d.after.length, 2);
 });
+
+test('Service: clear() empties the sessions view and keeps it empty', () => {
+  // Regression: state.sessions is refreshed only when the tracker's version
+  // changes. clear() empties state.sessions, so leaving the version gate
+  // (and the tracker itself) untouched stranded the Sessions view at empty
+  // until the next connection event — which then resurrected the whole
+  // pre-Clear history.
+  const { svc, sink } = makeSvc();
+  svc.start();
+  sink.write('info', '2026-06-09T14:00:00.000Z  INFO   [sdk]  physical connection started remote=abc transport_type=LAN role=Client');
+  sink.write('info', '2026-06-09T14:00:01.000Z  INFO   [sdk]  physical connection ended remote=abc role=Client');
+  assert.equal(svc.getStateForTesting().sessions.length, 1);
+
+  svc.clear();
+  assert.equal(svc.getStateForTesting().sessions.length, 0, 'cleared');
+
+  // An unrelated line must not resurrect the cleared history…
+  sink.write('info', '2026-06-09T14:00:02.000Z  INFO   [sdk]  an unrelated line');
+  assert.equal(svc.getStateForTesting().sessions.length, 0, 'stays cleared');
+
+  // …and a genuinely new session must still land.
+  sink.write('info', '2026-06-09T14:00:03.000Z  INFO   [sdk]  physical connection started remote=def transport_type=LAN role=Client');
+  const after = svc.getStateForTesting().sessions;
+  assert.equal(after.length, 1);
+  assert.equal(after[0].remotePeer, 'def');
+});

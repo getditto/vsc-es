@@ -255,6 +255,9 @@ export class PresenceGraphScene {
   }
 
   private upsertLines(input: PresenceGraphInput): void {
+    // The only place the lines map is rebuilt, so the only place the focus
+    // neighbour cache can go stale in a way the focus key won't reveal.
+    this.linesEpoch += 1;
     const next = new Map<string, ConnectionLineData>();
 
     // Group connections by sorted-pair so multi-type pairs share an offset bucket.
@@ -479,6 +482,33 @@ export class PresenceGraphScene {
     this.camera = { x: -local.x, y: -local.y };
   }
 
+  /** Bumped whenever the lines map is rebuilt. Together with the focus key it
+   *  is the full cache key for the neighbour set below: line objects are
+   *  mutated in place for `highlighted`, but from/to keys only ever change
+   *  when upsertLines replaces the map. */
+  private linesEpoch = 0;
+  private neighbourCache: { key: string; epoch: number; neighbours: Set<string> } | undefined;
+
+  /** Keys directly connected to `focused`.
+   *
+   *  Cached because render() asks the focus question once per peer per frame:
+   *  scanning every line for every peer made painting O(peers x lines) at
+   *  60 fps, which on a busy mesh is the dominant cost of the whole graph.
+   *  One scan per (focus, topology) pair instead. */
+  private neighboursOf(focused: string): Set<string> {
+    const cached = this.neighbourCache;
+    if (cached && cached.key === focused && cached.epoch === this.linesEpoch) {
+      return cached.neighbours;
+    }
+    const neighbours = new Set<string>();
+    for (const line of this.lines.values()) {
+      if (line.fromKey === focused) { neighbours.add(line.toKey); }
+      else if (line.toKey === focused) { neighbours.add(line.fromKey); }
+    }
+    this.neighbourCache = { key: focused, epoch: this.linesEpoch, neighbours };
+    return neighbours;
+  }
+
   /** Exposed for focused tests and renderer decisions. */
   focusForPeer(key: string): { selected: boolean; alpha: number } {
     const focused = this.activeFocusKey();
@@ -486,11 +516,8 @@ export class PresenceGraphScene {
     if (key === focused) {
       return { selected: this.selectedPeerKey === key, alpha: 1 };
     }
-    for (const line of this.lines.values()) {
-      if ((line.fromKey === focused && line.toKey === key)
-        || (line.toKey === focused && line.fromKey === key)) {
-        return { selected: false, alpha: 1 };
-      }
+    if (this.neighboursOf(focused).has(key)) {
+      return { selected: false, alpha: 1 };
     }
     return { selected: false, alpha: UNRELATED_PEER_ALPHA };
   }

@@ -67,6 +67,14 @@ export class LogAnalyzerService {
     this.problemHits = [];
     this.lineBuffer = [];
     this.pendingProblems = [];
+    // The tracker owns the session history that state.sessions mirrors, so
+    // it has to be cleared too — otherwise the next connection event
+    // resurrects everything from before the Clear. Resetting the version
+    // gate alongside it keeps the two from diverging: state.sessions is now
+    // empty, and without this the gate would suppress the re-snapshot and
+    // leave the Sessions view stranded at empty until a tracker mutation.
+    this.opts.tracker.reset();
+    this.lastTrackerVersion = this.opts.tracker.getVersion();
     this.emit({ type: 'reset' });
   }
 

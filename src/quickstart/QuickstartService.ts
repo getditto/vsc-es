@@ -289,8 +289,9 @@ export function createNodeGitRunner(): GitRunner {
         } catch (err) {
           // spawn() itself can throw synchronously on invalid args (bad cwd,
           // malformed signal, etc.). Without this guard the Promise would
-          // leak pending forever.
-          reject(err);
+          // leak pending forever. Normalised to an Error so the await site
+          // gets a stack rather than a bare string.
+          reject(err instanceof Error ? err : new Error(String(err)));
         }
       });
     },

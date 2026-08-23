@@ -98,7 +98,7 @@ test('returns null for non-profile items', () => {
 
 test('accepts a bare profile dict (no ~request_profile wrapper)', () => {
   const bare = envelopeFixture['~request_profile'];
-  const p = parseProfileItem(bare as unknown as Record<string, unknown>)!;
+  const p = parseProfileItem(bare)!;
   assert.ok(p, 'expected a profile even without the envelope wrapper');
   assert.equal(p.id, 'f701d177-83c6-4548-883b-5b14f5a5dd73');
 });

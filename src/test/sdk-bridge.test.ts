@@ -38,7 +38,7 @@ function fakeHostLogger(): Logger & { _captured: { level: string; msg: string }[
     onDidChangeChannelLevel: () => ({ dispose() {} }) as any,
     setSdkLevel: noop, getSdkLevel: () => 'info',
     onDidChangeSdkLevel: () => ({ dispose() {} }) as any,
-    withTag: function withTag() { return this as any; },
+    withTag: function withTag() { return this; },
     readAllLogs: async () => '',
     dispose: async () => { /* no-op */ },
     _captured: captured,
@@ -95,7 +95,7 @@ test('regression: direct assignment to customLogCallback throws (proves the fake
   // The fake faithfully reproduces that failure mode under strict mode,
   // which is what makes the test above (`does not throw`) load-bearing.
   assert.throws(
-    () => { 'use strict'; (sdk as any).customLogCallback = () => {}; },
+    () => { 'use strict'; (sdk).customLogCallback = () => {}; },
     /TypeError/,
   );
 });

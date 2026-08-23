@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
@@ -94,7 +94,9 @@ export class ImportSubscriptionsPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (msg: ImportSubsIn | LogIn) => { void this.handle(msg); },
+      webviewMessageHandler<ImportSubsIn | LogIn>(
+        this.logger, 'ext:importSubs', 'Import subscriptions failed', (msg) => this.handle(msg),
+      ),
       undefined,
       this.disposables,
     );

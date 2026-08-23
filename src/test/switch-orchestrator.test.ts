@@ -26,9 +26,9 @@ function noopLogger(): Logger {
   const evt = (_l: (lvl: LogLevel) => void) => ({ dispose() {} });
   const self: Logger = {
     error: noop, warn: noop, info: noop, debug: noop, trace: noop,
-    setChannelLevel() {}, getChannelLevel: () => 'info' as LogLevel,
+    setChannelLevel() {}, getChannelLevel: () => 'info',
     onDidChangeChannelLevel: evt as any,
-    setSdkLevel() {}, getSdkLevel: () => 'info' as LogLevel,
+    setSdkLevel() {}, getSdkLevel: () => 'info',
     onDidChangeSdkLevel: evt as any,
     withTag: () => self,
     readAllLogs: async () => '',
@@ -118,7 +118,7 @@ function buildDeps(opts: DepsOptions = {}): { deps: SwitchDeps; rec: Recorded } 
     secretStore: {
       read: async (id: string) => {
         calls.push(`secretStore.read(${id})`);
-        return { token: 'tok-' + id } as SecretSet;
+        return { token: 'tok-' + id };
       },
     },
     subStore: {
