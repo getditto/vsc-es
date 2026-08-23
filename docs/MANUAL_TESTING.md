@@ -185,7 +185,8 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 4. Click "Start Sync". Sync resumes; cards repopulate.
 
 **Presence Graph tab:**
-5. Click `Presence Graph` segment. See the "Coming soon" placeholder.
+5. Click the `Presence Graph` segment. The graph renders (recipe 12 below
+   covers it in detail) — this step is only checking the tab switch.
 
 ### T7 · Add, edit, and delete subscriptions
 
@@ -488,67 +489,40 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 9. Disconnect, then reconnect. Verify the SDK level reverts to the per-DB config default (not the live `verbose` we set).
 10. Lower channel level back to `info` via Logging panel; subsequent `debug`/`trace` lines stop appearing in the channel but **still appear in the file**.
 
-## DQL identifier quoting (needs a live connection)
+## What is covered automatically
 
-Collection, field, and index names are now backtick-quoted rather than
-character-whitelisted (`src/ditto/dql-identifier.ts`). The unit tests cover the
-quoting itself, but only a real store proves the resulting DQL parses. Run these
-against a connected database:
+Before adding a recipe here, check whether it belongs in `npm test` instead —
+most things do. The suite already covers, without a human:
 
-1. Create a collection whose name needs quoting — from the Query Editor:
-   `INSERT INTO \`order-items\` DOCUMENTS ({'_id': 'a', 'qty': 1})`.
-   It should succeed. Refresh the tree; `order-items` appears under Collections.
-2. Right-click `order-items` → **SELECT * FROM …**. The Query Editor prefills
-   ``SELECT * FROM `order-items` `` (backticked, because the name needs it) and
-   running it returns the document.
-3. Right-click a plain collection (e.g. `tasks`) → **SELECT * FROM …**. The
-   prefill is `SELECT * FROM tasks` with **no** backticks — quoting only appears
-   where it is needed, so the common case stays readable.
-4. Right-click `order-items` → **Add Index…**, index field `qty`. It succeeds.
-   Before this change it failed with "Invalid collection name".
-5. Expand Indexes under `order-items`, right-click the new index → **Delete
-   Index**. It succeeds and disappears from the tree.
-6. **Add Index…** on a nested path (`address.city`) against any collection.
-   Succeeds; the index shows the dotted path.
-7. **Import Data…** into `order-items` with a small JSON array. The documents
-   land in that collection (not a new one, and not an error).
+- **Emitted DQL, against a real store.** `src/test/dql-live.test.ts` opens a
+  real Ditto in `smallPeersOnly` mode against a temp directory — no
+  credentials, no license, and `sync.start()` is never called, so nothing
+  leaves the machine. It asserts insert/select round-trips, `createIndex` /
+  `dropIndex`, nested field paths, `importDocuments`, the query-editor prefill,
+  and `COUNT(*)` hydration for collection names like `order-items`, `two
+  words`, `Ünïcödé` and `9lives`. If you are about to hand-verify a DQL change,
+  add a case there instead.
+- **Panel error surfacing.** `src/test/panel-error-surfacing.test.ts` proves a
+  rejected or throwing webview handler is both logged and shown to the user,
+  and that every panel routes through `webviewMessageHandler` — so a new panel
+  copied from an old one cannot reintroduce the silent-failure bug.
+- **Panel lifecycle.** `src/test/QueryEditorPanel.dispose.test.ts` drives the
+  webview-panel fake in `scripts/vscode-stub.mjs` (`createdWebviewPanels`,
+  `__resetStub()`), covering tracker-slot release on user close versus
+  orchestrated teardown. Any panel is testable this way.
+- **Manifest invariants.** `src/test/manifest.test.ts` asserts the
+  `engines.vscode` floor required by the `secondarySidebar` container, that
+  every menu entry names a declared command, that every `views` key resolves to
+  a real container, the machine scope on `logAnalyzer.customPatternsFile`, and
+  the workspace-trust declarations.
+- **Log Analyzer state transitions**, including that Clear empties the Sessions
+  view and does not resurrect pre-Clear history
+  (`src/test/LogAnalyzerService.test.ts`).
 
-## Log Analyzer: Clear actually clears
-
-Regression check — `state.sessions` mirrored a tracker that Clear didn't reset,
-so the Sessions view went blank and then resurrected all pre-Clear history on
-the next connection event.
-
-1. Open the Log Analyzer with a connection up, and let some
-   `physical connection started/ended` lines accumulate. The Sessions view
-   lists them.
-2. Click **Clear**. Sessions empties, along with the rest of the view.
-3. Wait for unrelated log lines to arrive (any SDK chatter). Sessions stays
-   empty — the old sessions must **not** reappear.
-4. Force a new connection event (toggle sync off and on). Exactly the new
-   session appears — not the pre-Clear history.
-
-## Inspector container placement
-
-`engines.vscode` is `^1.106.0` because `viewsContainers.secondarySidebar` only
-became stable in 1.106; below that the container silently falls back to the
-Explorer.
-
-1. Check the Extension Development Host's version (**Code → About**) is ≥ 1.106.
-2. The **Ditto Inspector** appears in the *secondary* side bar (right-hand
-   side), not in the Explorer.
-3. `Cmd+Alt+I` / `Ctrl+Alt+I` toggles it.
-
-## Panel error surfacing
-
-Every async webview-message handler now reports failures instead of dropping
-them (`webviewMessageHandler`).
-
-1. Disconnect the database, then use a still-open Query Editor's Run button.
-   An error notification appears **and** a matching line is in the Output
-   channel — neither should be silent.
-2. Repeat for the Observer, Add Index, Import Data, and Log Analyzer panels.
-   Each surfaces an error rather than appearing to do nothing.
+What genuinely needs a human is below: anything requiring layout, the cascade,
+hit-testing, real peer-to-peer transports, or a judgement about how something
+looks. jsdom performs no layout, so CSS behaviour in particular cannot be
+covered by the automated suite at all.
 
 ## Troubleshooting
 
