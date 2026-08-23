@@ -78,3 +78,17 @@ test('ConnectionTracker: reset drops history and advances the version', () => {
   assert.equal(t.unmatchedEnds(), 0);
   assert.ok(t.getVersion() > before, 'consumers gate on the version, so it must advance');
 });
+
+test('ConnectionTracker: the open-session list is bounded', () => {
+  // `closed` was capped but `open` was not. A start line whose matching "ended"
+  // never arrives — killed process, truncated log, a phrasing RE_END misses —
+  // left an entry forever, so a long-running session grew this without limit.
+  const t = new ConnectionTracker();
+  for (let i = 0; i < 5_000; i++) {
+    t.consume(L(`2026-06-09T14:00:00.000Z  INFO   [sdk]  physical connection started remote=peer${i} role=Client`, i));
+  }
+  const open = t.snapshot();
+  assert.ok(open.length <= 2_000, `open sessions must be bounded, saw ${open.length}`);
+  // The most recent sessions are the ones worth keeping.
+  assert.equal(open[open.length - 1].remotePeer, 'peer4999');
+});

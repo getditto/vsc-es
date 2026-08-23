@@ -244,7 +244,7 @@ export class LogAnalyzerService {
     // Nothing populated this field before, so the header read "SDK: unknown"
     // for the life of the panel. Guarded on null so it is one regex per line
     // until the first match, not per line forever.
-    if (this.state.sdkVersion === null) {
+    if (this.state.sdkVersion === null && line.text.includes('sdk.version=')) {
       const m = /\bsdk\.version=(\S+)/.exec(line.text);
       if (m) { this.state.sdkVersion = m[1]; }
     }
@@ -292,22 +292,11 @@ export class LogAnalyzerService {
 
     try { this.opts.tracker.consume(line); }
     catch { /* tracker swallows by design */ }
-    // The tracker exposes a mutation version so we only copy the session
-    // and reinit arrays when something actually changed — snapshotting per
-    // log line was an O(sessions) copy on every line.
-    const trackerVersion = this.opts.tracker.getVersion();
-    if (trackerVersion !== this.lastTrackerVersion) {
-      const prevSessionCount = this.state.sessions.length;
-      this.lastTrackerVersion = trackerVersion;
-      this.state.sessions = this.opts.tracker.snapshot();
-      this.state.reinits = this.opts.tracker.reinits();
-      // Emit sessionsUpdated diff when sessions array changes (length differs or any session end change).
-      // For simplicity: emit on each new session detected. Backfill emits aren't gated separately.
-      if (this.state.sessions.length !== prevSessionCount) {
-        this.emitter.emit('diff', { type: 'sessionsUpdated', sessions: [...this.state.sessions] });
-      }
-    }
-
+    // NOTE: the session snapshot deliberately does NOT happen here. It is an
+    // O(sessions) array copy, and doing it per line made ingestion quadratic
+    // whenever sessions accumulated — measured at 28k lines/s falling to 9.6k
+    // by 40k lines, against 870k/s for lines the tracker ignores. state.sessions
+    // is only read at flush time, so that is where it is refreshed.
     this.maybeFlush();
   }
 
@@ -359,6 +348,10 @@ export class LogAnalyzerService {
       this.emit({ type: 'problemsAdded', items: this.pendingProblems });
       this.pendingProblems = [];
     }
+    // Refresh the session view once per flush rather than once per line. The
+    // tracker's version counter makes this a no-op when nothing changed, and
+    // recomputeHistograms below reads state.sessions, so it has to come first.
+    this.refreshSessions();
     this.recomputeHistograms();
     this.emit({
       type: 'summary',
@@ -373,6 +366,19 @@ export class LogAnalyzerService {
       endTimeMs: this.state.endTime?.getTime() ?? null,
     });
     this.emit({ type: 'histogramsUpdated', histograms: this.state.histograms });
+  }
+
+  /** Copy the tracker's sessions into the state, if it has changed. */
+  private refreshSessions(): void {
+    const trackerVersion = this.opts.tracker.getVersion();
+    if (trackerVersion === this.lastTrackerVersion) { return; }
+    this.lastTrackerVersion = trackerVersion;
+    const prevSessionCount = this.state.sessions.length;
+    this.state.sessions = this.opts.tracker.snapshot();
+    this.state.reinits = this.opts.tracker.reinits();
+    if (this.state.sessions.length !== prevSessionCount) {
+      this.emit({ type: 'sessionsUpdated', sessions: [...this.state.sessions] });
+    }
   }
 
   private recomputeHistograms(): void {

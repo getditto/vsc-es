@@ -524,3 +524,46 @@ test('Service: problem line ids do not survive a clear', () => {
   assert.equal(svc.queryLines({ filter: 'problem' }).total, 0);
   assert.equal(svc.queryLines({ filter: 'critical' }).total, 0);
 });
+
+test('Service: the session snapshot is taken per flush, not per line', () => {
+  // Regression guard for a quadratic ingest path. tracker.snapshot() copies
+  // the session arrays; calling it from processLine made ingestion O(n²)
+  // whenever sessions accumulated — measured at 28k lines/s degrading to
+  // 9.6k by 40k lines, against 870k/s for lines the tracker ignores.
+  //
+  // Asserted by counting calls rather than by timing, so it cannot flake.
+  const sink = new AnalyzerSink({ capacity: 10_000 });
+  const engine = new PatternEngine({ listAll: () => ({ bundled: [], user: [] }) });
+  engine.load();
+
+  const real = new ConnectionTracker();
+  let snapshots = 0;
+  const tracker = Object.assign(Object.create(Object.getPrototypeOf(real)), real, {
+    consume: (l: any) => real.consume(l),
+    snapshot: () => { snapshots++; return real.snapshot(); },
+    reinits: () => real.reinits(),
+    getVersion: () => real.getVersion(),
+    reset: () => real.reset(),
+  }) as ConnectionTracker;
+
+  // Throttle high enough that only the explicit flushes below happen.
+  const svc = new LogAnalyzerService({ sink, engine, tracker, throttleMs: 1_000_000 });
+  svc.start(); // start() force-flushes once
+
+  const N = 500;
+  for (let i = 0; i < N; i++) {
+    // Every line opens a session, so the tracker's version changes every time
+    // — the worst case for a per-line snapshot.
+    sink.write('info',
+      `2026-08-23T18:55:00.000Z  INFO   [sdk]  physical connection started remote=peer${i} transport_type=LAN role=Client`);
+  }
+
+  assert.ok(
+    snapshots <= 2,
+    `snapshot() ran ${snapshots} times for ${N} lines; it must be per-flush, not per-line`,
+  );
+
+  // And it still produces the right answer when a flush does happen.
+  svc.resume();
+  assert.equal(svc.getStateForTesting().sessions.length, N);
+});

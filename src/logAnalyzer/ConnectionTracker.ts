@@ -57,6 +57,14 @@ export class ConnectionTracker {
         start: ts, end: null,
         remotePeer: remote, transport, role,
       });
+      // `closed` was bounded but `open` was not. A start line whose matching
+      // "ended" never arrives — a killed process, a truncated log, a phrasing
+      // the END regex misses — leaves an entry here forever, so a long session
+      // grew this without limit. Unbounded memory, and every consumer that
+      // copies the array paid for it.
+      if (this.open.length > SESSION_HISTORY_CAP * 2) {
+        this.open.splice(0, this.open.length - SESSION_HISTORY_CAP);
+      }
       this.version++;
       return;
     }
