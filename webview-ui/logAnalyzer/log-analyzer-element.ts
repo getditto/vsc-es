@@ -14,6 +14,21 @@ import type { AnalyzerOut } from '../../src/ipc/messages.js';
 /** Mirrors the host's PROBLEM_CAP in LogAnalyzerService — the per-pattern
  *  hit lists must never grow for the life of the panel. */
 const PROBLEM_CAP = 1000;
+
+/** Row-fetch granularity, and the window size in chunks.
+ *
+ *  The table is virtualised to roughly a viewport (~40 rows), so requesting
+ *  1000 rows shipped ~25x more than could ever be painted — and did so on
+ *  every flush, since a summary triggers a re-query. Windows are chunk-aligned
+ *  so a scroll inside the loaded window refetches nothing at all. */
+const ROW_CHUNK = 100;
+const ROW_WINDOW = ROW_CHUNK * 3;
+
+/** Chunk-aligned window start covering `needStart`, with a chunk of slack
+ *  before it so scrolling up does not immediately miss. */
+function windowStartFor(needStart: number): number {
+  return Math.max(0, Math.floor(needStart / ROW_CHUNK) * ROW_CHUNK - ROW_CHUNK);
+}
 import type {
   AnalyzerState,
   LogLine,
@@ -126,6 +141,11 @@ export class DittoLogAnalyzer extends LitElement {
   @state() private activeFilter: FilterKey = 'all';
   @state() private tableLines: LogLine[] = [];
   @state() private tableTotal = 0;
+  /** Absolute index of `tableLines[0]` in the filtered result set. */
+  @state() private tableOffset = 0;
+  /** Window start of the request in flight, so a scroll burst does not queue
+   *  a fetch per frame for the same window. */
+  private inFlightOffset: number | null = null;
   @state() private search = '';
   @state() private selectedLineId: number | null = null;
 
@@ -153,6 +173,7 @@ export class DittoLogAnalyzer extends LitElement {
     this.addEventListener('filter-change', this.onFilterChange);
     this.addEventListener('line-clicked', this.onLineClicked);
     this.addEventListener('drawer-close', this.onDrawerClose);
+    this.addEventListener('visible-range', this.onVisibleRange);
     // Kick off an initial query so the table is populated on first open.
     this.requestLines();
   }
@@ -162,6 +183,7 @@ export class DittoLogAnalyzer extends LitElement {
     this.removeEventListener('filter-change', this.onFilterChange);
     this.removeEventListener('line-clicked', this.onLineClicked);
     this.removeEventListener('drawer-close', this.onDrawerClose);
+    this.removeEventListener('visible-range', this.onVisibleRange);
     if (this.searchDebounce != null) {
       clearTimeout(this.searchDebounce);
       this.searchDebounce = null;
@@ -185,7 +207,11 @@ export class DittoLogAnalyzer extends LitElement {
     const detail = (e as CustomEvent).detail as { key: FilterKey };
     if (detail.key === this.activeFilter) return;
     this.activeFilter = detail.key;
-    this.requestLines();
+    // A new filter is a new result set — start at the top rather than holding
+    // an offset that means nothing in it.
+    this.tableOffset = 0;
+    this.scrollTableToTop();
+    this.requestLines(0);
   };
 
   private onLineClicked = (e: Event): void => {
@@ -206,9 +232,18 @@ export class DittoLogAnalyzer extends LitElement {
     if (this.searchDebounce != null) clearTimeout(this.searchDebounce);
     this.searchDebounce = setTimeout(() => {
       this.searchDebounce = null;
-      this.requestLines();
+      this.tableOffset = 0;
+      this.scrollTableToTop();
+      this.requestLines(0);
     }, 200);
   };
+
+  /** Reset the table's scroll after the result set changes underneath it, so
+   *  the viewport and the fetched window agree. */
+  private scrollTableToTop(): void {
+    const table = this.renderRoot.querySelector('log-table');
+    if (table) { (table as HTMLElement).scrollTop = 0; }
+  }
 
   /** Human-readable span of the ingested lines for the Range field. Empty
    *  when nothing timestamped has been seen, which the header renders as
@@ -227,18 +262,36 @@ export class DittoLogAnalyzer extends LitElement {
     return `${hhmmss(start)} → ${hhmmss(end)} (${span})`;
   }
 
-  private requestLines(): void {
+  /** Fetch one window of rows.
+   *
+   *  `offset` defaults to the window already on screen so a periodic refresh
+   *  (every summary diff) does not yank the user back to the top. Filter and
+   *  search changes pass 0 explicitly. */
+  private requestLines(offset = this.tableOffset): void {
     const requestId = String(++this.requestCursor);
     this.latestLinesReq = requestId;
+    this.inFlightOffset = offset;
     postToHost({
       type: 'analyzer.queryLines',
       filter: this.activeFilter,
       search: this.search || undefined,
-      limit: 1000,
-      offset: 0,
+      limit: ROW_WINDOW,
+      offset,
       requestId,
     });
   }
+
+  /** The table reports which absolute rows the viewport needs; refetch only
+   *  when they fall outside the window we hold. */
+  private onVisibleRange = (e: Event): void => {
+    const { start, end } = (e as CustomEvent).detail as { start: number; end: number };
+    const loadedFrom = this.tableOffset;
+    const loadedTo = this.tableOffset + this.tableLines.length;
+    if (start >= loadedFrom && end <= loadedTo) { return; }
+    const want = windowStartFor(start);
+    if (want === this.inFlightOffset) { return; }
+    this.requestLines(want);
+  };
 
   private handleMessage = (m: AnalyzerOut): void => {
     if (!m) { return; }
@@ -271,6 +324,8 @@ export class DittoLogAnalyzer extends LitElement {
         break;
       }
       case 'analyzer.reset':
+        this.tableOffset = 0;
+        this.inFlightOffset = null;
         this.counts = null;
         this.tags = [];
         this.sdkVersion = null;
@@ -308,7 +363,9 @@ export class DittoLogAnalyzer extends LitElement {
         // Drop late responses; only honour the most recent request.
         if (m.requestId !== this.latestLinesReq) break;
         this.tableLines = m.items;
+        this.tableOffset = m.offset;
         this.tableTotal = m.total;
+        this.inFlightOffset = null;
         break;
       case 'analyzer.lineDetail':
         if (m.requestId !== this.latestDetailReq) break;
@@ -353,7 +410,6 @@ export class DittoLogAnalyzer extends LitElement {
 
   render(): TemplateResult {
     const tc = this.tabCounts();
-    const shown = this.tableLines.length;
     const total = this.tableTotal;
     return html`
       <div class="toolbar">
@@ -386,9 +442,17 @@ export class DittoLogAnalyzer extends LitElement {
             .value=${this.search}
             @input=${this.onSearchInput}
           />
-          <span class="result-info">${shown.toLocaleString()} / ${total.toLocaleString()}</span>
+          <!-- The count of matching rows, not "loaded / matching": rows are
+               fetched in windows now, so the loaded count is an implementation
+               detail that would sit at the window size regardless. -->
+          <span class="result-info">${total.toLocaleString()} ${total === 1 ? 'line' : 'lines'}</span>
         </div>
-        <log-table .lines=${this.tableLines} .selectedId=${this.selectedLineId}></log-table>
+        <log-table
+          .lines=${this.tableLines}
+          .windowOffset=${this.tableOffset}
+          .totalRows=${this.tableTotal}
+          .selectedId=${this.selectedLineId}
+        ></log-table>
       </div>
       <line-detail-drawer
         ?hidden=${!this.drawerOpen}

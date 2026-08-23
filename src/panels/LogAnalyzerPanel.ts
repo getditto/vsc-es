@@ -162,6 +162,7 @@ export class LogAnalyzerPanel {
           type: 'analyzer.linesResult',
           requestId: msg.requestId,
           items: result.items,
+          offset: msg.offset ?? 0,
           total: result.total,
         });
         return;

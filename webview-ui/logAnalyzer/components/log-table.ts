@@ -119,7 +119,12 @@ export class LogTable extends LitElement {
     }
   `;
 
+  /** The loaded window, not the whole result set. */
   @property({ type: Array }) lines: LogLine[] = [];
+  /** Absolute index of `lines[0]` within the filtered result set. */
+  @property({ type: Number }) windowOffset = 0;
+  /** Rows matching the filter, before windowing — sizes the scroll area. */
+  @property({ type: Number }) totalRows = 0;
   @property({ type: Number }) selectedId: number | null = null;
 
   // Renamed off `scrollTop` because that's an HTMLElement instance
@@ -159,12 +164,46 @@ export class LogTable extends LitElement {
     window.removeEventListener('pointermove', this.onResizeMove);
     window.removeEventListener('pointerup', this.onResizeEnd);
     this.dragging = null;
+    if (this.rangeFrame !== null) {
+      cancelAnimationFrame(this.rangeFrame);
+      this.rangeFrame = null;
+    }
     super.disconnectedCallback();
   }
 
   private onScroll = (): void => {
     this._scrollTop = (this as unknown as HTMLElement).scrollTop;
+    this.reportVisibleRange();
   };
+
+  /** Tell the owner which absolute rows are needed.
+   *
+   *  The table is virtualised to roughly a viewport's worth of rows, so the
+   *  owner has no reason to hold — or the host to serialise — the whole result
+   *  set. It fetches a window around whatever this reports.
+   *
+   *  Coalesced to one report per frame: a scroll gesture fires far more often
+   *  than the window can usefully change. */
+  private rangeFrame: number | null = null;
+  private reportVisibleRange(): void {
+    if (this.rangeFrame !== null) { return; }
+    this.rangeFrame = requestAnimationFrame(() => {
+      this.rangeFrame = null;
+      const { startIdx, endIdx } = this.visibleRange();
+      this.dispatchEvent(new CustomEvent('visible-range', {
+        detail: { start: startIdx, end: endIdx },
+        bubbles: true,
+        composed: true,
+      }));
+    });
+  }
+
+  /** Absolute row indices the viewport needs, including overscan. */
+  private visibleRange(): { startIdx: number; endIdx: number } {
+    const startIdx = Math.max(0, Math.floor(this._scrollTop / ROW_HEIGHT) - OVERSCAN);
+    const visibleCount = Math.ceil(this.viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
+    return { startIdx, endIdx: Math.min(this.totalRows, startIdx + visibleCount) };
+  }
 
   private clickRow(lineId: number): void {
     this.dispatchEvent(new CustomEvent('line-clicked', { detail: { lineId }, bubbles: true, composed: true }));
@@ -238,23 +277,25 @@ export class LogTable extends LitElement {
   }
 
   render(): TemplateResult {
-    if (this.lines.length === 0) {
+    if (this.totalRows === 0) {
       return html`
         ${this.renderHead()}
         <div class="empty">No lines match the current filter.</div>
       `;
     }
-    const total = this.lines.length;
-    const startIdx = Math.max(0, Math.floor(this._scrollTop / ROW_HEIGHT) - OVERSCAN);
-    const visibleCount = Math.ceil(this.viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
-    const endIdx = Math.min(total, startIdx + visibleCount);
-    const visible = this.lines.slice(startIdx, endIdx);
+    // The scroll area is sized to the whole filtered result set, but only the
+    // loaded window can be painted. Rows outside it render as blanks for the
+    // frame or two before the owner's fetch lands.
+    const { startIdx, endIdx } = this.visibleRange();
+    const from = Math.max(startIdx, this.windowOffset);
+    const to = Math.min(endIdx, this.windowOffset + this.lines.length);
+    const visible = to > from ? this.lines.slice(from - this.windowOffset, to - this.windowOffset) : [];
 
     return html`
       ${this.renderHead()}
-      <div class="spacer" style="height: ${total * ROW_HEIGHT}px;">
+      <div class="spacer" style="height: ${this.totalRows * ROW_HEIGHT}px;">
         ${visible.map((l, i) => {
-          const idx = startIdx + i;
+          const idx = from + i;
           const ts = l.timestamp ? new Date(l.timestamp).toISOString().slice(11, 23) : '—';
           const top = idx * ROW_HEIGHT;
           return html`

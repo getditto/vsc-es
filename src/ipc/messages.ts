@@ -373,7 +373,17 @@ export type AnalyzerOut =
   | { type: 'analyzer.sessionsUpdated'; sessions: import('../logAnalyzer/types.js').Session[] }
   | { type: 'analyzer.histogramsUpdated'; histograms: import('../logAnalyzer/types.js').AnalyzerState['histograms'] }
   | { type: 'analyzer.error'; stage: 'backfill' | 'live'; message: string }
-  | { type: 'analyzer.linesResult'; requestId: string; items: import('../logAnalyzer/types.js').LogLine[]; total: number }
+  | {
+      type: 'analyzer.linesResult';
+      requestId: string;
+      items: import('../logAnalyzer/types.js').LogLine[];
+      /** Absolute index of `items[0]` within the filtered result set. The table
+       *  positions rows by absolute index, so it cannot place a windowed
+       *  response without knowing where the window starts. */
+      offset: number;
+      /** Rows matching the filter, before windowing. */
+      total: number;
+    }
   | {
       type: 'analyzer.lineDetail';
       requestId: string;
