@@ -5,7 +5,7 @@
 
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import { assertNever } from '../shared/assert-never.js';
 import { codiconStyles } from './codicon-styles.js';
 import type { InspectorContent, QueryInspectorTab } from '../../src/inspector/inspector-state.js';
@@ -69,18 +69,11 @@ export class DittoInspectorElement extends LitElement {
     }
   `];
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    window.addEventListener('message', this.onMessage);
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<InspectorOut>(this, msg => this.onHostMessage(msg));
 
-  disconnectedCallback(): void {
-    super.disconnectedCallback();
-    window.removeEventListener('message', this.onMessage);
-  }
-
-  private onMessage = (e: MessageEvent): void => {
-    const m = e.data as InspectorOut | undefined;
+  private onHostMessage(m: InspectorOut | undefined): void {
     if (!m) { return; }
     switch (m.type) {
       case 'inspector.contentChanged':
@@ -122,7 +115,7 @@ export class DittoInspectorElement extends LitElement {
         // variant without handling it here fails typechecking.
         assertNever(m);
     }
-  };
+  }
 
   private switchTab(tab: QueryInspectorTab): void {
     postToHost({ type: 'inspector.tabSelected', tab });

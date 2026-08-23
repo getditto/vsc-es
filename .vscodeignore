@@ -8,7 +8,6 @@
 .agents/**
 .codex/**
 AGENTS.md
-prompts/**
 scripts/**
 src/**
 webview-ui/**
@@ -20,5 +19,6 @@ tsconfig.json
 esbuild.config.mjs
 eslint.config.mjs
 *.vsix
+*.log
 .gitignore
 .vscodeignore

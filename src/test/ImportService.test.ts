@@ -292,6 +292,65 @@ test('importDocuments: insertType=initial threads through to query string', asyn
   assert.match(observed, /INITIAL DOCUMENTS/);
 });
 
+test('importDocuments: a database switch mid-import aborts the remaining batches', async () => {
+  // The switch orchestrator closes the panel but cannot cancel this loop,
+  // and `execute` always hits the manager's CURRENT session. The checkActive
+  // re-poll must stop the tail from landing in the new database; what was
+  // already written is fine to report (ON ID CONFLICT DO UPDATE is idempotent
+  // on re-run).
+  let active = 'db-A';
+  const usedBatches: string[] = [];
+  const result = await importDocuments({
+    documents: Array.from({ length: 9 }, (_, i) => ({ _id: `id-${i}` })),
+    collection: 'Users',
+    insertType: 'regular',
+    execute: async () => {
+      usedBatches.push(active);
+      if (usedBatches.length === 1) { active = 'db-B'; } // switch behind batch 1
+    },
+    batchSize: 3,
+    checkActive: () => active,
+  });
+  assert.equal(result.cancelled, true);
+  assert.equal(result.successCount, 3, 'only the first batch landed');
+  assert.equal(result.failureCount, 0);
+  assert.deepEqual(usedBatches, ['db-A'], 'no batch executed against the new database');
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /database changed mid-import/);
+  assert.match(result.errors[0], /3 of 9/, 'partial progress is surfaced');
+});
+
+test('importDocuments: no checkActive polling when the callback is absent', async () => {
+  // Backwards compatibility: callers that don't care about switching still
+  // get the old pure-batch behaviour.
+  const result = await importDocuments({
+    documents: [{ _id: 'a' }, { _id: 'b' }],
+    collection: 'Users',
+    insertType: 'regular',
+    execute: async () => {},
+    batchSize: 1,
+  });
+  assert.equal(result.cancelled, undefined);
+  assert.equal(result.successCount, 2);
+});
+
+test('importDocuments: a switch detected before the FIRST batch writes nothing', async () => {
+  let calls = 0;
+  let executed = false;
+  const result = await importDocuments({
+    documents: [{ _id: 'a' }],
+    collection: 'Users',
+    insertType: 'regular',
+    execute: async () => { executed = true; },
+    // Entry snapshot 'db-A'; the pre-batch poll already sees the switch.
+    checkActive: () => (calls++ === 0 ? 'db-A' : 'db-B'),
+  });
+  assert.equal(result.cancelled, true);
+  assert.equal(executed, false, 'execute must not run once the snapshot differs');
+  assert.equal(result.successCount, 0);
+  assert.match(result.errors[0], /database changed mid-import/);
+});
+
 test('importDocuments: empty document set returns zero counts without calling execute', async () => {
   let called = false;
   const result = await importDocuments({

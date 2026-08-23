@@ -683,6 +683,57 @@ test('PresenceGraphElement: the star field is painted behind the graph', async (
   el.remove();
 });
 
+// ─── RAF loop settle/wake ─────────────────────────────────────
+
+test('PresenceGraphElement: the loop settles after an idle period and wakes on new input', async () => {
+  // The star field is ambient decoration — a visible-but-idle panel must not
+  // repaint at 60fps for its whole life. After a short idle window the loop
+  // paints a final static frame and goes dark until something changes.
+  const el = await mount();
+  const ctx = contextFor(el.shadowRoot.querySelector('canvas'));
+
+  // Shrink the idle window (its 3s default is tuned for humans) and restart it.
+  el.starIdleMs = 20;
+  el.wake();
+  drawFrame();
+  assert.notEqual(el.rafHandle, undefined, 'loop running after wake');
+
+  // Real time passes with no interaction and no host traffic…
+  await new Promise(r => setTimeout(r, 60));
+  // …the running frame paints the final static frame and stops.
+  drawFrame();
+  assert.equal(el.rafHandle, undefined, 'loop settled after the idle window');
+  assert.equal(frameQueue.size, 0, 'no further frame queued');
+
+  // A host push (peer.state → input property) wakes the loop and paints.
+  ctx.__reset();
+  el.input = structuredClone(INPUT);
+  await el.updateComplete;
+  assert.notEqual(el.rafHandle, undefined, 'loop restarted by a host push');
+  drawFrame();
+  assert.ok(ctx.__ops.some(o => o.op === 'fillText' && o.args[0] === 'Me'), 'paints after wake');
+  el.remove();
+});
+
+test('PresenceGraphElement: pointer interaction wakes a settled loop and repaints', async () => {
+  const el = await mount();
+  el.starIdleMs = 20;
+  el.wake();
+  await new Promise(r => setTimeout(r, 60));
+  drawFrame();
+  assert.equal(el.rafHandle, undefined, 'loop settled');
+
+  const canvas = el.shadowRoot.querySelector('canvas');
+  const ctx = contextFor(canvas);
+  ctx.__reset();
+  canvas.dispatchEvent(mouse('mousemove', screenPos(el, 'alpha')));
+  assert.notEqual(el.rafHandle, undefined, 'hover wakes the loop');
+  assert.equal(el.scene.hoveredPeerKey, 'alpha');
+  drawFrame();
+  assert.ok(ctx.__ops.some(o => o.op === 'fillText'), 'repaint reflects the interaction');
+  el.remove();
+});
+
 test('PresenceGraphElement: a renamed peer gets a fresh pill width in a new scene', async () => {
   // The pill-width cache is module-global and outlives a scene, but the graph
   // tab rebuilds the scene on every switch. A device renamed while the tab was

@@ -4,7 +4,7 @@ import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './web
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
-import type { DbMetricsIn, DbMetricsOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { DbMetricsIn, DbMetricsOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import { snapshot } from '../storage/DatabaseMetricsService.js';
 
@@ -96,21 +96,13 @@ export class DatabaseMetricsPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      webviewMessageHandler<DbMetricsIn | LogIn>(
+      webviewMessageHandler<DbMetricsIn>(
         this.logger, 'ext:dbMetrics', 'Database metrics action failed', (msg) => this.handle(msg),
       ),
       undefined,
       this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
-
-    this.panel.webview.postMessage({
-      type: 'log.levelChanged', level: logger.getChannelLevel(),
-    } satisfies LogOut);
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {
@@ -127,12 +119,7 @@ export class DatabaseMetricsPanel {
 
   private post(msg: DbMetricsOut): void { void this.panel.webview.postMessage(msg); }
 
-  private async handle(msg: DbMetricsIn | LogIn): Promise<void> {
-    if (msg.type === 'log') {
-      const wlog = this.logger.withTag('webview:dittoDatabaseMetrics');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: DbMetricsIn): Promise<void> {
     if (msg.type === 'dbMetrics.refresh') {
       await this.refresh();
       return;

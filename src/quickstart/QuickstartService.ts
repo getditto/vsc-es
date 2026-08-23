@@ -210,6 +210,18 @@ export class QuickstartService {
   }
 }
 
+/** Escape a value for interpolation into a double-quoted env/YAML string.
+ *  A `"` or `\` in the token would otherwise break out of the quoted value
+ *  and corrupt the file; a newline would shove attacker content onto its
+ *  own line, so those are rejected rather than escaped (a token or URL
+ *  with a newline is never legitimate). */
+function escapeDoubleQuoted(value: string, field: string): string {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(`Refusing to write ${field}: the value contains a newline`);
+  }
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 /**
  * Byte-exact reproduction of SwiftUI's envContent — no trailing newline,
  * single comment line credited to "Edge Studio" (the product name shared
@@ -220,33 +232,34 @@ function renderEnvContent(v: EnvValues): string {
     '#!/usr/bin/env bash',
     '',
     '# Auto-configured by Edge Studio',
-    `DITTO_APP_ID="${v.databaseId}"`,
-    `DITTO_PLAYGROUND_TOKEN="${v.token}"`,
-    `DITTO_AUTH_URL="${v.authUrl}"`,
-    `DITTO_WEBSOCKET_URL="${v.websocketUrl}"`,
+    `DITTO_APP_ID="${escapeDoubleQuoted(v.databaseId, 'database id')}"`,
+    `DITTO_PLAYGROUND_TOKEN="${escapeDoubleQuoted(v.token, 'token')}"`,
+    `DITTO_AUTH_URL="${escapeDoubleQuoted(v.authUrl, 'auth URL')}"`,
+    `DITTO_WEBSOCKET_URL="${escapeDoubleQuoted(v.websocketUrl, 'websocket URL')}"`,
   ].join('\n');
 }
 
 function renderEdgeServerYaml(v: EdgeServerValues): string {
+  const dbId = escapeDoubleQuoted(v.databaseId, 'database id');
   return [
     'resources:',
     '  my_ditto_db:',
     '    resource_type: DittoDatabase',
-    `    db_id: "${v.databaseId}"`,
+    `    db_id: "${dbId}"`,
     '    device_name: "edge-studio-quickstart"',
     '    subscriptions:',
     '      - "SELECT * FROM tasks"',
     '    auth:',
     '      server:',
-    `        access_token: "${v.token}"`,
-    `        auth_url: "${v.authUrl}"`,
+    `        access_token: "${escapeDoubleQuoted(v.token, 'token')}"`,
+    `        auth_url: "${escapeDoubleQuoted(v.authUrl, 'auth URL')}"`,
     '        provider: "__playgroundProvider"',
     '  my_http_server:',
     '    resource_type: HttpServer',
     '    listen_addr: "0.0.0.0:8080"',
     '    databases:',
     '      my_db:',
-    `        db_id: "${v.databaseId}"`,
+    `        db_id: "${dbId}"`,
     '        base_path: my_server',
     '        http_api: true',
   ].join('\n');

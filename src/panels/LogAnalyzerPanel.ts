@@ -137,14 +137,6 @@ export class LogAnalyzerPanel {
 
   private async handle(msg: AnalyzerIn): Promise<void> {
     switch (msg.type) {
-      case 'analyzer.refresh':
-        // Clear first: bootstrap re-reads the whole backfill, so without this
-        // the refreshed view contained every line twice (and again on the next
-        // refresh). clear() also emits reset, which resets the webview.
-        this.svc.clear();
-        this.bootstrapped = false;
-        await this.bootstrap();
-        return;
       case 'analyzer.clear':  this.svc.clear(); return;
       case 'analyzer.pause':  this.svc.pause(); return;
       case 'analyzer.resume': this.svc.resume(); return;

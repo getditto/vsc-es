@@ -6,7 +6,7 @@ import type { SecretStore } from '../storage/SecretStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import { MAX_QUERY_ROWS } from '../ditto/query-projection.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
-import type { QueryIn, QueryOut, LogIn, LogOut, QueryMode } from '../ipc/messages.js';
+import type { QueryIn, QueryOut, QueryMode } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
@@ -16,6 +16,24 @@ import type { QueryMetricsStore } from '../storage/QueryMetricsStore.js';
 import { executeRemoteQuery } from '../ditto/HttpQueryService.js';
 import { extractCollectionName } from '../ditto/import-subscription-parser.js';
 import { detectAttachments } from '../inspector/inspector-state.js';
+import { quoteIdentifier } from '../ditto/dql-identifier.js';
+import { randomId } from '../util/id.js';
+
+/** unwrap a fully backtick-quoted identifier token into its raw name.
+ *
+ *  `extractCollectionName` returns the token verbatim — backticks included
+ *  when the user wrote ``SELECT * FROM `my coll` ``. Backtick-quote is the
+ *  DQL convention on output; on input we need the RAW name so the `__`
+ *  system-collection guard and the re-quote at statement build time see
+ *  the same value. A token that merely STARTS with a backtick is not a
+ *  complete quoted identifier (the whitespace-split truncated it), so it
+ *  stays untouched and falls through to the normal quoting. */
+function unquoteIdentifierToken(token: string): string {
+  if (token.length >= 2 && token.startsWith('`') && token.endsWith('`')) {
+    return token.slice(1, -1).replace(/``/g, '`');
+  }
+  return token;
+}
 
 /** Attachment soft / hard size limits (mirrors SwiftUI's 10 MB / 20 MB).
  *  Soft = warn-and-continue; hard = refuse. The SDK's local
@@ -150,7 +168,7 @@ export class QueryEditorPanel {
    *  fresh on construction; survives until dispose. The tracker uses this
    *  to upsert the tab's text in place, so emitting many text-change
    *  updates doesn't shuffle the array's order. */
-  private readonly tabId: string = randomTabId();
+  private readonly tabId: string = randomId(8);
   // Per-panel "last run" snapshot. The InspectorController is a singleton
   // shared across all Query Editor instances, so when this panel takes
   // focus it has to re-push these so the Inspector reflects ITS latest
@@ -196,22 +214,13 @@ export class QueryEditorPanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      webviewMessageHandler<QueryIn | LogIn>(
+      webviewMessageHandler<QueryIn>(
         this.logger, 'ext:queryEditor', 'Query editor action failed', (msg) => this.handle(msg),
       ),
       undefined,
       this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
-
-    // Push initial channel level to webview.
-    this.panel.webview.postMessage({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
-
-    // Subscribe to level changes; track disposable so we can clean up.
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     // Register this tab in the per-DB panel state so it gets restored
     // when the connection reopens. Initial text is whatever loadQuery
@@ -288,12 +297,7 @@ export class QueryEditorPanel {
 
   private post(msg: QueryOut) { this.panel.webview.postMessage(msg); }
 
-  private async handle(msg: QueryIn | LogIn) {
-    if (msg.type === 'log') {
-      const wlog = this.logger.withTag('webview:dittoQueryEditor');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: QueryIn) {
     if (msg.type === 'query.rowSelected') {
       this.lastSelectedRowJson = msg.rowJson;
       this.inspector.setSelectedRowJson(msg.rowJson);
@@ -533,7 +537,8 @@ export class QueryEditorPanel {
    *  collections or none. Sanitises so the result is a portable
    *  filename across platforms. */
   private suggestedExportFilename(): string {
-    const collection = extractCollectionName(this.lastMetadata?.dql ?? '');
+    const token = extractCollectionName(this.lastMetadata?.dql ?? '');
+    const collection = token ? unquoteIdentifierToken(token) : null;
     const base = collection && /^[A-Za-z0-9_-]+$/.test(collection)
       ? collection
       : 'query_results';
@@ -556,7 +561,11 @@ export class QueryEditorPanel {
       vscode.window.showWarningMessage('Run a query first so we know which collection to target.');
       return;
     }
-    const collection = extractCollectionName(lastDql);
+    // The extractor returns the token verbatim, so a backticked name
+    // arrives quoted; the `__` system-collection check and the `UPDATE`
+    // targets need the RAW name.
+    const collectionToken = extractCollectionName(lastDql);
+    const collection = collectionToken ? unquoteIdentifierToken(collectionToken) : null;
     if (!collection || collection.startsWith('__')) {
       vscode.window.showWarningMessage(
         `Attachment actions need a single user collection in the last query (got "${collection ?? 'no FROM clause'}").`,
@@ -564,12 +573,20 @@ export class QueryEditorPanel {
       return;
     }
 
-    let row: Record<string, unknown>;
-    try { row = JSON.parse(rowJson) as Record<string, unknown>; }
+    let parsed: unknown;
+    try { parsed = JSON.parse(rowJson); }
     catch {
       vscode.window.showErrorMessage('Could not parse the selected row.');
       return;
     }
+    // `JSON.parse` can hand back `null` (the string 'null' parses
+    // cleanly) or a bare array — both fail later as "reading _id of
+    // null" TypeErrors. Reject them with a sentence instead.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      vscode.window.showWarningMessage('The selected row is not a document object.');
+      return;
+    }
+    const row = parsed as Record<string, unknown>;
     const documentId = typeof row._id === 'string' ? row._id : undefined;
     if (!documentId) {
       vscode.window.showWarningMessage('The selected row has no string `_id` — cannot target it.');
@@ -637,13 +654,20 @@ export class QueryEditorPanel {
     // they are dotted paths from the document root. We split on the
     // first dot/[ and clear that top-level field, which removes the
     // attachment whether it's a direct token or a nested object.
+    // Identifiers are interpolated via quoteIdentifier (NOT a character
+    // whitelist) so names with hyphens, spaces, or non-ASCII letters
+    // clear correctly — Ditto genuinely allows them.
     const fieldNames = [...new Set(picked.map(p => p.fieldName))];
-    if (fieldNames.some(f => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(f))) {
-      vscode.window.showErrorMessage('Attachment field names must be plain identifiers; cannot delete.');
+    let setClause: string;
+    try {
+      setClause = fieldNames.map(f => `${quoteIdentifier(f, 'field')} = NULL`).join(', ');
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Cannot safely reference an attachment field: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return;
     }
-    const setClause = fieldNames.map(f => `${f} = NULL`).join(', ');
-    const dql = `UPDATE ${collection} SET ${setClause} WHERE _id = :docId`;
+    const dql = `UPDATE ${quoteIdentifier(collection, 'collection')} SET ${setClause} WHERE _id = :docId`;
 
     try {
       await this.manager.executeRaw(dql, { docId: documentId });
@@ -730,13 +754,19 @@ export class QueryEditorPanel {
     }
     contentType = guessContentType(ext);
 
-    // 3. Field name — must be a valid DQL identifier so it can be
-    //    interpolated unquoted into the UPDATE statement.
+    // 3. Field name — interpolated backtick-quoted into the UPDATE, so
+    //    the only rejects are input that can't form an identifier at all
+    //    (empty, control characters). Hyphens and non-ASCII letters are
+    //    fine.
     const fieldName = await vscode.window.showInputBox({
       title: 'Attachment field name',
       prompt: `Field on ${collection} that will hold the attachment token`,
-      validateInput: (v) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(v.trim())
-        ? null : 'Letters, numbers, underscores only; must start with a letter or underscore.',
+      validateInput: (v) => {
+        const t = v.trim();
+        if (!t) { return 'Field name is required.'; }
+        try { quoteIdentifier(t, 'field'); return null; }
+        catch { return 'Not a usable field name (no control characters).'; }
+      },
     });
     if (!fieldName) { return; }
     const field = fieldName.trim();
@@ -756,7 +786,7 @@ export class QueryEditorPanel {
             length: String(size),
           });
           await this.manager.executeRaw(
-            `UPDATE ${collection} SET ${field} = :att WHERE _id = :docId`,
+            `UPDATE ${quoteIdentifier(collection, 'collection')} SET ${quoteIdentifier(field, 'field')} = :att WHERE _id = :docId`,
             { att, docId: documentId },
           );
         },
@@ -802,12 +832,6 @@ export class QueryEditorPanel {
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }
-}
-
-function randomTabId(): string {
-  const bytes = new Uint8Array(8);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Read the current `dittoVsce.collectProfiling` workspace setting.

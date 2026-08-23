@@ -141,18 +141,12 @@ test('every panel routes its webview messages through the wrapper', async () => 
       const full = path.join(root, file);
       const text = await fs.readFile(full, 'utf8');
       if (!text.includes('onDidReceiveMessage')) { continue; }
-      // DatabaseEditorPanel handles its own rejection with a disposed-panel
-      // guard, which the shared wrapper deliberately does not model.
-      if (file === 'DatabaseEditorPanel.ts') {
-        assert.match(text, /\.catch\(/, `${full} must still handle its rejection`);
-        continue;
-      }
       // Check the call site, not just the identifier: an unused import would
       // otherwise satisfy a bare `includes`, which made an earlier version of
       // this test pass against a panel that had been reverted to a bare
       // `(msg) => this.handle(msg)`.
       // The generic argument sits between the name and the paren
-      // (`webviewMessageHandler<QueryIn | LogIn>(`), so match that shape
+      // (`webviewMessageHandler<QueryIn>(`), so match that shape
       // rather than a bare `name(`.
       const CALL = /webviewMessageHandler\s*(<[^>]*>)?\s*\(/;
       for (const m of text.matchAll(/onDidReceiveMessage\(/g)) {

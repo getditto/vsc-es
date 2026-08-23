@@ -49,6 +49,7 @@ function recordingLogger(): { logger: Logger; errors: string[]; warns: string[] 
     error: (m: string, _c?: LogContext) => { errors.push(m); },
     warn: (m: string, _c?: LogContext) => { warns.push(m); },
     info: () => {}, debug: () => {}, trace: () => {},
+    registerKnownSecrets: () => {}, clearKnownSecrets: () => {},
     withTag: () => self,
   } as unknown as Logger;
   return { logger: self, errors, warns };

@@ -135,6 +135,72 @@ test('writeEdgeServerYaml writes config when edge-server/ exists', () => {
   }
 });
 
+test('writeEnvFiles escapes quotes and backslashes inside the token', () => {
+  // A token with `"` or `\` would otherwise break out of the double-quoted
+  // env assignment and corrupt (or weaponise) the generated file.
+  const root = tmpdir('qs-env-esc-');
+  try {
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    svc.writeEnvFiles(root, {
+      databaseId: 'abc-123',
+      token: 'tok"with\\meta',
+      authUrl: 'https://auth.example',
+      websocketUrl: 'wss://ws.example',
+    });
+    const content = fs.readFileSync(path.join(root, '.env'), 'utf-8');
+    assert.ok(
+      content.includes('DITTO_PLAYGROUND_TOKEN="tok\\"with\\\\meta"'),
+      `escaped token not found in:\n${content}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('writeEdgeServerYaml escapes quotes and backslashes inside the token', () => {
+  const root = tmpdir('qs-yaml-esc-');
+  try {
+    fs.mkdirSync(path.join(root, 'edge-server'));
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    svc.writeEdgeServerYaml(root, {
+      databaseId: 'abc-123', token: 'a"b\\c', authUrl: 'https://auth.example',
+    });
+    const written = fs.readFileSync(path.join(root, 'edge-server', 'quickstart_config.yaml'), 'utf-8');
+    assert.ok(written.includes('access_token: "a\\"b\\\\c"'), `escaped token not found in:\n${written}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a newline in any interpolated value is refused outright', () => {
+  // A newline can't be neutralised by escaping — it jump-starts another env
+  // assignment / YAML line, so we throw instead of writing a corrupted file.
+  const root = tmpdir('qs-env-nl-');
+  try {
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    assert.throws(() => svc.writeEnvFiles(root, {
+      databaseId: 'abc', token: 'tok\nMALICIOUS=1', authUrl: 'x', websocketUrl: 'y',
+    }), /newline/);
+    assert.equal(fs.existsSync(path.join(root, '.env')), false, 'no file written on refusal');
+
+    fs.mkdirSync(path.join(root, 'edge-server'));
+    // The YAML writer reports failures as a result object rather than
+    // throwing (its whole contract is "try, and tell the flow controller"),
+    // so the refusal surfaces as a failed write that names the cause.
+    const result = svc.writeEdgeServerYaml(root, {
+      databaseId: 'abc', token: 'x', authUrl: 'x\nfoo: bar',
+    });
+    assert.equal(result.outcome, 'failed');
+    if (result.outcome === 'failed') { assert.match(result.error, /newline/); }
+    assert.equal(
+      fs.existsSync(path.join(root, 'edge-server', 'quickstart_config.yaml')), false,
+      'no file written on refusal',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('writeEdgeServerYaml skips when edge-server/ is absent', () => {
   const root = tmpdir('qs-yaml-absent-');
   try {

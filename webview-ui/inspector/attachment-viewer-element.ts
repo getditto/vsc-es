@@ -9,8 +9,16 @@
 
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { postToHost } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import { codiconStyles } from './codicon-styles.js';
+import type { InspectorOut } from '../../src/ipc/messages.js';
+
+/** The attachment-lifecycle variants of InspectorOut this element consumes. */
+type AttachmentMsg = Extract<InspectorOut, { type:
+  | 'inspector.attachmentLoaded'
+  | 'inspector.attachmentProgress'
+  | 'inspector.attachmentError'
+}>;
 
 interface AttachmentMetadata {
   id: string;
@@ -139,15 +147,9 @@ export class AttachmentViewerElement extends LitElement {
     .progress { color: var(--vscode-descriptionForeground); margin-top: 4px; }
   `];
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    window.addEventListener('message', this.onMsg);
-  }
-
-  disconnectedCallback(): void {
-    super.disconnectedCallback();
-    window.removeEventListener('message', this.onMsg);
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<AttachmentMsg>(this, msg => this.onHostMessage(msg));
 
   protected willUpdate(changed: Map<string, unknown>): void {
     if (changed.has('json')) {
@@ -160,9 +162,7 @@ export class AttachmentViewerElement extends LitElement {
     }
   }
 
-  private onMsg = (e: MessageEvent): void => {
-    const m = e.data;
-    if (!m) { return; }
+  private onHostMessage(m: AttachmentMsg): void {
     if (m.type === 'inspector.attachmentLoaded') {
       this.loaded = { ...this.loaded, [m.tokenId]: { uri: m.webviewUri, mime: m.mimeType } };
     } else if (m.type === 'inspector.attachmentProgress') {
@@ -170,7 +170,7 @@ export class AttachmentViewerElement extends LitElement {
     } else if (m.type === 'inspector.attachmentError') {
       this.errors = { ...this.errors, [m.tokenId]: m.message };
     }
-  };
+  }
 
   render() {
     if (!this.json) { return html``; }

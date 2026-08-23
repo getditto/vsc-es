@@ -4,7 +4,6 @@ import type {
   PeerListSnapshot,
   SystemSettingOption,
 } from '../models/DittoConfig.js';
-import type { LogLevel } from '../logging/types.js';
 import type {
   InspectorContent,
   QueryInspectorTab,
@@ -270,7 +269,9 @@ export type ObserverOut =
   // Pushed when the observer is activated or stopped.
   | { type: 'observer.statusChanged'; active: boolean }
   // Coalesced batch of events from the host's 100ms flush window.
-  // The webview appends them to its ring buffer.
+  // The webview appends them to its ring buffer. Each event's `data` is
+  // capped on the host (OBSERVER_ROW_CAP rows); `totalRows` carries the
+  // uncapped count so the webview can show a "first N of M" indicator.
   | { type: 'observer.events'; events: ObserverEvent[] }
   // Pushed when the user clicks Stop or when the observer is
   // cancelled programmatically — clears the webview's event store.
@@ -353,13 +354,6 @@ export type InspectorOut =
   // tab). Pushed on resolve and whenever the user toggles the setting.
   | { type: 'inspector.settings'; collectMetrics: boolean };
 
-// ─── Logging (any panel webview → host, host → any webview) ──────
-/** Webview → host: emit a log line. */
-export type LogIn = { type: 'log'; level: LogLevel; message: string; ctx?: Record<string, unknown> };
-
-/** Host → webview: notify of a channel-level change so the webview can short-circuit. */
-export type LogOut = { type: 'log.levelChanged'; level: LogLevel };
-
 // ─── Log Analyzer panel ────────────────────────────────────────
 /** Host → webview: state diffs from LogAnalyzerService. */
 export type AnalyzerOut =
@@ -400,7 +394,6 @@ export type AnalyzerOut =
 
 /** Webview → host: user controls + reveal requests. */
 export type AnalyzerIn =
-  | { type: 'analyzer.refresh' }
   | { type: 'analyzer.clear' }
   | { type: 'analyzer.pause' }
   | { type: 'analyzer.resume' }

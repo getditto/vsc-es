@@ -7,18 +7,31 @@ export interface FileSinkOptions {
   maxBytes?: number;          // rotate when current >= this
   retain?: number;            // number of rotated files kept
   headerLines?: string[];     // written once when file is first created
+  /** Called when a flush fails. The failed lines are dropped deliberately:
+   *  requeueing them risks duplicating lines if appendFile partially wrote,
+   *  and an ever-growing retry buffer is its own failure mode. Defaults to
+   *  console.warn so a failure is at least visible somewhere — the Logger
+   *  itself cannot be used here, because a broken file sink IS the Logger's
+   *  failure mode. */
+  onFlushError?: (err: unknown) => void;
 }
 
 const DEFAULTS: Required<FileSinkOptions> = {
   maxBytes: 5 * 1024 * 1024,  // 5 MB
   retain: 5,
   headerLines: [],
+  // eslint-disable-next-line no-console -- last-resort visibility when the file sink itself is broken
+  onFlushError: (err) => { console.warn('[FileSink] flush failed; buffered lines dropped:', err); },
 };
 
 export class FileSink {
   private readonly dir: string;
   private readonly opts: Required<FileSinkOptions>;
   private buffer: string[] = [];
+  // Running byte count of `buffer`, maintained at push/drain time so write()
+  // never re-scans the array (which made every write O(N) and produced a
+  // stat storm inside each 250 ms flush window).
+  private bufferBytes = 0;
   private flushing: Promise<void> = Promise.resolve();    // serializes writes
   private flushTimer: NodeJS.Timeout | null = null;
   private disposed = false;
@@ -30,19 +43,18 @@ export class FileSink {
 
   async write(line: string): Promise<void> {
     if (this.disposed) return;
-    // If buffering this line would push the next flush past maxBytes, flush
-    // the current buffer first so rotation happens between bursts. Without this,
-    // bursty writes coalesce into a single oversized payload and the rotation
-    // loop in doFlush never gets a chance to rotate between them.
-    if (this.buffer.length > 0) {
-      let activeSize = 0;
-      try { activeSize = (await fs.stat(path.join(this.dir, FILENAME))).size; } catch { /* file missing */ }
-      const bufBytes = this.buffer.reduce((s, l) => s + Buffer.byteLength(l), 0);
-      if (activeSize + bufBytes + Buffer.byteLength(line) > this.opts.maxBytes) {
-        await this.flush();
-      }
+    const lineBytes = Buffer.byteLength(line);
+    // If the buffer alone would push the next flush past maxBytes, flush it
+    // first so rotation happens between bursts. Without this, bursty writes
+    // coalesce into a single oversized payload and the rotation loop in
+    // doFlush never gets a chance to rotate between them. This uses only the
+    // running counter — the authoritative on-disk size check (which also
+    // catches external growth) happens once per flush inside doFlush.
+    if (this.buffer.length > 0 && this.bufferBytes + lineBytes > this.opts.maxBytes) {
+      await this.flush();
     }
     this.buffer.push(line);
+    this.bufferBytes += lineBytes;
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => { void this.flush(); }, 250);
     }
@@ -50,14 +62,24 @@ export class FileSink {
 
   async flush(): Promise<void> {
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
-    // Chain onto the existing flush promise so writes are serialized.
-    this.flushing = this.flushing.then(() => this.doFlush());
+    // Chain onto the existing flush promise so writes are serialized. The
+    // catch is load-bearing: without it one rejected flush (disk full,
+    // permission error, …) permanently poisons the chain and every later
+    // flush — including dispose() and readAllLogs()'s — silently no-ops.
+    // Recovery is deliberate: failed lines are dropped (see onFlushError),
+    // the chain resolves, and the next flush proceeds.
+    this.flushing = this.flushing
+      .then(() => this.doFlush())
+      .catch((err: unknown) => {
+        try { this.opts.onFlushError(err); } catch { /* a broken reporter must not re-poison the chain */ }
+      });
     return this.flushing;
   }
 
   private async doFlush(): Promise<void> {
     const toWrite = this.buffer;
     this.buffer = [];
+    this.bufferBytes = 0;
     if (toWrite.length === 0) return;
 
     await fs.mkdir(this.dir, { recursive: true });

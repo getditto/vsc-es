@@ -15,6 +15,10 @@
   "type": "module",
   "main": "./dist/extension.js",
   "publisher": "ditto",
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
   "homepage": "https://github.com/getditto/vsc-es#readme",
   "bugs": {
     "url": "https://github.com/getditto/vsc-es/issues"
@@ -86,7 +90,7 @@
     "commands": [
       {
         "command": "dittoVsce.registerDatabase",
-        "title": "Register Connection…",
+        "title": "Ditto: Register Connection…",
         "icon": "$(add)"
       },
       {
@@ -113,7 +117,7 @@
       },
       {
         "command": "dittoVsce.newSubscription",
-        "title": "New Subscription…",
+        "title": "Ditto: New Subscription…",
         "icon": "$(add)"
       },
       {
@@ -128,7 +132,7 @@
       },
       {
         "command": "dittoVsce.newObserver",
-        "title": "New Observer…",
+        "title": "Ditto: New Observer…",
         "icon": "$(add)"
       },
       {
@@ -267,7 +271,76 @@
       ],
       "commandPalette": [
         {
-          "command": "dittoVsce.openWelcome"
+          "command": "dittoVsce.editDatabase",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.deleteDatabase",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.connect",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.disconnect",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.openPeerListing",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.deleteSubscription",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.editSubscription",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.editObserver",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.deleteObserver",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.openObserver",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.openQueryEditor",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.openQueryMetrics",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.openDatabaseMetrics",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.openImportData",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.refreshCollections",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.queryAllInCollection",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.addIndex",
+          "when": "false"
+        },
+        {
+          "command": "dittoVsce.deleteIndex",
+          "when": "false"
         }
       ],
       "view/item/context": [
@@ -426,7 +499,7 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "validate": "npm run typecheck && npm run lint && npm test",
     "build:integration": "node esbuild.config.mjs",

@@ -3,9 +3,10 @@ import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './web
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { StoredSubscription } from '../models/DittoConfig.js';
-import type { SubIn, SubOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { SubIn, SubOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
+import { randomId } from '../util/id.js';
 
 export class SubscriptionEditorPanel {
   private static current: SubscriptionEditorPanel | undefined;
@@ -73,22 +74,13 @@ export class SubscriptionEditorPanel {
       cspSource: this.panel.webview.cspSource
     });
     this.panel.webview.onDidReceiveMessage(
-      webviewMessageHandler<SubIn | LogIn>(
+      webviewMessageHandler<SubIn>(
         this.logger, 'ext:subscriptionEditor', 'Save subscription failed', (msg) => this.handle(msg),
       ),
       undefined,
       this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
-
-    // Push initial channel level to webview.
-    this.panel.webview.postMessage({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
-
-    // Subscribe to level changes; track disposable so we can clean up.
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {
@@ -112,12 +104,7 @@ export class SubscriptionEditorPanel {
     this.panel.webview.postMessage(payload);
   }
 
-  private async handle(msg: SubIn | LogIn) {
-    if (msg.type === 'log') {
-      const wlog = this.logger.withTag('webview:dittoSubscriptionEditor');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: SubIn) {
     if (msg.type === 'sub.cancel') { this.panel.dispose(); return; }
     if (msg.type === 'sub.save') {
       if (!msg.name.trim() || !msg.query.trim()) {
@@ -125,7 +112,7 @@ export class SubscriptionEditorPanel {
         return;
       }
       const sub: StoredSubscription = {
-        id: msg.id ?? cryptoRandomId(),
+        id: msg.id ?? randomId(16),
         name: msg.name.trim(),
         query: msg.query.trim()
       };
@@ -149,10 +136,4 @@ export class SubscriptionEditorPanel {
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }
-}
-
-function cryptoRandomId(): string {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }

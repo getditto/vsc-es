@@ -150,7 +150,7 @@ export class DatabaseEditor extends LitElement {
     }
   });
 
-  private update_(field: keyof StoredDittoConfig, value: any) {
+  private update_<K extends keyof StoredDittoConfig>(field: K, value: StoredDittoConfig[K]) {
     if (!this.config) { return; }
     this.config = { ...this.config, [field]: value };
   }
@@ -688,7 +688,7 @@ export class DatabaseEditor extends LitElement {
 
           <h2>Developer Options</h2>
           <label for="sdk-log-level">SDK Log Level</label>
-          <select id="sdk-log-level" .value=${c.logLevel} @change=${(e: Event) => this.update_('logLevel', (e.target as HTMLSelectElement).value)}>
+          <select id="sdk-log-level" .value=${c.logLevel} @change=${(e: Event) => this.update_('logLevel', (e.target as HTMLSelectElement).value as StoredDittoConfig['logLevel'])}>
             <option value="error">Error</option>
             <option value="warning">Warning</option>
             <option value="info">Info (Default)</option>

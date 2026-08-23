@@ -357,15 +357,17 @@ export class PresenceGraphScene {
   /**
    * Advance every animated piece by one frame.
    *
-   * - Floating stars are ticked unconditionally (background loops).
+   * - Floating stars are ticked while the caller keeps the loop alive; the
+   *   Lit element freezes them after an idle period (they are pure ambient
+   *   decoration, so a static field is fine — they do NOT count as
+   *   in-flight animation for the return value).
    * - Position transitions ease-in-out over their duration; finished
    *   ones drop out of the map.
-   * - Newly added peer nodes have their alpha/scale eased toward 1
-   *   (we don't currently flag "new", so the appear animation lands
-   *   in a follow-up — matters less than the layout transitions).
    *
-   * Returns true if any animation is still in flight. Caller can use
-   * that to short-circuit RAF when everything has settled.
+   * Returns true while any graph animation is still in flight (position
+   *   transitions, or a user interaction that must not freeze mid-drag).
+   * The caller uses that to keep the RAF loop awake and to settle it once
+   * everything is still.
    */
   tick(now: number, dt: number): boolean {
     this.stars.tick(now, dt);
@@ -385,9 +387,10 @@ export class PresenceGraphScene {
         this.transitions.delete(key);
       }
     }
-    // Stars never settle, so we always need the loop running while
-    // the panel is visible.
-    return true;
+    // Stars deliberately do not keep the loop alive — the element freezes
+    // them after a short idle window so a visible-but-idle panel doesn't
+    // repaint at 60fps forever.
+    return this.transitions.size > 0 || this.isUserInteracting;
   }
 
   // ─── Interaction API ────────────────────────────────────────

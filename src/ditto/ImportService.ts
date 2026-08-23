@@ -32,6 +32,11 @@ export interface ImportResult {
   /** One human-readable string per failed row. Matches the SwiftUI
    *  surface — caller writes the first into the panel's error pane. */
   errors: string[];
+  /** True when the run stopped early because the active database
+   *  switched (see ImportOptions.checkActive). Documents already
+   *  inserted stay inserted — ON ID CONFLICT DO UPDATE makes a re-run
+   *  idempotent. */
+  cancelled?: boolean;
 }
 
 /** Query executor signature. We accept this as a function rather than
@@ -40,14 +45,6 @@ export interface ImportResult {
 export type ExecuteRaw = (query: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 export const DEFAULT_BATCH_SIZE = 50;
-
-/** SQL-injection guard — same character set the SwiftUI service uses
- *  (letters, numbers, underscore). DQL doesn't have a parameterised
- *  way to bind a collection name, so we have to interpolate it; this
- *  regex blocks any payload that could break out of the identifier
- *  position. Surfacing as a custom error keeps the message actionable
- *  ("only letters, numbers, and underscores") instead of a cryptic
- *  DQL parser error. */
 
 export class ImportValidationError extends Error {
   constructor(message: string, readonly kind: 'invalidJson' | 'missingId' | 'invalidCollectionName' | 'encoding') {
@@ -187,6 +184,13 @@ export interface ImportOptions {
   onProgress?: (p: ImportProgress) => void;
   /** Override for tests. Defaults to {@link DEFAULT_BATCH_SIZE}. */
   batchSize?: number;
+  /** Defense against mid-import database switches: the switch
+   *  orchestrator closes the panel but cannot cancel an in-flight
+   *  import, and `execute` always resolves against the manager's
+   *  CURRENT session. Pass the active-config-id reader; importDocuments
+   *  snapshots it at entry and re-polls before each batch, aborting
+   *  (with `cancelled: true`) the moment it changes. */
+  checkActive?: () => string | null | undefined;
 }
 
 /**
@@ -214,8 +218,22 @@ export async function importDocuments(opts: ImportOptions): Promise<ImportResult
     try { opts.onProgress(p); } catch { /* progress sink errors don't block import */ }
   };
 
+  // Snapshot the active-config id when a checker was provided. Polled
+  // before every batch execute below.
+  const activeAtStart = opts.checkActive?.();
+
   const batches = chunkArray(opts.documents, batchSize);
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+    // The DB-switch orchestrator can close the panel without cancelling
+    // this in-flight import; without this check the remaining batches
+    // would silently land in the NEW database.
+    if (opts.checkActive && opts.checkActive() !== activeAtStart) {
+      const written = successCount + failureCount > 0
+        ? ` ${successCount} of ${total} documents were written before the switch.`
+        : '';
+      errors.push(`Import cancelled — the active database changed mid-import.${written}`);
+      return { successCount, failureCount, errors, cancelled: true };
+    }
     const batch = batches[batchIndex];
     const batchStartIndex = batchIndex * batchSize;
     const firstId = idOf(batch[0]);

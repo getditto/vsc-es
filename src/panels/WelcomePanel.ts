@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { Logger } from '../logging/types.js';
-import type { WelcomeIn, WelcomeOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { WelcomeIn, WelcomeOut } from '../ipc/messages.js';
 
 /**
  * First-run onboarding panel: opens automatically when the user has
@@ -78,22 +78,13 @@ export class WelcomePanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      webviewMessageHandler<WelcomeIn | LogIn>(
+      webviewMessageHandler<WelcomeIn>(
         this.logger, 'ext:welcome', 'Welcome action failed', (msg) => this.handle(msg),
       ),
       undefined,
       this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
-
-    // Mirror channel level (same pattern as every other panel).
-    void this.panel.webview.postMessage({
-      type: 'log.levelChanged', level: this.logger.getChannelLevel(),
-    } satisfies LogOut);
-    const levelSub = this.logger.onDidChangeChannelLevel((level) => {
-      void this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     // Auto-close once the user has saved their first database. We
     // listen on the global configStore so this fires whether the new
@@ -127,12 +118,7 @@ export class WelcomePanel {
     });
   }
 
-  private async handle(msg: WelcomeIn | LogIn): Promise<void> {
-    if (msg.type === 'log') {
-      const wlog = this.logger.withTag('webview:dittoWelcome');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: WelcomeIn): Promise<void> {
     switch (msg.type) {
       case 'welcome.registerDatabase':
         // Fan out to the existing command — keeps the Register flow

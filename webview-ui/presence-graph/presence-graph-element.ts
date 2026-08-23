@@ -48,6 +48,15 @@ export class PresenceGraphElement extends LitElement {
   private rafHandle: number | undefined;
   private lastFrameTime = 0;
 
+  /** True once the idle timer has fired: the running frame paints one last
+   *  static frame and the RAF loop goes dark until wake() is called. */
+  private settled = false;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** How long the star field keeps drifting after the last host push or
+   *  user interaction before the loop freezes. Instance-visible (rather
+   *  than a static) so tests can shrink it. */
+  private starIdleMs = 3000;
+
   /** Drag state — null when not dragging a node. */
   private dragNodeKey: string | null = null;
   private panLastX = 0;
@@ -199,6 +208,8 @@ export class PresenceGraphElement extends LitElement {
 
   disconnectedCallback(): void {
     this.stopRaf();
+    this.clearIdleTimer();
+    this.settled = false;
     this.resizeObserver?.disconnect();
     this.resizeObserver = undefined;
     this.scene = undefined;
@@ -251,14 +262,14 @@ export class PresenceGraphElement extends LitElement {
       // laying out from the old, differently-filtered snapshot first would
       // run two layout passes and play two overlapping 500ms transitions.
       // Just keep painting; the input push does the single layout.
-      this.ensureRafRunning();
+      this.wake();
     }
   }
 
   private applyInputAndStartRaf(): void {
     if (!this.scene || !this.input) { return; }
     this.scene.applyInput(this.input);
-    this.ensureRafRunning();
+    this.wake();
   }
 
   private fitCanvasToHost(): void {
@@ -272,10 +283,42 @@ export class PresenceGraphElement extends LitElement {
     c.height = Math.round(cssHeight * dpr);
     c.style.width = `${cssWidth}px`;
     c.style.height = `${cssHeight}px`;
-    if (this.scene) { this.scene.setSize(cssWidth, cssHeight); }
+    if (this.scene) {
+      this.scene.setSize(cssWidth, cssHeight);
+      // A resize changes what the frame shows — wake if the loop was settled.
+      this.wake();
+    }
   }
 
   // ─── RAF loop ─────────────────────────────────────────────
+
+  /** Something changed that the canvas must show: un-freeze the loop and
+   *  restart the idle window. Called on host input pushes, resizes, and
+   *  every pointer/wheel interaction. */
+  private wake(): void {
+    this.settled = false;
+    this.resetIdleTimer();
+    this.ensureRafRunning();
+  }
+
+  private resetIdleTimer(): void {
+    this.clearIdleTimer();
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = undefined;
+      // The currently-running frame paints once more and then stops, so the
+      // freeze is preceded by a final, fully-ticked static frame.
+      this.settled = true;
+    }, this.starIdleMs);
+    // Node test processes must not be held open by a UI idle timer.
+    (this.idleTimer as { unref?: () => void }).unref?.();
+  }
+
+  private clearIdleTimer(): void {
+    if (this.idleTimer !== undefined) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = undefined;
+    }
+  }
 
   private ensureRafRunning(): void {
     if (this.rafHandle !== undefined) { return; }
@@ -284,8 +327,18 @@ export class PresenceGraphElement extends LitElement {
       const dt = Math.min(100, now - this.lastFrameTime); // clamp huge gaps
       this.lastFrameTime = now;
       if (!this.scene) { this.rafHandle = undefined; return; }
-      this.scene.tick(now, dt);
+      const stillAnimating = this.scene.tick(now, dt);
       this.renderScene();
+      if (stillAnimating) {
+        // Layout transitions in flight (or a live drag): the loop must stay
+        // up, so they count against the idle clock too.
+        this.resetIdleTimer();
+      }
+      if (this.settled) {
+        // Final static frame painted above; go dark until wake()ed.
+        this.rafHandle = undefined;
+        return;
+      }
       this.rafHandle = requestAnimationFrame(tick);
     };
     this.rafHandle = requestAnimationFrame(tick);
@@ -322,6 +375,7 @@ export class PresenceGraphElement extends LitElement {
     if (e.button !== 0) { return; } // left click only
     const ctx = this.canvasEl.getContext('2d');
     if (!ctx) { return; }
+    this.wake();
     const local = this.localCoords(e);
     const world = this.scene.canvasToWorld(local.x, local.y);
     const node = this.scene.nodeAt(ctx, world);
@@ -360,6 +414,7 @@ export class PresenceGraphElement extends LitElement {
     // never saw, so an under-threshold press would otherwise be retroactively
     // fired as a selection the moment the pointer wandered back.
     if (e.buttons === 0) { this.endDrag(false, e); return; }
+    this.wake();
     if (this.pointerStart && Math.hypot(
       e.clientX - this.pointerStart.x,
       e.clientY - this.pointerStart.y,
@@ -401,6 +456,7 @@ export class PresenceGraphElement extends LitElement {
     this.isPanning = false;
     this.dragging = false;
     if (!this.scene) { return; }
+    this.wake();
     if (wasDragging) { this.scene.unpin(wasDragging); }
     this.scene.endInteraction();
     if (commitClick && !moved) {
@@ -430,6 +486,7 @@ export class PresenceGraphElement extends LitElement {
     // Only updates hover state — the drag listeners take over while
     // a drag is in progress (they're registered on `window`).
     if (this.dragNodeKey || this.isPanning) { return; }
+    this.wake();
     this.updateHoverFromEvent(e);
   };
 
@@ -455,6 +512,7 @@ export class PresenceGraphElement extends LitElement {
     // Mid-drag the pointer is expected to leave; clearing hover here would
     // drop the dragged peer's highlight. endDrag applies it on release.
     if (this.dragNodeKey || this.isPanning) { return; }
+    this.wake();
     this.scene.setHovered(undefined);
     this.hoveringNode = false;
   };
@@ -462,6 +520,7 @@ export class PresenceGraphElement extends LitElement {
   private onWheel = (e: WheelEvent): void => {
     if (!this.scene) { return; }
     e.preventDefault();
+    this.wake();
     // SwiftUI: deltaY > 0 = zoom out, deltaY < 0 = zoom in. Web wheel
     // events use the opposite sign convention by default; flip so the
     // muscle memory matches.
@@ -474,17 +533,20 @@ export class PresenceGraphElement extends LitElement {
 
   private zoomIn(): void {
     if (!this.scene) { return; }
+    this.wake();
     this.scene.setZoom(this.scene.zoom + 0.1);
     this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
   }
   private zoomOut(): void {
     if (!this.scene) { return; }
+    this.wake();
     this.scene.setZoom(this.scene.zoom - 0.1);
     this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
   }
 
   private resetView(): void {
     if (!this.scene) { return; }
+    this.wake();
     this.scene.resetViewToLocal();
     this.zoomLabel = '100%';
   }

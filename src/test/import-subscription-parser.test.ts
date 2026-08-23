@@ -30,6 +30,15 @@ test('extractCollectionName: returns null when no FROM clause', () => {
   assert.equal(extractCollectionName('UPDATE tasks SET done = true'), null);
 });
 
+test('extractCollectionName: a backticked name survives verbatim, whitespace included', () => {
+  // A whitespace-first split would cut `my coll` in half; the token must come
+  // back whole so callers can unquote + re-quote for DQL construction.
+  assert.equal(extractCollectionName('SELECT * FROM `my coll`'), '`my coll`');
+  assert.equal(extractCollectionName('SELECT * FROM COLLECTION `my coll`'), '`my coll`');
+  assert.equal(extractCollectionName('SELECT * FROM `odd``tick`'), '`odd``tick`');
+  assert.equal(extractCollectionName('SELECT * FROM `my coll`  WHERE x = 1'), '`my coll`');
+});
+
 // ─── isSystemCollection ───────────────────────────────────────────────
 
 test('isSystemCollection: __ prefix matches', () => {

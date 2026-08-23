@@ -9,6 +9,9 @@ import {
   Differ,
   type Diff,
   Logger as DittoLogger,
+  type LogLevel as DittoSdkLogLevel,
+  type DQLQueryArguments,
+  type TransportConfig,
   type PresenceGraph,
   type AttachmentFetcher,
   type AttachmentFetchEvent,
@@ -54,12 +57,15 @@ interface ActiveSession {
   configId: string;
   ditto: Ditto;
   presenceObserver?: { stop?: () => void };
-  syncStatusObserver?: { cancel?: () => void };
   subscriptionHandles: Map<string, { cancel: () => void }>;
   presenceCoalesceTimer?: NodeJS.Timeout;
 }
 
-const SYNC_STATUS_HANDLE_ID = '__sync_status';
+/** Cap on rows shipped to an observer webview per firing. The Differ still
+ *  sees the full result set (diff semantics are unchanged) — only the payload
+ *  pushed over postMessage is capped, mirroring the MAX_QUERY_ROWS /
+ *  DETAIL_ROW_CAP conventions used by the query paths. */
+const OBSERVER_ROW_CAP = 1000;
 
 
 export class DittoManager {
@@ -182,11 +188,11 @@ export class DittoManager {
       // Apply per-DB SDK log level before opening the SDK. `config.logLevel`
       // is `SdkLogLevel` (lowercase 'warning'/'verbose'); the SDK runtime
       // expects capitalized names.
-      const sdkLevelMap: Record<SdkLogLevel, string> = {
+      const sdkLevelMap: Record<SdkLogLevel, DittoSdkLogLevel> = {
         error: 'Error', warning: 'Warning',
         info: 'Info', debug: 'Debug', verbose: 'Verbose',
       };
-      (DittoLogger as any).minimumLogLevel = sdkLevelMap[config.logLevel] ?? 'Info';
+      DittoLogger.minimumLogLevel = sdkLevelMap[config.logLevel] ?? 'Info';
       this.log.info('Applied per-DB SDK log level', { configId: config.id, level: config.logLevel });
 
       let ditto: Ditto;
@@ -244,7 +250,7 @@ export class DittoManager {
           }
         });
         const result = await ditto.auth.login(secrets.token, Authenticator.DEVELOPMENT_PROVIDER);
-        if ((result as any).error) { throw new Error(`Login failed: ${(result as any).error}`); }
+        if (result.error) { throw new Error(`Login failed: ${result.error}`); }
       }
 
       // Small-peers-only mode is internally an OfflinePlayground identity and
@@ -287,7 +293,6 @@ export class DittoManager {
       openedDitto = null;
 
       this.attachPresenceObserver(ditto);
-      this.attachSyncStatusObserver(ditto);
       await this.loadLocalPeerInfo(ditto);
 
       // Re-register persisted subscriptions
@@ -304,6 +309,13 @@ export class DittoManager {
       this.dispatch({ type: 'connectOk' });
       this.setStatus('active', config.id);
       this.firePresence();
+      // Register the active connection's secrets with the logger so its
+      // redaction recognises them even where a call site logs a value
+      // verbatim. Defensive: empty/undefined entries are dropped.
+      this.log.registerKnownSecrets(
+        [secrets.token, secrets.secretKey, secrets.httpApiKey]
+          .filter((s): s is string => typeof s === 'string' && s.length > 0),
+      );
       this.log.info('Connected', { name: config.name, configId: config.id, mode: config.mode });
     } catch (err) {
       this.log.error('Connect failed', { configId: config.id, err: err instanceof Error ? err.stack : String(err) });
@@ -316,7 +328,6 @@ export class DittoManager {
         this.session = null;
         if (partial.presenceCoalesceTimer) { clearTimeout(partial.presenceCoalesceTimer); }
         for (const h of partial.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
-        try { partial.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
         try { partial.presenceObserver?.stop?.(); } catch { /* ignore */ }
         try {
           await Promise.race([
@@ -345,6 +356,9 @@ export class DittoManager {
         }
       }
       this.setStatus('error', config.id);
+      // Never keep a failed connection's secrets registered for redaction —
+      // the session they belonged to is gone.
+      this.log.clearKnownSecrets();
       this.dispatch({ type: 'connectFail', message: err instanceof Error ? err.message : String(err) });
       throw err;
     }
@@ -358,7 +372,6 @@ export class DittoManager {
     if (s.presenceCoalesceTimer) { clearTimeout(s.presenceCoalesceTimer); }
     try {
       for (const h of s.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
-      try { s.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
       try { s.presenceObserver?.stop?.(); } catch { /* ignore */ }
       try { s.ditto.sync.stop(); } catch { /* ignore */ }
       // Bound Ditto.close() at 10s; on timeout, force-discard the instance.
@@ -384,6 +397,9 @@ export class DittoManager {
       this.firePresence();
       this.setSyncState('idle', null);
       this.setStatus('idle', null);
+      // Drop the previous connection's redaction set before any new one is
+      // registered by the next connect.
+      this.log.clearKnownSecrets();
       this.dispatch({ type: 'disconnectOk' });
       this.log.info('Disconnected');
     }
@@ -391,10 +407,21 @@ export class DittoManager {
 
   async toggleSync(): Promise<SyncState> {
     if (!this.session) { return 'idle'; }
-    const ditto = this.session.ditto;
+    const session = this.session;
+    const ditto = session.ditto;
     if (this.syncState === 'active') {
-      ditto.sync.stop();
-      this.setSyncState('idle', this.session.configId);
+      // Guard like disconnect()/applyTransportConfigLocked do: sync.stop can
+      // throw (e.g. SDK teardown in flight), and flipping state anyway would
+      // lie to the UI.
+      try {
+        ditto.sync.stop();
+      } catch (err) {
+        this.log.warn('sync.stop() failed; sync state left as active', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+        return 'active';
+      }
+      this.setSyncState('idle', session.configId);
       // Force an immediate snapshot rebuild — mergePeerList's syncActive=false
       // gate will drop the cloud row this turn, instead of waiting for the
       // next presence emission (which may not arrive for a while after
@@ -403,8 +430,15 @@ export class DittoManager {
       this.firePresence();
       return 'idle';
     }
-    ditto.sync.start();
-    this.setSyncState('active', this.session.configId);
+    try {
+      ditto.sync.start();
+    } catch (err) {
+      this.log.warn('sync.start() failed; sync state left as idle', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return 'idle';
+    }
+    this.setSyncState('active', session.configId);
     this.firePresence();
     return 'active';
   }
@@ -450,7 +484,11 @@ export class DittoManager {
     if (!this.session) { throw new Error('No active database.'); }
     const result = args === undefined
       ? await this.session.ditto.store.execute(query)
-      : await this.session.ditto.store.execute(query, args as any);
+      // Callers build args as Record<string, unknown> (attachment tokens,
+      // arbitrary row values); the SDK's DQLQueryArguments is a recursive
+      // value union `unknown` isn't assignable to. The runtime accepts any
+      // JSON-shaped value, so a one-way narrowing cast is correct here.
+      : await this.session.ditto.store.execute(query, args as unknown as DQLQueryArguments);
     // Dematerialize each item right after reading its value — otherwise
     // items pin themselves in native memory for the life of the result
     // (same discipline as registerStoreObserver).
@@ -553,11 +591,19 @@ export class DittoManager {
    *  insertion (that's the SDK's documented `Differ` contract).
    *
    *  Returns a cancel handle the caller is responsible for invoking
-   *  on teardown. Returns `null` if there is no active session. */
+   *  on teardown. Returns `null` if there is no active session.
+   *
+   *  `rows` is capped at OBSERVER_ROW_CAP per firing so a huge result set
+   *  doesn't get structured-cloned to the webview on every emission;
+   *  `totalRows` carries the uncapped count so the UI can say "first N of
+   *  M". The Differ still runs against the FULL result set (subscription
+   *  and diff semantics are unchanged) — diff indexes past the cap simply
+   *  have no corresponding row in the shipped payload. */
   registerObserver(
     query: string,
     callback: (event: {
       rows: Record<string, unknown>[];
+      totalRows: number;
       insertions: number[];
       updates: number[];
       deletions: number[];
@@ -583,13 +629,20 @@ export class DittoManager {
         differ = new Differ();
       }
       const rows: Record<string, unknown>[] = [];
+      let totalRows = 0;
       for (const item of queryResult.items) {
-        rows.push(item.value as Record<string, unknown>);
+        totalRows += 1;
+        if (rows.length < OBSERVER_ROW_CAP) {
+          rows.push(item.value as Record<string, unknown>);
+        }
+        // Dematerialize EVERY item, capped or not — otherwise items pin
+        // themselves in native memory for the life of the result.
         try { item.dematerialize(); } catch { /* ignore */ }
       }
       try {
         callback({
           rows,
+          totalRows,
           insertions: diff.insertions,
           updates: diff.updates,
           deletions: diff.deletions,
@@ -703,7 +756,7 @@ export class DittoManager {
    * Soft-cycle transport configuration without closing the Ditto instance.
    *
    * Mirrors the SwiftUI `applyTransportConfig` flow: stop sync → tear down
-   * presence + sync_status observers (Ditto stays open) → updateTransportConfig
+   * the presence observer (Ditto stays open) → updateTransportConfig
    * with the OS-gated user prefs → readback log → persist back to ConfigStore
    * → restart sync → re-attach observers + refresh local peer info.
    *
@@ -744,8 +797,6 @@ export class DittoManager {
       // Tear down observers + clear derived state, but KEEP the Ditto instance.
       try { session.presenceObserver?.stop?.(); } catch { /* ignore */ }
       session.presenceObserver = undefined;
-      try { session.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
-      session.syncStatusObserver = undefined;
       if (session.presenceCoalesceTimer) {
         clearTimeout(session.presenceCoalesceTimer);
         session.presenceCoalesceTimer = undefined;
@@ -815,7 +866,6 @@ export class DittoManager {
     if (recoveryError === undefined) {
       try {
         this.attachPresenceObserver(ditto);
-        this.attachSyncStatusObserver(ditto);
         await this.loadLocalPeerInfo(ditto);
         this.setSyncState('active', configId);
         this.firePresence();
@@ -846,15 +896,15 @@ export class DittoManager {
    *  SDK no-ops where update silently drops a flag. */
   private logTransportReadback(ditto: Ditto, context: string): void {
     try {
-      const tc: any = (ditto as any).transportConfig;
-      const p2p = tc?.peerToPeer ?? {};
+      const tc: TransportConfig = ditto.transportConfig;
+      const p2p = tc.peerToPeer;
       this.log.info('Transport readback', {
         context,
-        lan: !!p2p.lan?.isEnabled,
-        lanMdns: !!p2p.lan?.isMdnsEnabled,
-        lanMulticast: !!p2p.lan?.isMulticastEnabled,
-        bluetoothLE: !!p2p.bluetoothLE?.isEnabled,
-        awdl: !!p2p.awdl?.isEnabled,
+        lan: p2p.lan.isEnabled,
+        lanMdns: p2p.lan.isMdnsEnabled,
+        lanMulticast: p2p.lan.isMulticastEnabled,
+        bluetoothLE: p2p.bluetoothLE.isEnabled,
+        awdl: p2p.awdl.isEnabled,
       });
     } catch (err) {
       this.log.warn('Transport readback failed', {
@@ -868,7 +918,11 @@ export class DittoManager {
   private attachPresenceObserver(ditto: Ditto) {
     let pending: PresenceGraph | null = null;
     const flush = async () => {
-      if (!this.session) { return; }
+      // Identity check, not mere presence: during disconnect→reconnect a
+      // flush in flight resumes with `this.session` being the NEW session,
+      // and a truthiness guard alone would write the old DB's presence graph
+      // into it.
+      if (this.session?.ditto !== ditto) { return; }
       this.session.presenceCoalesceTimer = undefined;
       if (!pending) { return; }
       const graph = pending;
@@ -878,18 +932,20 @@ export class DittoManager {
       // inside the presence callback. Cheap — the 250ms coalesce caps the
       // rate, and a failure here just degrades to presence-only data.
       await this.refreshSyncMetrics(ditto);
-      // Bail if the session was torn down during the await.
-      if (!this.session) { return; }
+      // Re-check identity after the await: a disconnect could have torn the
+      // session down (or replaced it) while refreshSyncMetrics was in flight.
+      if (this.session?.ditto !== ditto) { return; }
       this.latestPresence = graph;
       this.firePresence();
     };
     const observer = ditto.presence.observe((graph: PresenceGraph) => {
+      if (this.session?.ditto !== ditto) { return; }
       pending = graph;
-      if (this.session && !this.session.presenceCoalesceTimer) {
+      if (!this.session.presenceCoalesceTimer) {
         this.session.presenceCoalesceTimer = setTimeout(() => { void flush(); }, 250);
       }
     });
-    if (this.session) { this.session.presenceObserver = observer; }
+    if (this.session?.ditto === ditto) { this.session.presenceObserver = observer; }
   }
 
   /**
@@ -907,7 +963,7 @@ export class DittoManager {
     try {
       const result = await ditto.store.execute('SELECT * FROM system:data_sync_info');
       const next = new Map<string, SyncStatusRow>();
-      for (const item of (result as any).items) {
+      for (const item of result.items) {
         const row = parseSyncStatusRow(item.value);
         if (row) { next.set(row._id, row); }
       }
@@ -920,22 +976,13 @@ export class DittoManager {
     }
   }
 
-  /** Deprecated: pre-fix code attached an observer on `__sync_status`. The
-   *  metrics now refresh inside the presence-flush path via refreshSyncMetrics.
-   *  Kept as a noop placeholder for the connect() call site so the diff stays
-   *  small; can be deleted in a follow-up. */
-  private attachSyncStatusObserver(_ditto: Ditto): void {
-    // Intentionally empty — see refreshSyncMetrics().
-    void SYNC_STATUS_HANDLE_ID;   // retain export for compatibility
-  }
-
   private async loadLocalPeerInfo(ditto: Ditto) {
     try {
       const result = await ditto.store.execute(
         'SELECT ditto_sdk_language, ditto_sdk_platform, ditto_sdk_version FROM __small_peer_info'
       );
-      const items: any[] = (result as any).items ?? [];
-      const first = items[0]?.value ?? {};
+      const items = result.items ?? [];
+      const first: Record<string, unknown> = (items[0]?.value ?? {}) as Record<string, unknown>;
       this.localPeerInfo = {
         // peerKey is stamped by firePresence when the first presence
         // graph arrives — at construction time we don't have it yet.
@@ -956,14 +1003,18 @@ export class DittoManager {
     // presence graph — we don't know it at loadLocalPeerInfo time.
     // The graph webview needs this as the BFS root.
     if (this.localPeerInfo && this.latestPresence) {
-      const presenceLocalKey = (this.latestPresence as any)?.localPeer?.peerKey;
+      const presenceLocalKey = this.latestPresence.localPeer?.peerKey;
       if (typeof presenceLocalKey === 'string' && presenceLocalKey) {
         this.localPeerInfo.peerKey = presenceLocalKey;
       }
     }
     if (this.latestPresence) {
       const snap = mergePeerList(
-        this.latestPresence as any,
+        // PresenceGraphLike (peer-info.ts) keys connections on the app's
+        // models/DittoConfig ConnectionType, which lacks the SDK's newer
+        // 'Multicast' variant — a one-variant widening mismatch in the type
+        // defs, not a shape mismatch, so a narrow cast is appropriate here.
+        this.latestPresence as unknown as Parameters<typeof mergePeerList>[0],
         this.syncStatusByPeerKey,
         this.localPeerInfo,
         this.previousOrder,

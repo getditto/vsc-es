@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
+import { randomId } from '../util/id.js';
 
 /**
  * One captured Query Metrics record. Identical shape to
@@ -34,7 +35,8 @@ export class QueryMetricsStore {
    *  stable `id`. Oldest records are dropped past MAX_RECORDS. */
   capture(databaseId: string, metadata: QueryResultMetadata): void {
     const buf = this.byDb.get(databaseId) ?? [];
-    const record: QueryMetricRecord = { id: cryptoRandomId(), ...metadata };
+    // 8 bytes of entropy is ample for an in-memory ring buffer.
+    const record: QueryMetricRecord = { id: randomId(8), ...metadata };
     // Newest goes to the front so the list is "most-recent first"
     // without an extra reverse() at read time.
     buf.unshift(record);
@@ -56,10 +58,4 @@ export class QueryMetricsStore {
     this.byDb.delete(databaseId);
     this._onChange.fire({ databaseId });
   }
-}
-
-function cryptoRandomId(): string {
-  const bytes = new Uint8Array(8);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { Logger as DittoLogger } from '@dittolive/ditto';
+import { Logger as DittoLogger, type LogLevel as DittoSdkLogLevel } from '@dittolive/ditto';
 import { ConfigStore } from './storage/ConfigStore.js';
 import { SecretStore } from './storage/SecretStore.js';
 import { SubscriptionStore } from './storage/SubscriptionStore.js';
@@ -26,7 +26,10 @@ import { DittoManager } from './ditto/DittoManager.js';
 import { CollectionsRepository } from './ditto/CollectionsRepository.js';
 import { isBareIdentifier, quoteIdentifier } from './ditto/dql-identifier.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
-import { confirmSwitch, performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
+import {
+  confirmSwitch, performSwitch, confirmRollback, rollbackSwitch,
+  type SwitchDeps, type SwitchOutcome,
+} from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
 import { attachSdkLogBridge } from './logging/sdk-bridge.js';
 import type { Logger, LogLevel } from './logging/types.js';
@@ -57,6 +60,9 @@ import {
 import { deleteConnectionAtomically } from './panels/save-connection.js';
 
 let logger: Logger;
+/** Held for deactivate(): the context.subscriptions dispose of the manager
+ *  is fire-and-forget, so shutdown awaits disconnect through this instead. */
+let shutdownManager: DittoManager | undefined;
 
 function buildSwitchDeps(
   context: vscode.ExtensionContext,
@@ -82,9 +88,8 @@ function buildSwitchDeps(
       showModalWarn: async ({ message, buttons }) =>
         vscode.window.showWarningMessage(message, { modal: true }, ...buttons),
       showError: (msg) => { vscode.window.showErrorMessage(msg); },
-      showInfo: (msg) => { vscode.window.showInformationMessage(msg); },
-      withProgress: async (title, work) => {
-        await vscode.window.withProgress(
+      withProgress: async <T>(title: string, work: (notif: { report(o: { message: string }): void }) => Promise<T>): Promise<T> => {
+        return vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title, cancellable: false },
           async (notif) => work({ report: (o) => notif.report(o) }),
         );
@@ -126,7 +131,9 @@ function buildSwitchDeps(
   };
 }
 
-const sdkLevelMap: Record<LogLevel, string> = {
+// Values are the SDK's LogLevel union ('Error' | 'Warning' | …) so the
+// assignment to DittoLogger.minimumLogLevel below needs no cast.
+const sdkLevelMap: Record<LogLevel, DittoSdkLogLevel> = {
   error: 'Error', warn: 'Warning', info: 'Info', debug: 'Debug', trace: 'Verbose',
 };
 
@@ -233,6 +240,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const observerStore = new ObserverStore(context.globalState);
   const tracker = new OpenPanelsTracker(context.globalState);
   const manager = new DittoManager(context, logger, configStore);
+  shutdownManager = manager;
   const collectionsRepo = new CollectionsRepository(manager, logger);
   const inspectorController = new InspectorController(context.globalState);
   const historyStore = new QueryHistoryStore(context.globalState);
@@ -240,13 +248,6 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const queryMetricsStore = new QueryMetricsStore();
   const treeExpansionStore = new TreeExpansionStore(context.globalState);
   const metricsPrefs = new MetricsPreferencesStore(context.globalState);
-
-  // Initialize the context key to a known value so view `when` clauses
-  // evaluate deterministically even before the first lifecycle transition.
-  void vscode.commands.executeCommand(
-    'setContext', 'dittoVsce.hasActiveDatabase',
-    manager.getCurrentLifecycleState().kind === 'active',
-  );
 
   // In-memory cache for inspector attachment bytes. Survives across
   // tab switches so re-opening the JSON viewer doesn't re-download
@@ -294,7 +295,6 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         lastActiveConfigId = null;
       }
     }
-    void vscode.commands.executeCommand('setContext', 'dittoVsce.hasActiveDatabase', state.kind === 'active');
   }));
 
   const inspectorView = new InspectorViewProvider(
@@ -604,16 +604,38 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       // can stay open indefinitely and deactivate() waits on the lock tail,
       // so a modal inside the lock can deadlock shutdown.
       if (!await confirmSwitch(deps, fromActive, currentTarget)) { return; }
-      await withConnectionPersistenceLock(async () => {
+      const outcome = await withConnectionPersistenceLock(async (): Promise<SwitchOutcome | null> => {
         // Re-check inside the lock — the config could have been deleted
         // while the modal was open.
         const stillTarget = configStore.get(node.config.id);
         if (!stillTarget) {
           vscode.window.showErrorMessage('This connection no longer exists. Refresh the database list and try again.');
-          return;
+          return null;
         }
-        await performSwitch(deps, fromActive, stillTarget);
+        // Recompute fromActive INSIDE the lock: the user may have connected
+        // to a different database (or disconnected) while the confirm modal
+        // was up, and a stale fromActive would close/restore the wrong panels
+        // and name the wrong rollback target.
+        const cur = manager.getCurrentLifecycleState();
+        const lockedFrom = cur.kind === 'active'
+          ? { id: cur.configId, name: configStore.get(cur.configId)?.name ?? 'Unknown' }
+          : null;
+        if (lockedFrom && lockedFrom.id === stillTarget.id) {
+          vscode.window.showInformationMessage(`Already connected to "${stillTarget.name}".`);
+          return null;
+        }
+        return performSwitch(deps, lockedFrom, stillTarget);
       });
+      // Rollback UX runs AFTER the lock has been released — the rollback
+      // modal has the same deadlock-in-lock hazard as the confirm modal.
+      if (outcome?.kind === 'connect-failed' && outcome.rollback) {
+        const rollbackTarget = outcome.rollback;
+        if (await confirmRollback(deps, rollbackTarget, outcome.message)) {
+          // The rollback itself is modal-free; re-acquire the lock so it
+          // serialises against any other connect/disconnect work.
+          await withConnectionPersistenceLock(() => rollbackSwitch(deps, rollbackTarget));
+        }
+      }
     }),
     vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
       if (manager.isApplyingTransports()) {
@@ -892,7 +914,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         const writtenCount = result.envResults.filter((r) => r.outcome === 'written').length
           + (result.yamlResult?.outcome === 'written' ? 1 : 0);
         const msg = values
-          ? `Quickstarts ready at ${result.repoRoot}. Configured ${writtenCount} config file(s).`
+          ? `Quickstarts ready at ${result.repoRoot}. Configured ${writtenCount} config file(s). Note: your token is written to .env/config files in plaintext — keep the folder out of version control.`
           : `Quickstarts cloned at ${result.repoRoot}. Open a connection and re-run to configure .env files.`;
         const pick = await vscode.window.showInformationMessage(msg, 'Open Folder', 'Show Log');
         if (pick === 'Open Folder') {
@@ -914,7 +936,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         if (pickErr === 'Show Log') { await showLog(); }
       }
     }),
-    vscode.commands.registerCommand('dittoVsce.openImportData', (databaseIdOrNode: any) => {
+    vscode.commands.registerCommand('dittoVsce.openImportData', (databaseIdOrNode: string | DatabaseTreeNode | undefined) => {
       // Two call sites converge here:
       //   1. The "Import Data" tree leaf — passes a plain string databaseId.
       //   2. Right-click → "Import Data into Collection…" on a collection
@@ -924,9 +946,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       let preselected: string | undefined;
       if (typeof databaseIdOrNode === 'string') {
         dbId = databaseIdOrNode;
-      } else if (databaseIdOrNode && typeof databaseIdOrNode === 'object') {
-        dbId = databaseIdOrNode.databaseId;
-        preselected = databaseIdOrNode.collection?.name;
+      } else if (databaseIdOrNode) {
+        dbId = 'databaseId' in databaseIdOrNode ? databaseIdOrNode.databaseId : undefined;
+        preselected = 'collection' in databaseIdOrNode ? databaseIdOrNode.collection.name : undefined;
       }
       if (!dbId) { return; }
       if (manager.getActiveConfigId() !== dbId) {
@@ -943,7 +965,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       const picked = await pickLogLevel(logger.getSdkLevel(), 'Set Ditto SDK Log Level');
       if (picked) {
         logger.setSdkLevel(picked);
-        (DittoLogger as any).minimumLogLevel = sdkLevelMap[picked];
+        DittoLogger.minimumLogLevel = sdkLevelMap[picked];
       }
     }),
     vscode.commands.registerCommand('dittoVsce.openOutputChannel', () => {
@@ -1021,14 +1043,14 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       try { await collectionsRepo.refresh(); }
       catch (err) { vscode.window.showErrorMessage(`Refresh collections failed: ${err instanceof Error ? err.message : String(err)}`); }
     }),
-    vscode.commands.registerCommand('dittoVsce.addIndex', (node?: any) => {
+    vscode.commands.registerCommand('dittoVsce.addIndex', (node?: DatabaseTreeNode) => {
       // From context menu the node is the tree node — extract collection name.
-      const preselected = typeof node === 'object' && node?.collection?.name
+      const preselected = node && 'collection' in node && node.collection.name
         ? String(node.collection.name)
         : undefined;
       AddIndexPanel.show(context, collectionsRepo, logger, preselected);
     }),
-    vscode.commands.registerCommand('dittoVsce.deleteIndex', async (node?: any) => {
+    vscode.commands.registerCommand('dittoVsce.deleteIndex', async (node?: DatabaseTreeNode) => {
       // Context-menu only — the menu's `when` clause restricts to
       // `viewItem == index`, so a missing node here means the command
       // was invoked from the palette without a tree selection.
@@ -1056,14 +1078,16 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         vscode.window.showErrorMessage(`Delete index failed: ${message}`);
       }
     }),
-    vscode.commands.registerCommand('dittoVsce.queryAllInCollection', (databaseIdOrNode: any, collectionName?: string) => {
+    vscode.commands.registerCommand('dittoVsce.queryAllInCollection', (databaseIdOrNode: string | DatabaseTreeNode | undefined, collectionName?: string) => {
       // Tree single-click invocation passes (databaseId, collectionName) via `arguments`.
       // Right-click context menu passes the node itself.
       const dbId = typeof databaseIdOrNode === 'string'
         ? databaseIdOrNode
-        : databaseIdOrNode?.databaseId;
+        : (databaseIdOrNode && 'databaseId' in databaseIdOrNode ? databaseIdOrNode.databaseId : undefined);
       const name = collectionName
-        ?? (typeof databaseIdOrNode === 'object' ? databaseIdOrNode?.collection?.name : undefined);
+        ?? (databaseIdOrNode && typeof databaseIdOrNode !== 'string' && 'collection' in databaseIdOrNode
+          ? databaseIdOrNode.collection.name
+          : undefined);
       if (!dbId || !name) { return; }
       // Quote only when the name needs it: the prefill lands in the editor as
       // text the user will read and edit, and `SELECT * FROM tasks` is nicer
@@ -1129,7 +1153,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   // kicked off from activate() carries its own .catch(), and
   // `@typescript-eslint/no-floating-promises` is an error in CI.
 
-  if (process.env.DITTO_CI_MODE === '1') {
+  // Test mode AND the env flag: DITTO_CI_MODE alone must not expose the
+  // TestAPI in a Production/Development install where someone set the var.
+  if (process.env.DITTO_CI_MODE === '1' && context.extensionMode === vscode.ExtensionMode.Test) {
     return makeTestApi({ configStore, secretStore, manager });
   }
   return undefined;
@@ -1137,5 +1163,21 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
 
 export async function deactivate() {
   await waitForConnectionPersistence();
+  // Await the disconnect too — the `context.subscriptions` disposal of the
+  // manager above fires it without awaiting, and an un-awaited teardown was
+  // a dropped promise at shutdown. Idempotent (no-op without a session) and
+  // bounded, consistent with the 10s Ditto.close() bound inside
+  // disconnect() itself.
+  const manager = shutdownManager;
+  if (manager) {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        manager.disconnect(),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, 10_000); }),
+      ]);
+    } catch { /* disconnect() already logged the failure */ }
+    finally { if (timer) { clearTimeout(timer); } }
+  }
   // logger.dispose() runs via context.subscriptions
 }

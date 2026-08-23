@@ -75,6 +75,55 @@ test('FileSink: serializes concurrent writes safely', async () => {
   await sink.dispose();
 });
 
+test('FileSink: a failed flush neither poisons the chain nor throws', async () => {
+  // Regression: the old `this.flushing.then(() => this.doFlush())` chain had
+  // no recovery — one rejection (e.g. disk error) silenced every later
+  // flush, losing buffered lines forever. The chain must now recover: the
+  // failed batch is dropped deliberately (requeueing risks duplicates after
+  // a partial write) and subsequent flushes proceed.
+  const dir = await tmpdir();
+  const errors: unknown[] = [];
+  const sink = new FileSink(dir, { maxBytes: 1024, retain: 3, onFlushError: (e) => errors.push(e) });
+
+  await sink.write('before\n');
+  await sink.flush();
+
+  // Break the sink by replacing the log DIRECTORY with a plain file: the
+  // recursive mkdir / appendFile inside the next doFlush then fail.
+  await fs.rm(dir, { recursive: true });
+  await fs.writeFile(dir, 'not a directory');
+  await sink.write('dropped\n');
+  await sink.flush(); // must reject internally but resolve here
+  assert.ok(errors.length >= 1, 'flush failure was reported');
+
+  // Repair the directory and prove the chain still works: a later flush
+  // runs, and dispose() — itself a flush — also succeeds.
+  await fs.rm(dir);
+  await fs.mkdir(dir, { recursive: true });
+  await sink.write('after\n');
+  await sink.flush();
+  const txt = await fs.readFile(path.join(dir, 'ditto-edge-studio.log'), 'utf8');
+  assert.match(txt, /after/);
+  await sink.dispose();
+});
+
+test('FileSink: buffer byte counter drives rotation without per-write stats', async () => {
+  // Behavior-level check of the running-counter change: lines under the
+  // threshold accumulate into ONE file without rotation; crossing it rotates.
+  // (The old code re-statted the active file on every buffered write.)
+  const dir = await tmpdir();
+  const sink = new FileSink(dir, { maxBytes: 100, retain: 3 });
+  for (let i = 0; i < 5; i++) { await sink.write('0123456789\n'); }  // 11 B each, 55 B total
+  await sink.flush();
+  let files = (await fs.readdir(dir)).sort();
+  assert.deepEqual(files, ['ditto-edge-studio.log'], 'no rotation under threshold');
+  for (let i = 0; i < 5; i++) { await sink.write('0123456789\n'); }  // another 55 B → crosses 100
+  await sink.flush();
+  files = (await fs.readdir(dir)).sort();
+  assert.ok(files.includes('ditto-edge-studio.log.1'), 'rotated once threshold crossed');
+  await sink.dispose();
+});
+
 // ─── readTailLines ─────────────────────────────────────────────
 //
 // The analyzer's backfill used readAllChronological(), which pulls the whole

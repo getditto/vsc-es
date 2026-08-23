@@ -11,7 +11,7 @@
 
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import '../shared/json-viewer.js';
 
 interface QueryMetricsRecord {
@@ -210,19 +210,11 @@ export class QueryMetricsElement extends LitElement {
     }
   `;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    window.addEventListener('message', this.onMessage);
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, msg => this.onHostMessage(msg));
 
-  disconnectedCallback(): void {
-    window.removeEventListener('message', this.onMessage);
-    super.disconnectedCallback();
-  }
-
-  private onMessage = (e: MessageEvent): void => {
-    const m = e.data as In | undefined;
-    if (!m) { return; }
+  private onHostMessage(m: In): void {
     if (m.type === 'metrics.state') {
       this.records = m.records;
       // Keep the selection sticky when the same id is still in the
@@ -235,7 +227,7 @@ export class QueryMetricsElement extends LitElement {
         this.selectedId = this.records[0].id;
       }
     }
-  };
+  }
 
   private select(id: string): void { this.selectedId = id; }
 

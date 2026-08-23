@@ -88,7 +88,10 @@ export class PatternEditorPanel {
     // Set immediately so the help shows on first open too.
     this.inspector.setActiveFeature({ kind: 'patternEditor' });
 
-    void this.sendSnapshot();
+    // Defensive setTimeout, same as every other panel — the webview script
+    // needs a tick to register its message listener before the first
+    // snapshot is posted.
+    setTimeout(() => { this.sendSnapshot(); }, 50);
   }
 
   private sendSnapshot(): void {

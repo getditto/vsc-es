@@ -3,7 +3,7 @@ import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './web
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { QueryMetricsStore, QueryMetricRecord } from '../storage/QueryMetricsStore.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
-import type { MetricsIn, MetricsOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { MetricsIn, MetricsOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 
 /**
@@ -90,7 +90,7 @@ export class QueryMetricsPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      webviewMessageHandler<MetricsIn | LogIn>(
+      webviewMessageHandler<MetricsIn>(
         this.logger, 'ext:queryMetrics', 'Query metrics action failed', (msg) => this.handle(msg),
       ),
       undefined,
@@ -104,15 +104,6 @@ export class QueryMetricsPanel {
     this.disposables.push(metricsStore.onChange(({ databaseId: dbId }) => {
       if (dbId === this.databaseId) { this.pushState(); }
     }));
-
-    // Mirror channel level for webview-side log filtering.
-    this.panel.webview.postMessage({
-      type: 'log.levelChanged', level: logger.getChannelLevel(),
-    } satisfies LogOut);
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     // Drive the Inspector's help into "metrics" mode when the panel
     // has focus so clicking around always shows the right doc.
@@ -137,12 +128,7 @@ export class QueryMetricsPanel {
     this.post({ type: 'metrics.state', records });
   }
 
-  private async handle(msg: MetricsIn | LogIn): Promise<void> {
-    if (msg.type === 'log') {
-      const wlog = this.logger.withTag('webview:dittoQueryMetrics');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: MetricsIn): Promise<void> {
     if (msg.type === 'metrics.clear') {
       const ok = await vscode.window.showWarningMessage(
         'Clear all Query Metrics for this connection? This drops every recorded EXPLAIN history record.',

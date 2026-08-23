@@ -98,6 +98,7 @@ export class DittoObserverPanel extends LitElement {
         this.events = [];
         this.selectedEventId = null;
         this.selectedRowIndex = null;
+        this.detailCache = null;
         break;
       default:
         assertNever(msg);
@@ -138,14 +139,50 @@ export class DittoObserverPanel extends LitElement {
     `;
   }
 
-  private renderDetail(event: ObserverEvent): TemplateResult {
-    // Cap the rows rendered in the detail pane. The full result set of an
-    // observed collection can be arbitrarily large, and every incoming
-    // event batch re-renders this pane — an uncapped JSON.stringify or
-    // table mount per batch is a render firehose.
+  /** Memoized detail-pane payload. Events are immutable once appended, so
+   *  (eventId × filter) fully determines both the filtered rows and their
+   *  JSON rendering. Without this cache every incoming event batch —
+   *  arriving per 100ms flush during high-frequency sync — re-stringified
+   *  the selected event even when the selection never changed. Same
+   *  discipline as jsonDocCache in the Query panel. */
+  private detailCache: {
+    eventId: string;
+    filter: EventFilter;
+    data: Record<string, unknown>[];
+    truncated: boolean;
+    fullLength: number;
+    json: string;
+  } | null = null;
+
+  private detailPayload(event: ObserverEvent) {
+    const cache = this.detailCache;
+    if (cache && cache.eventId === event.id && cache.filter === this.eventFilter) {
+      return cache;
+    }
+    // Cap the rows rendered in the detail pane. The event's result set can
+    // be arbitrarily large, and every incoming event batch re-renders this
+    // pane — an uncapped JSON.stringify or table mount per batch is a
+    // render firehose.
     const full = this.filterData(event);
     const truncated = full.length > DETAIL_ROW_CAP;
     const data = truncated ? full.slice(0, DETAIL_ROW_CAP) : full;
+    const next = {
+      eventId: event.id,
+      filter: this.eventFilter,
+      data,
+      truncated,
+      fullLength: full.length,
+      json: JSON.stringify(data, null, 2),
+    };
+    this.detailCache = next;
+    return next;
+  }
+
+  private renderDetail(event: ObserverEvent): TemplateResult {
+    const { data, truncated, fullLength, json } = this.detailPayload(event);
+    // The host ships at most OBSERVER_ROW_CAP rows per event (see
+    // DittoManager.registerObserver); flag it when this event exceeded the cap.
+    const hostCapped = event.totalRows > event.data.length;
     const columns = this.computeColumns(data);
     return html`
       <div class="detail-toolbar">
@@ -171,14 +208,19 @@ export class DittoObserverPanel extends LitElement {
         </label>
       </div>
       <div class="detail-body">
+        ${hostCapped ? html`
+          <div style="padding:4px 8px; font-size:11px; color: var(--vscode-editorWarning-foreground, #cca700);">
+            ⚠ showing first ${event.data.length.toLocaleString()} of ${event.totalRows.toLocaleString()} rows
+          </div>
+        ` : ''}
         ${truncated ? html`
           <div style="padding:4px 8px; font-size:11px; color: var(--vscode-editorWarning-foreground, #cca700);">
-            ⚠ showing first ${DETAIL_ROW_CAP.toLocaleString()} of ${full.length.toLocaleString()} rows
+            ⚠ showing first ${DETAIL_ROW_CAP.toLocaleString()} of ${fullLength.toLocaleString()} rows
           </div>
         ` : ''}
         ${this.detailView === 'json'
           ? html`<json-viewer
-              .value=${JSON.stringify(data, null, 2)}
+              .value=${json}
               wrap
             ></json-viewer>`
           : html`<ditto-result-table

@@ -41,19 +41,6 @@ export class OpenPanelsTracker {
     return this.state.get<PerDbPanelState>(KEY_PREFIX + databaseId) ?? EMPTY;
   }
 
-  /** True when at least one panel of any kind is open for this DB.
-   *  Used by the switch orchestrator's "you have open panels" warning. */
-  hasAny(databaseId: string): boolean {
-    const s = this.get(databaseId);
-    return s.query.length > 0 || s.peers;
-  }
-
-  /** Total panel count for the warning dialog. */
-  count(databaseId: string): number {
-    const s = this.get(databaseId);
-    return s.query.length + (s.peers ? 1 : 0);
-  }
-
   /** Insert or update a Query Editor tab. Idempotent on `id` —
    *  the same tabId reuses its slot, which lets the panel emit
    *  text-change updates without thrashing the array's order. */

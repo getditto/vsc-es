@@ -66,6 +66,14 @@ export class CollectionsRepository {
     const cleaned = normalizeIndexFields(fields);
     const indexName = makeIndexName(collection, cleaned);
 
+    // Mid-switch guard: the switch orchestrator closes the Add Index
+    // panel but cannot cancel an in-flight createIndex, and every
+    // executeRaw call resolves against the CURRENT session. Snapshot the
+    // active config id at entry and re-check it right before the CREATE
+    // runs so a switch between the system:indexes probe and the write
+    // fails loudly instead of creating the index on the new database.
+    const activeAtEntry = this.readActiveConfigId();
+
     // `IF NOT EXISTS` compares index NAMES only, so an existing index with the
     // same generated name but a different definition — a flipped direction, or
     // a different field that sanitized to the same name — makes the statement
@@ -86,6 +94,8 @@ export class CollectionsRepository {
         + `definition (${describeIndexKeys(existingKeys)}). Delete it before re-creating.`,
       );
     }
+
+    this.assertStillActive(activeAtEntry);
 
     const query = buildCreateIndexQuery(collection, cleaned, indexName);
     this.log.info('Creating index', {
@@ -121,6 +131,27 @@ export class CollectionsRepository {
   }
 
   // ─── private ─────────────────────────────────────────────────
+
+  /** The currently-active config id, or undefined when the manager
+   *  cannot tell (unit-test fakes only forward executeRaw). A null/
+   *  empty value is treated as "no session" and bubbles down through
+   *  the natural executeRaw failure — the guard only defends against
+   *  a switch BETWEEN two known sessions. */
+  private readActiveConfigId(): string | null | undefined {
+    return typeof this.manager.getActiveConfigId === 'function'
+      ? this.manager.getActiveConfigId()
+      : undefined;
+  }
+
+  /** Throw if the active config changed away from `expected` since it
+   *  was snapshotted. No-op when either side is unknown. */
+  private assertStillActive(expected: string | null | undefined): void {
+    if (!expected) { return; }
+    const current = this.readActiveConfigId();
+    if (current !== undefined && current !== expected) {
+      throw new Error('The active connection changed mid-index-operation; index not created. Reopen the panel and try again.');
+    }
+  }
 
   /**
    * Subscribe to live `__collections` updates. Re-entrant — if an
@@ -274,8 +305,19 @@ function parseSystemIndexRow(row: Record<string, unknown>): DittoIndex | undefin
 
   const fields = parseIndexKeys(row.fields);
 
-  const dotIdx = id.indexOf('.');
-  const displayName = dotIdx >= 0 ? id.slice(dotIdx + 1) : id;
+  // Strip the collection prefix to get the display name — NOT the first
+  // dot. A dotted collection name (`app.ios`) puts its own dot first, and
+  // splitting there turned `app.ios.idx_name` into `ios.idx_name`, which
+  // broke both the tree display and the DROP INDEX the delete flow builds
+  // from the display name. Fall back to the first-dot split only if the id
+  // doesn't carry the collection prefix at all (defensive — the store
+  // always prefixes today).
+  const displayName = id.startsWith(`${collection}.`)
+    ? id.slice(collection.length + 1)
+    : (() => {
+      const dotIdx = id.indexOf('.');
+      return dotIdx >= 0 ? id.slice(dotIdx + 1) : id;
+    })();
   return { id, collection, fields, displayName };
 }
 

@@ -37,6 +37,41 @@ export class HttpQueryError extends Error {
   }
 }
 
+/**
+ * Validate a stored httpApiUrl/authUrl BEFORE it is glued into
+ * `https://${value}` alongside the bearer key. The trap: URL userinfo.
+ * `https://good.com@evil.com/…` parses as host `evil.com` with username
+ * `good.com` — pasting that into the connection editor would send the
+ * Authorization header (the app token) to the attacker's host.
+ *
+ * Returns a human-readable error, or null when the value is empty (the
+ * field stays optional — only present values are validated here) or a
+ * sane scheme-less host[:port][/path].
+ */
+export function validateHttpApiUrl(value: string): string | null {
+  const v = value.trim();
+  if (v.length === 0) { return null; }
+  if (v.includes('@')) {
+    return 'URLs must not contain a username or "@" — enter only the host (e.g. example.ditto.live:443).';
+  }
+  let url: URL;
+  try {
+    url = new URL(`https://${v}`);
+  } catch {
+    return 'Not a valid host[:port] — enter it without a scheme, e.g. example.ditto.live.';
+  }
+  if (url.username || url.password) {
+    return 'URLs must not embed credentials — enter only the host (e.g. example.ditto.live:443).';
+  }
+  if (!url.hostname) {
+    return 'Not a valid host — enter it without a scheme, e.g. example.ditto.live.';
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(v)) {
+    return 'Enter the host without a scheme (leave off "https://" — it is added automatically).';
+  }
+  return null;
+}
+
 /** A hung server must not leave the query panel in 'running' forever. */
 export const REQUEST_TIMEOUT_MS = 30_000;
 /** Responses are buffered fully in memory before parsing — cap them so a
@@ -144,6 +179,18 @@ export async function executeRemoteQuery(
   logger?: Logger,
 ): Promise<HttpQueryResponse> {
   const log = logger?.withTag('ext:HttpQueryService');
+
+  // Defensive refuse: even if a bad value slipped past the connection
+  // editor's own validation (older configs, manual JSON edit), never
+  // send the bearer key to a host the user didn't mean. A malformed
+  // URL is rejected up front with a clear HttpQueryError instead of a
+  // node's opaque ECONNREFUSED-style message.
+  const urlProblem = req.httpApiUrl.trim().length > 0
+    ? validateHttpApiUrl(req.httpApiUrl)
+    : 'httpApiUrl is empty';
+  if (urlProblem) {
+    throw new HttpQueryError(`Refusing to query: httpApiUrl is invalid (${urlProblem})`);
+  }
   const url = new URL(`https://${req.httpApiUrl}/api/v5/store/execute`);
   const body = JSON.stringify({ statement: req.query });
 

@@ -98,3 +98,55 @@ test('listeners fire on save and delete', async () => {
   await store.delete(store.list()[0].id);
   assert.deepEqual(events, ['change', 'change']);
 });
+
+/** A memento that behaves like the real one under concurrency: reads get a
+ *  fresh copy and writes settle a tick later, so two overlapping
+ *  read-modify-write cycles each observe the pre-state unless the store
+ *  serializes them. */
+class CopyingMemento {
+  private map = new Map<string, unknown>();
+  get<T>(key: string): T | undefined {
+    const v = this.map.get(key);
+    return v === undefined ? undefined : structuredClone(v) as T;
+  }
+  async update(key: string, value: unknown): Promise<void> {
+    await Promise.resolve();
+    if (value === undefined) { this.map.delete(key); } else { this.map.set(key, structuredClone(value)); }
+  }
+  keys(): readonly string[] { return [...this.map.keys()]; }
+}
+
+test('concurrent saves do not lose writes', async () => {
+  const store = new ConfigStore(new CopyingMemento());
+  const a = makeConfig({ name: 'A', databaseId: 'db-A' });
+  const b = makeConfig({ name: 'B', databaseId: 'db-B' });
+  await Promise.all([store.save(a), store.save(b)]);
+  assert.deepEqual(store.list().map(c => c.name).sort(), ['A', 'B']);
+});
+
+test('a failed save does not wedge the write queue', async () => {
+  const store = new ConfigStore(new CopyingMemento());
+  await store.save(makeConfig({ name: 'A', databaseId: 'shared' }));
+  await assert.rejects(() => store.save(makeConfig({ name: 'B', databaseId: 'shared' })), /already exists/);
+  await store.save(makeConfig({ name: 'C', databaseId: 'db-C' }));
+  assert.deepEqual(store.list().map(c => c.name).sort(), ['A', 'C']);
+});
+
+test('a throwing listener does not break save or the remaining listeners', async () => {
+  const store = new ConfigStore(new FakeMemento());
+  const events: string[] = [];
+  store.onDidChange(() => { throw new Error('listener bug'); });
+  store.onDidChange(() => events.push('later listener ran'));
+  const cfg = makeConfig();
+  await store.save(cfg);
+  assert.deepEqual(events, ['later listener ran']);
+  assert.deepEqual(store.list(), [cfg], 'the write must still land');
+});
+
+test('list() degrades to [] on a corrupted non-array blob', async () => {
+  const memento = new FakeMemento();
+  await memento.update('dittoConfigs.v1', { not: 'an array' });
+  const store = new ConfigStore(memento);
+  assert.deepEqual(store.list(), []);
+  assert.equal(store.get('anything'), undefined);
+});

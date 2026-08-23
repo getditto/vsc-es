@@ -12,6 +12,19 @@ import { webviewMessageHandler } from '../panels/webview-utils.js';
 import type { MetricsPreferencesStore } from '../storage/MetricsPreferencesStore.js';
 import type { AttachmentCache } from './AttachmentCache.js';
 
+/** Inline previews base64 the whole attachment into a `data:` URI (~1.33×
+ *  the bytes on top of the fetched buffer), so they get a hard cap at the
+ *  same 20 MB the Query Editor hard-refuses on upload. Anything bigger
+ *  still works via the Download/save-to-disk action — it writes straight
+ *  to a file the user picked and never round-trips through the webview. */
+export const ATTACHMENT_PREVIEW_LIMIT = 20 * 1024 * 1024;
+
+function previewTooLargeMessage(sizeBytes: number): string {
+  const mib = sizeBytes / (1024 * 1024);
+  return `Attachment is ${mib.toFixed(1)} MB — too large to preview inline `
+    + `(limit ${ATTACHMENT_PREVIEW_LIMIT / (1024 * 1024)} MB). Use the Download action to save it to disk.`;
+}
+
 /**
  * `WebviewViewProvider` for the auxiliary-bar Ditto Inspector.
  *
@@ -206,6 +219,19 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     // The webview sends the raw `_meta`-shaped object. Cast to the SDK's expected shape.
     const tokenAny = token as { id: string; len: number | bigint; metadata: { [k: string]: string } };
 
+    // Pre-fetch cap on the DECLARED size: a token that claims > 20 MB is
+    // never going to yield an inline preview, so refuse before spending a
+    // byte on the SDK fetch. The download/save path is unaffected — it
+    // writes to disk, not into the webview.
+    const declared = Number(tokenAny.len);
+    if (!save && Number.isFinite(declared) && declared > ATTACHMENT_PREVIEW_LIMIT) {
+      log.info('Refusing inline preview of oversized attachment', {
+        id: tokenAny.id, declaredBytes: declared,
+      });
+      this.post({ type: 'inspector.attachmentError', tokenId, message: previewTooLargeMessage(declared) });
+      return;
+    }
+
     // Cache lookup. Key is (activeDatabaseId, attachmentId) — the same
     // attachment referenced from two different query rows shares an
     // entry. On hit we skip the SDK round-trip entirely; the user gets
@@ -307,6 +333,19 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Defense in depth by ACTUAL byte count: the fetch path already
+    // refused over-cap tokens by their declared `len`, but a token can
+    // lie, and the cache-hit path re-enters here without re-checking the
+    // token.
+    if (buf.length > ATTACHMENT_PREVIEW_LIMIT) {
+      this.post({
+        type: 'inspector.attachmentError',
+        tokenId,
+        message: previewTooLargeMessage(buf.length),
+      });
+      return;
+    }
+
     // Inline preview path. We send a base64 `data:` URI rather
     // than writing to globalStorageUri + handing back a webview
     // resource URI. The data-URI route is policy-free (img-src
@@ -322,9 +361,8 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     //      between fs.writeFile and asWebviewUri.
     // Trade-off: a 1.6 MB image becomes a ~2.2 MB string sent
     // through postMessage. That's still well within
-    // structured-clone's budget; if we ever care about >10 MB
-    // image previews we can add a cap and fall back to the
-    // file-based path for those.
+    // structured-clone's budget; the ATTACHMENT_PREVIEW_LIMIT gate
+    // above keeps anything genuinely large off this path entirely.
     const dataUri = `data:${contentType};base64,${buf.toString('base64')}`;
     this.post({
       type: 'inspector.attachmentLoaded',

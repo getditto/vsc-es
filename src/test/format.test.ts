@@ -47,6 +47,23 @@ test('formatLogLine: empty ctx object treated as no ctx', () => {
   assert.equal(line, '2026-05-09T19:42:11.382Z  DEBUG  [ext]  Hi');
 });
 
+test('formatLogLine: unserializable ctx degrades instead of throwing', () => {
+  // JSON.stringify throws on BigInt values and on circular references. A
+  // logging call must never throw because of its ctx.
+  const circular: Record<string, unknown> = { databaseId: 'abc' };
+  circular.self = circular;
+  for (const ctx of [{ n: 1n as unknown as string }, circular]) {
+    const line = formatLogLine({
+      timestamp: new Date('2026-05-09T19:42:11.382Z'),
+      level: 'info',
+      tag: 'ext',
+      message: 'Hi',
+      ctx,
+    });
+    assert.match(line, /Hi {2}<unserializable ctx>$/);
+  }
+});
+
 test('formatLogLine: multi-line message escapes newlines in display but preserves them in file', () => {
   // For v1: newlines pass through. The channel and file both render multi-line strings naturally.
   const line = formatLogLine({

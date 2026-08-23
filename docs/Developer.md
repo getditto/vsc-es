@@ -68,7 +68,7 @@ ditto-vsc-es/
 │   ├── extension.ts            # activate(): wires stores, manager, tree, commands
 │   ├── ditto/
 │   │   ├── DittoManager.ts     # singleton wrapping the Ditto SDK lifecycle
-│   │   └── peer-info.ts        # pure merge logic (presence + sync_status → snapshot)
+│   │   └── peer-info.ts        # pure merge logic (presence + sync metrics → snapshot)
 │   ├── tree/
 │   │   ├── DatabaseTreeProvider.ts
 │   │   └── DatabaseTreeItem.ts # discriminated union of node kinds
@@ -141,8 +141,12 @@ When a database becomes `active`, three SDK read paths spin up in parallel:
 
 1. **Presence push** — `ditto.presence.observe(callback)` with 250 ms
    coalescing. Drives the peer grid.
-2. **Sync status observer** — DQL subscription + observer on
-   `__sync_status`. Drives status dots, "synced to commit", "last update".
+2. **Sync metrics refresh** — a one-shot `SELECT * FROM
+   system:data_sync_info` inside every presence flush
+   (`refreshSyncMetrics`). Drives status dots, "synced to commit", "last
+   update". This is deliberately not a live observer: `system:*`
+   collections don't accept sync subscriptions, and the earlier
+   `__sync_status` observer was silently failing.
 3. **One-shot small-peer info** — `ditto.store.execute('SELECT ... FROM
    __small_peer_info')` once, cached for the session. Fills SDK
    language/platform/version on the local peer card.
@@ -362,8 +366,9 @@ The cookbook below covers the most common extension points.
 
 ### 7.4 A new SDK read path
 
-The current three (presence, `__sync_status`, `__small_peer_info`) all live
-in `DittoManager`. To add a fourth:
+The current three (presence push, the `system:data_sync_info` refresh inside
+the presence flush, and `__small_peer_info`) all live in `DittoManager`. To
+add a fourth:
 
 1. Add a new private observer/handle field. Initialize in `connect()` after
    `sync.start()`. Cancel and null-out in `disconnect()`'s `finally` block —
@@ -374,8 +379,12 @@ in `DittoManager`. To add a fourth:
    uses. `firePresence(buildSnapshot())` for peer listing.
 4. Guard against late callbacks after `disconnect()` — the SDK can deliver
    one more emission while teardown is in flight. The pattern in
-   `DittoManager` is `if (this.activeDitto !== ditto) return;` at the top
-   of every callback.
+   `DittoManager` is an identity check against the session, not a
+   truthiness check: `if (this.session?.ditto !== ditto) return;` both at
+   callback entry AND after every `await`. During disconnect→reconnect a
+   callback in flight resumes with `this.session` being the NEW session,
+   so `if (!this.session) return;` alone would write the old DB's data
+   into it.
 
 ---
 
@@ -598,5 +607,6 @@ The Observers feature lets users register a DQL query and watch it fire in real 
 - **SDK integration:** `DittoManager.registerObserver(query, callback)` wraps `ditto.store.registerObserver` and the SDK's `Differ` to produce `{rows, insertions, updates, deletions, moves}` per firing.
 - **Panel:** `ObserverPanel` owns the SDK observer's lifetime — disposing the panel cancels the observer. Each panel maintains an `ObserverEventStore` ring buffer (500 events, FIFO eviction).
 - **Coalescing:** events are batched on the host with a 100ms flush window before being posted to the webview. Matches the SwiftUI app's `observedEventFlushInterval`.
+- **Payload cap:** the host ships at most `OBSERVER_ROW_CAP` (1000) rows per event (`data`), with the uncapped count in `totalRows`; the webview shows a "showing first N of M" banner when capped. The DQL subscription and the `Differ` still see the full result set — only the shipped payload is capped.
 - **UI reuse:** the bottom-pane detail view uses the existing `<json-viewer>` and the new shared `<ditto-result-table>` (also consumed by the Query Editor). No bespoke detail-view code.
 - **Help:** `resources/help/observe.md` → rendered to `dist/webview-ui/help/observe.html` → loaded into the Inspector via `inspector.helpHtml`.

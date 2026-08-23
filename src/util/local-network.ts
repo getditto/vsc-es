@@ -9,7 +9,9 @@
 //
 // What we surface is the strict subset SwiftUI's NetworkInterfaceInfo
 // can be filled from `os.networkInterfaces()` alone:
-//   - interface name + best-effort kind (Wi-Fi vs Ethernet vs other)
+//   - interface name + coarse kind ('lan' vs 'loopback' vs 'other' —
+//     Wi-Fi and Ethernet deliberately collapse into 'lan'; see
+//     classifyInterface for why the medium is not guessable here)
 //   - MAC address
 //   - IPv4 + CIDR (multiple if the interface is aliased / VPN'd)
 //   - IPv6 + CIDR (link-local AND global)

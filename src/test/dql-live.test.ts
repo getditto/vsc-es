@@ -117,6 +117,79 @@ test('live DQL: createIndex/dropIndex work on a hyphenated collection', async ()
   });
 });
 
+test('live DQL: an index on a dotted collection parses, displays, and drops by its bare name', async () => {
+  // Regression: parseSystemIndexRow split the index _id at the FIRST dot,
+  // so collection `app.ios` produced displayName `ios.idx_…` — breaking the
+  // tree display and making deleteIndex build a DROP against a name that
+  // never existed while the UI reported success.
+  await withStore(async ({ exec, repo }) => {
+    await exec('INSERT INTO `app.ios` DOCUMENTS (:d)', { d: { _id: 'a', qty: 1 } });
+
+    await repo.createIndex('app.ios', [{ name: 'qty', ascending: true }]);
+    const rows = await exec('SELECT * FROM system:indexes');
+    const mine = rows.find(r => r._id === 'app.ios.idx_app_ios_qty');
+    assert.ok(mine, `index created; saw ${JSON.stringify(rows.map(r => r._id))}`);
+    assert.equal(mine.collection, 'app.ios');
+
+    // The tree's view of the same row: displayName must be the BARE index
+    // name, not the suffix after the collection's own dot.
+    const parsed = repo.current().find(c => c.name === 'app.ios');
+    assert.ok(parsed, 'collection in the hydrated cache');
+    const idx = parsed.indexes.find(i => i.id === 'app.ios.idx_app_ios_qty');
+    assert.ok(idx, `cache carries the index; saw ${JSON.stringify(parsed.indexes.map(i => i.id))}`);
+    assert.equal(idx.displayName, 'idx_app_ios_qty');
+
+    // The delete flow feeds displayName straight into buildDropIndexQuery.
+    await repo.dropIndex(idx.displayName, 'app.ios');
+    const left = await exec('SELECT * FROM system:indexes');
+    assert.ok(!left.some(r => r._id === 'app.ios.idx_app_ios_qty'), 'index dropped');
+  });
+});
+
+test('live DQL: createIndex refuses to write when the active config switches mid-create', async () => {
+  // The switch orchestrator closes the Add Index panel but cannot cancel an
+  // in-flight createIndex, and executeRaw always targets the CURRENT session.
+  // The guard must stop the CREATE when the active config id changed between
+  // the entry snapshot and the statement — otherwise the index lands on the
+  // new database. The real store stands in for the statement we must NOT send.
+  await withStore(async ({ exec }) => {
+    await exec('INSERT INTO `t` DOCUMENTS (:d)', { d: { _id: 'a', qty: 1 } });
+    let activeId: string | null = 'db-1';
+    const repo = new CollectionsRepository(
+      {
+        executeRaw: exec,
+        // First poll (entry snapshot) sees db-1; the re-check before the
+        // CREATE sees the switch.
+        getActiveConfigId: () => {
+          const id = activeId;
+          activeId = 'db-2';
+          return id;
+        },
+      } as unknown as DittoManager,
+      noopLogger(),
+    );
+
+    await assert.rejects(
+      () => repo.createIndex('t', [{ name: 'qty', ascending: true }]),
+      /active connection changed mid-index-operation/,
+    );
+    const rows = await exec('SELECT * FROM system:indexes WHERE collection = :c', { c: 't' });
+    assert.equal(rows.length, 0, 'no index was created after the switch was detected');
+  });
+});
+
+test('live DQL: createIndex with no active-config reader still works (test-fake seam)', async () => {
+  // The guard must be a no-op when the manager cannot report an active id —
+  // every existing caller builds the repo against a live manager, and tests
+  // against an executeRaw-only fake.
+  await withStore(async ({ exec, repo }) => {
+    await exec('INSERT INTO `t` DOCUMENTS (:d)', { d: { _id: 'a', qty: 1 } });
+    await repo.createIndex('t', [{ name: 'qty', ascending: true }]);
+    const rows = await exec('SELECT * FROM system:indexes');
+    assert.ok(rows.some(r => r._id === 't.idx_t_qty'));
+  });
+});
+
 test('live DQL: createIndex accepts a nested field path', async () => {
   await withStore(async ({ exec, repo }) => {
     await exec('INSERT INTO `people` DOCUMENTS (:doc)', {

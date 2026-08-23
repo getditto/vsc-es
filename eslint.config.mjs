@@ -93,6 +93,15 @@ export default tseslint.config(
     },
   },
   {
+    // Production code logs through the Logger (Logger.ts), never console.* —
+    // console output from the extension host is invisible to users and
+    // pollutes other extensions' output channels. Tests and build scripts
+    // are exempt (separate blocks below).
+    files: ['src/**/*.ts', 'webview-ui/**/*.ts'],
+    ignores: ['src/test/**'],
+    rules: { 'no-console': 'error' },
+  },
+  {
     // Webviews run in the browser; there is no Node global surface there, and
     // `vscode` must never be imported (the host/webview split is the whole
     // architecture).

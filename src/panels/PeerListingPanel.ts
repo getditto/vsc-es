@@ -3,7 +3,8 @@ import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './web
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
-import type { PeerIn, PeerOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { PeerIn, PeerOut } from '../ipc/messages.js';
+import type { PeerListSnapshot } from '../models/DittoConfig.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
@@ -52,6 +53,13 @@ export class PeerListingPanel {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private databaseId: string;
+  /** Fingerprint of the last posted peer.state payload. Presence fires on a
+   *  250ms coalesced beat even when nothing changed, and mergePeerList
+   *  allocates a fresh snapshot each time — without change detection the
+   *  webview re-renders 4×/s forever. The snapshot is small JSON-safe data
+   *  with stable key order, so serialising it IS the comparison (no deep
+   *  clone of presenceGraph needed). */
+  private lastStateFingerprint: string | null = null;
   /** See the static dispose's preserveState option. */
   private preserveStateOnDispose = false;
 
@@ -94,7 +102,7 @@ export class PeerListingPanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      webviewMessageHandler<PeerIn | LogIn>(
+      webviewMessageHandler<PeerIn>(
         this.logger, 'ext:peerListing', 'Presence action failed', (msg) => this.handle(msg),
       ),
       undefined,
@@ -104,15 +112,6 @@ export class PeerListingPanel {
     this.disposables.push(this.manager.onStatusChange(() => this.pushState()));
     this.disposables.push(this.manager.onSyncChange(() => this.pushState()));
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
-
-    // Push initial channel level to webview.
-    this.panel.webview.postMessage({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
-
-    // Subscribe to level changes; track disposable so we can clean up.
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     void tracker.setPeers(databaseId, true);
     this.disposables.push({ dispose: () => {
@@ -146,11 +145,14 @@ export class PeerListingPanel {
 
   private pushState() {
     const active = this.manager.getActiveConfigId() === this.databaseId;
-    this.post({
-      type: 'peer.state',
-      snapshot: active ? this.manager.getLatestSnapshot() : { local: null, remote: [] },
-      sync: active ? this.manager.getSyncState() : 'idle'
-    });
+    const snapshot: PeerListSnapshot = active
+      ? this.manager.getLatestSnapshot()
+      : { local: null, remote: [] };
+    const sync = active ? this.manager.getSyncState() : 'idle';
+    const fingerprint = `${sync}\n${JSON.stringify(snapshot)}`;
+    if (fingerprint === this.lastStateFingerprint) { return; }
+    this.lastStateFingerprint = fingerprint;
+    this.post({ type: 'peer.state', snapshot, sync });
   }
 
   /** Post the platform support matrix + the active config's current
@@ -175,12 +177,7 @@ export class PeerListingPanel {
 
   private post(msg: PeerOut) { this.panel.webview.postMessage(msg); }
 
-  private async handle(msg: PeerIn | LogIn) {
-    if (msg.type === 'log') {
-      const wlog = this.logger.withTag('webview:dittoPeerListing');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: PeerIn) {
     if (msg.type === 'peer.toggleSync') {
       // A transport apply stops sync mid-cycle with observers detached —
       // don't let the webview's toggle race it (the command path guards

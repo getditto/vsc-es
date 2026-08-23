@@ -7,6 +7,7 @@ function ev(id: string): ObserverEvent {
     id,
     eventTimeISO: '2026-05-27T17:55:49Z',
     data: [],
+    totalRows: 0,
     insertions: [],
     updates: [],
     deletions: [],

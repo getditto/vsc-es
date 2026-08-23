@@ -1,13 +1,20 @@
 import { EventEmitter } from 'node:events';
+import type { LogLevel } from '../logging/types.js';
 import type { LogLine, ProblemInstance, AnalyzerState, SummaryCounts } from './types.js';
 import type { AnalyzerSink } from './AnalyzerSink.js';
 import type { PatternEngine, CompiledPattern } from './PatternEngine.js';
 import type { ConnectionTracker } from './ConnectionTracker.js';
 import { parseLine } from './LineParser.js';
-import { binVolumeByLevel, binProblemsOverTime, binDurations, pickBinWidth, type ProblemHit } from './Histograms.js';
+import { binProblemsOverTime, binDurations, pickBinWidth, type ProblemHit } from './Histograms.js';
 
 const PROBLEM_CAP = 1000;
 const LINE_BUFFER_CAP = 50_000;
+/** Finest granularity the volume histogram ever renders at
+ *  (NICE_BINS_MS[0]). Ingest bins into per-second buckets so the flush-time
+ *  histogram is a merge of O(bins) instead of a re-scan of O(lines). Every
+ *  coarser width in NICE_BINS_MS is a multiple of this, so each fine bin maps
+ *  into exactly one display bin. */
+const VOLUME_BIN_MS = 1000;
 /** Cap on the problems-over-time histogram's source data. Unlike
  *  state.problems (capped per pattern at PROBLEM_CAP), this array feeds
  *  only the histogram — past the cap the oldest hits are trimmed in
@@ -65,6 +72,18 @@ export class LogAnalyzerService {
    *  counts occurrences, which is a different and larger number. */
   private problemLineIds = new Set<number>();
   private criticalLineIds = new Set<number>();
+  /** Per-second volume-by-level bins over the CURRENT line buffer,
+   *  incremented at ingest and decremented when the buffer's chunked trim
+   *  drops lines. Lets flush-time histograms merge bins rather than re-scan
+   *  up to 100k lines. */
+  private volumeBins = new Map<number, Record<LogLevel, number>>();
+  /** Counts over the current line buffer (state.counts is cumulative and
+   *  keeps growing across trims). queryLines serves un-searched totals from
+   *  these instead of walking the buffer. */
+  private bufferErrors = 0;
+  private bufferWarnings = 0;
+  private bufferProblemLines = 0;
+  private bufferCriticalLines = 0;
 
   constructor(private readonly opts: ServiceOptions) {
     this.throttleMs = opts.throttleMs ?? 250;
@@ -108,6 +127,11 @@ export class LogAnalyzerService {
     this.pendingProblems = [];
     this.problemLineIds.clear();
     this.criticalLineIds.clear();
+    this.volumeBins.clear();
+    this.bufferErrors = 0;
+    this.bufferWarnings = 0;
+    this.bufferProblemLines = 0;
+    this.bufferCriticalLines = 0;
     // The tracker owns the session history that state.sessions mirrors, so
     // it has to be cleared too — otherwise the next connection event
     // resurrects everything from before the Clear. Resetting the version
@@ -168,30 +192,56 @@ export class LogAnalyzerService {
     const problemIds = this.problemLineIds;
     const criticalIds = this.criticalLineIds;
 
-    // Walk newest-first so we can paginate without sorting the whole buffer.
-    const matched: LogLine[] = [];
-    for (let i = this.lineBuffer.length - 1; i >= 0; i--) {
-      const line = this.lineBuffer[i];
-      let pass = false;
+    const passes = (line: LogLine): boolean => {
       switch (filter) {
-        case 'all':      pass = true; break;
-        case 'error':    pass = line.level === 'error'; break;
-        case 'warn':     pass = line.level === 'warn'; break;
-        case 'problem':  pass = problemIds.has(line.id); break;
-        case 'critical': pass = criticalIds.has(line.id); break;
+        case 'all':      return true;
+        case 'error':    return line.level === 'error';
+        case 'warn':     return line.level === 'warn';
+        case 'problem':  return problemIds.has(line.id);
+        case 'critical': return criticalIds.has(line.id);
       }
-      if (!pass) continue;
-      if (search.length > 0) {
-        const userTagsHay = line.userTags ? ' ' + line.userTags.join(' ') : '';
-        const hay = (line.text + ' ' + (line.tag ?? '') + userTagsHay).toLowerCase();
-        if (!hay.includes(search)) continue;
+    };
+
+    const items: LogLine[] = [];
+
+    if (search.length === 0) {
+      // No haystack to build: the total comes from ingest-time counters that
+      // track the current buffer, and the scan can stop once the requested
+      // window is filled.
+      let total: number;
+      switch (filter) {
+        case 'all':      total = this.lineBuffer.length; break;
+        case 'error':    total = this.bufferErrors; break;
+        case 'warn':     total = this.bufferWarnings; break;
+        case 'problem':  total = this.bufferProblemLines; break;
+        case 'critical': total = this.bufferCriticalLines; break;
       }
-      matched.push(line);
+      if (offset < total && limit > 0) {
+        let matchIndex = 0;
+        for (let i = this.lineBuffer.length - 1; i >= 0 && items.length < limit; i--) {
+          const line = this.lineBuffer[i];
+          if (!passes(line)) continue;
+          if (matchIndex >= offset) { items.push(line); }
+          matchIndex++;
+        }
+      }
+      return { items, total };
     }
 
-    const total = matched.length;
-    const items = matched.slice(offset, offset + limit);
-    return { items, total };
+    // With a search term the total is unknowable before the scan, but matched
+    // lines only ever need to land inside the requested window — count as we
+    // go instead of materialising every match.
+    let matchIndex = 0;
+    for (let i = this.lineBuffer.length - 1; i >= 0; i--) {
+      const line = this.lineBuffer[i];
+      if (!passes(line)) continue;
+      const userTagsHay = line.userTags ? ' ' + line.userTags.join(' ') : '';
+      const hay = (line.text + ' ' + (line.tag ?? '') + userTagsHay).toLowerCase();
+      if (!hay.includes(search)) continue;
+      if (matchIndex >= offset && items.length < limit) { items.push(line); }
+      matchIndex++;
+    }
+    return { items, total: matchIndex };
   }
 
   /** Used by the detail-drawer to fetch surrounding context. Linear scan
@@ -239,11 +289,23 @@ export class LogAnalyzerService {
 
   private processLine(line: LogLine, isBackfill = false): void {
     this.lineBuffer.push(line);
+    this.addToVolumeBins(line);
+    if (line.level === 'error') this.bufferErrors++;
+    if (line.level === 'warn') this.bufferWarnings++;
     // Trim in chunks rather than shift() per line — at the 50k cap a
     // per-line shift is an O(n) memmove on every log line under
     // sustained volume. The buffer may briefly hold up to 2× the cap.
+    // The incremental bins/counters have to follow the drop or the flush
+    // histogram and the un-searched tab totals drift from the buffer.
     if (this.lineBuffer.length > LINE_BUFFER_CAP * 2) {
-      this.lineBuffer.splice(0, this.lineBuffer.length - LINE_BUFFER_CAP);
+      const dropped = this.lineBuffer.splice(0, this.lineBuffer.length - LINE_BUFFER_CAP);
+      for (const dead of dropped) {
+        this.removeFromVolumeBins(dead);
+        if (dead.level === 'error') this.bufferErrors--;
+        if (dead.level === 'warn') this.bufferWarnings--;
+        if (this.problemLineIds.has(dead.id)) this.bufferProblemLines--;
+        if (this.criticalLineIds.has(dead.id)) this.bufferCriticalLines--;
+      }
     }
     this.state.counts.totalLines++;
     if (line.timestamp == null) this.state.counts.unparseableLines++;
@@ -281,8 +343,14 @@ export class LogAnalyzerService {
         this.state.problems.set(h.key, list);
         if (!isBackfill) { this.pendingProblems.push(item); }
         // Only ids that were actually stored are listable by the filters.
+        const sizeBefore = this.problemLineIds.size;
         this.problemLineIds.add(line.id);
-        if (h.severity === 5) { this.criticalLineIds.add(line.id); }
+        if (this.problemLineIds.size !== sizeBefore) { this.bufferProblemLines++; }
+        if (h.severity === 5) {
+          const critBefore = this.criticalLineIds.size;
+          this.criticalLineIds.add(line.id);
+          if (this.criticalLineIds.size !== critBefore) { this.bufferCriticalLines++; }
+        }
       }
       this.state.counts.problems++;
       if (h.severity === 5) this.state.counts.critical++;
@@ -389,19 +457,69 @@ export class LogAnalyzerService {
     }
   }
 
+  /** Increment the per-second bin for a freshly-ingested line. */
+  private addToVolumeBins(line: LogLine): void {
+    if (!line.timestamp) { return; }
+    const bin = Math.floor(line.timestamp.getTime() / VOLUME_BIN_MS) * VOLUME_BIN_MS;
+    let bucket = this.volumeBins.get(bin);
+    if (!bucket) {
+      bucket = { error: 0, warn: 0, info: 0, debug: 0, trace: 0 };
+      this.volumeBins.set(bin, bucket);
+    }
+    bucket[line.level]++;
+  }
+
+  /** Decrement the per-second bin for a line dropped by the buffer trim;
+   *  delete the bin once empty so flush never emits buckets a scan of the
+   *  buffer would not produce. */
+  private removeFromVolumeBins(line: LogLine): void {
+    if (!line.timestamp) { return; }
+    const bin = Math.floor(line.timestamp.getTime() / VOLUME_BIN_MS) * VOLUME_BIN_MS;
+    const bucket = this.volumeBins.get(bin);
+    if (!bucket) { return; }
+    bucket[line.level]--;
+    if (bucket.error + bucket.warn + bucket.info + bucket.debug + bucket.trace === 0) {
+      this.volumeBins.delete(bin);
+    }
+  }
+
+  /** Merge the per-second bins into the display width. Output shape and
+   *  ordering match binVolumeByLevel(lineBuffer, binMs) exactly, at
+   *  O(bins) instead of O(lines). */
+  private mergedVolumeBins(binMs: number): AnalyzerState['histograms']['volumeByLevel'] {
+    if (this.volumeBins.size === 0) { return []; }
+    const out = new Map<number, Record<LogLevel, number>>();
+    for (const [fine, counts] of this.volumeBins) {
+      const coarse = Math.floor(fine / binMs) * binMs;
+      let bucket = out.get(coarse);
+      if (!bucket) {
+        bucket = { error: 0, warn: 0, info: 0, debug: 0, trace: 0 };
+        out.set(coarse, bucket);
+      }
+      bucket.error += counts.error;
+      bucket.warn += counts.warn;
+      bucket.info += counts.info;
+      bucket.debug += counts.debug;
+      bucket.trace += counts.trace;
+    }
+    return [...out.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([binStartMs, counts]) => ({ binStartMs, counts }));
+  }
+
   private recomputeHistograms(): void {
     const range = this.state.startTime && this.state.endTime
       ? this.state.endTime.getTime() - this.state.startTime.getTime()
       : 0;
     const binMs = pickBinWidth(Math.max(range, 1000));
     this.state.histograms.problemsOverTime = binProblemsOverTime(this.problemHits, binMs);
-    // this.lineBuffer, NOT sink.snapshot(). The sink is shared by every
-    // database's analyzer and holds only lines the extension logged live —
-    // it excludes backfill (read from the rotated log file) and includes
-    // other connections' lines. Binning it produced a histogram over a
-    // completely different population than every other number on screen,
+    // These bins describe this.lineBuffer, NOT sink.snapshot(). The sink is
+    // shared by every database's analyzer and holds only lines the extension
+    // logged live — it excludes backfill (read from the rotated log file) and
+    // includes other connections' lines. Binning it produced a histogram over
+    // a completely different population than every other number on screen,
     // and one that Clear could not empty.
-    this.state.histograms.volumeByLevel = binVolumeByLevel(this.lineBuffer, binMs);
+    this.state.histograms.volumeByLevel = this.mergedVolumeBins(binMs);
     this.state.histograms.connectionDurations = binDurations(
       this.state.sessions
         .filter(s => s.end)

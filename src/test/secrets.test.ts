@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { containsSecret, redactSecrets, SECRET_KEYS } from '../logging/secrets.js';
+import { containsSecret, redactSecrets, SECRET_KEYS, containsKnownSecret, redactKnownSecrets } from '../logging/secrets.js';
 
 test('containsSecret: clean message returns false', () => {
   assert.equal(containsSecret('Connected to db-A'), false);
@@ -56,4 +56,37 @@ test('containsSecret/redactSecrets: JSON keys are matched regardless of casing',
     assert.equal(containsSecret(msg), true, `detected: ${key}`);
     assert.doesNotMatch(redactSecrets(msg), /sk_live_xxx/, `scrubbed: ${key}`);
   }
+});
+
+test('containsSecret: hoisted combined patterns cover every key (regression for per-key loops)', () => {
+  // The patterns compile once at module load as combined alternations; this
+  // proves the combination did not drop any single key from either family.
+  assert.equal(containsSecret('{"httpApiKey":"x"}'), true);
+  assert.equal(containsSecret('https://h/?api_key=zzz'), true);
+  assert.equal(containsSecret('https://h/?secretKey=zzz'), true);
+  assert.equal(containsSecret('https://h/?httpApiKey=zzz'), true);
+});
+
+test('containsKnownSecret: literal substring match only', () => {
+  const known = ['sk_live_abcdef123', 'token.with*metachars'];
+  assert.equal(containsKnownSecret('connecting with sk_live_abcdef123 ok', known), true);
+  // Regex metacharacters in a secret must be matched literally, not as a pattern.
+  assert.equal(containsKnownSecret('value token.with*metachars here', known), true);
+  assert.equal(containsKnownSecret('nothing to see here', known), false);
+  assert.equal(containsKnownSecret('anything', []), false);
+  assert.equal(containsKnownSecret('value ', ['']), false);
+});
+
+test('redactKnownSecrets: replaces every exact occurrence with the shared placeholder', () => {
+  const known = ['sk_live_abcdef123'];
+  assert.equal(
+    redactKnownSecrets('a sk_live_abcdef123 b sk_live_abcdef123 c', known),
+    'a [redacted] b [redacted] c',
+  );
+  // Non-matching text passes through untouched.
+  assert.equal(redactKnownSecrets('clean line', known), 'clean line');
+  // Overlapping values: callers pass them longest-first so a prefix value
+  // cannot destroy the longer one.
+  const out = redactKnownSecrets('sk_live_abcdef123', ['sk_live_abcdef123', 'sk_live']);
+  assert.equal(out, '[redacted]');
 });

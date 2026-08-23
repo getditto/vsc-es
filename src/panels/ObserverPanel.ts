@@ -4,7 +4,7 @@ import type { DittoManager } from '../ditto/DittoManager.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
 import type { StoredObserver } from '../models/StoredObserver.js';
-import type { ObserverIn, ObserverOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { ObserverIn, ObserverOut } from '../ipc/messages.js';
 import type { ObserverEvent } from '../ditto/ObserverEventStore.js';
 
 /** Per-database observer panel registry. We allow multiple observer
@@ -115,7 +115,7 @@ export class ObserverPanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      webviewMessageHandler<ObserverIn | LogIn>(
+      webviewMessageHandler<ObserverIn>(
         this.logger, 'ext:observer', 'Observer action failed', (msg) => this.handle(msg),
       ),
       undefined,
@@ -136,14 +136,6 @@ export class ObserverPanel {
         }
       }),
     );
-
-    // Push log level + init payload after a one-tick defer (same
-    // pattern as the other panels — avoids the message-queue race).
-    this.panel.webview.postMessage({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.disposables.push(levelSub);
 
     setTimeout(() => this.pushInit(), 50);
   }
@@ -173,11 +165,7 @@ export class ObserverPanel {
     this.panel.webview.postMessage(msg);
   }
 
-  private async handle(msg: ObserverIn | LogIn): Promise<void> {
-    if (msg.type === 'log') {
-      this.logger.withTag('webview:dittoObserver')[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: ObserverIn): Promise<void> {
     switch (msg.type) {
       case 'observer.activate': {
         await this.activate();
@@ -210,7 +198,10 @@ export class ObserverPanel {
       const oe: ObserverEvent = {
         id: randomEventId(),
         eventTimeISO: new Date().toISOString(),
+        // `rows` is already capped on the host (OBSERVER_ROW_CAP);
+        // `totalRows` lets the webview show "first N of M".
         data: event.rows,
+        totalRows: event.totalRows,
         insertions: event.insertions,
         updates: event.updates,
         deletions: event.deletions,

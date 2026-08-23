@@ -153,7 +153,7 @@ test('PeerListingPanel: the toggle works again once the apply finishes', async (
   assert.equal(manager.toggleCount, 1, 'the guard must not latch');
 });
 
-// ─── LogAnalyzerPanel: bootstrap and refresh ───────────────────
+// ─── LogAnalyzerPanel: bootstrap and webview queries ───────────
 
 interface FakeService {
   starts: { lines: readonly string[] | undefined }[];
@@ -225,30 +225,37 @@ test('LogAnalyzerPanel: a failed backfill still starts live ingestion', async ()
   assert.equal(errs[0].stage, 'backfill');
 });
 
-test('LogAnalyzerPanel: refresh clears before re-ingesting', async () => {
-  // bootstrap re-reads the whole backfill, so without a clear the refreshed
-  // view contained every line twice — and again on the next refresh.
+test('LogAnalyzerPanel: a line detail request posts the detail payload', async () => {
   const svc = fakeService();
   const panel = await showAnalyzer(svc, () => Promise.resolve(['a', 'b']));
-  assert.equal(svc.clears, 0);
 
-  panel.fireMessage({ type: 'analyzer.refresh' });
+  panel.fireMessage({ type: 'analyzer.requestLineDetail', lineId: 7, requestId: 'd1' });
   await settle();
 
-  assert.equal(svc.clears, 1, 'cleared');
-  assert.equal(svc.starts.length, 2, 'and re-ingested');
-  assert.deepEqual(svc.starts[1].lines, ['a', 'b']);
+  const details = panel.webview.posted.filter(
+    (m): m is { type: string; requestId: string; line: unknown; before: unknown[]; after: unknown[] } =>
+      typeof m === 'object' && m !== null && (m as { type?: string }).type === 'analyzer.lineDetail',
+  );
+  assert.equal(details.length, 1, 'one detail response');
+  assert.equal(details[0].requestId, 'd1', 'request id echoed back');
 });
 
-test('LogAnalyzerPanel: repeated refreshes each clear first', async () => {
+test('LogAnalyzerPanel: repeated line queries each reach the service once', async () => {
   const svc = fakeService();
   const panel = await showAnalyzer(svc, () => Promise.resolve(['a']));
   for (let i = 0; i < 3; i++) {
-    panel.fireMessage({ type: 'analyzer.refresh' });
+    panel.fireMessage({
+      type: 'analyzer.queryLines', filter: 'all', limit: 100, requestId: `r${i}`,
+    });
     await settle();
   }
-  assert.equal(svc.clears, 3);
-  assert.equal(svc.starts.length, 4, 'one bootstrap plus three refreshes');
+  assert.equal(svc.queried.length, 3, 'one query per request');
+  const results = panel.webview.posted.filter(
+    (m): m is { type: string; requestId: string } =>
+      typeof m === 'object' && m !== null && (m as { type?: string }).type === 'analyzer.linesResult',
+  );
+  assert.deepEqual(results.map(r => r.requestId), ['r0', 'r1', 'r2'],
+    'and each request got exactly one response, in order');
 });
 
 test('LogAnalyzerPanel: clear, pause and resume forward to the service', async () => {

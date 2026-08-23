@@ -38,22 +38,20 @@ export interface ImportableSubscription {
  * form. Returns `null` if no `FROM` clause is found, in which case the
  * subscription is unimportable (we have nothing meaningful to label it with).
  *
+ * The name is returned VERBATIM, including backticks when the query quoted it
+ * (``SELECT * FROM `my coll` `` → `` `my coll` ``) — callers that build
+ * display strings use it as-is; callers that re-emit DQL must unquote and
+ * re-quote (see QueryEditorPanel's attachment actions). A whitespace-first
+ * split would cut a quoted name containing a space in half, so the name is
+ * extracted in a single regex.
+ *
  * Mirrors the SwiftUI implementation in
  * `SwiftUI/EdgeStudio/Models/SmallPeerInfoModels.swift` so server-side
  * subscription strings parse identically across clients.
  */
 export function extractCollectionName(query: string): string | null {
-  const tokens = query.split(/\s+/);
-  for (let i = 0; i < tokens.length; i += 1) {
-    if (tokens[i].toUpperCase() === 'FROM' && i + 1 < tokens.length) {
-      const next = tokens[i + 1];
-      if (next.toUpperCase() === 'COLLECTION' && i + 2 < tokens.length) {
-        return tokens[i + 2];
-      }
-      return next;
-    }
-  }
-  return null;
+  const m = /(?:^|\s)FROM\s+(?:COLLECTION\s+)?(`(?:[^`]|``)*`|\S+)/i.exec(query);
+  return m ? m[1] : null;
 }
 
 /** A query targets a Ditto-internal collection (those with the `__` prefix). */

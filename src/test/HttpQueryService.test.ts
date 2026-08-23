@@ -4,6 +4,8 @@ import {
   createBodyAccumulator,
   createSettleOnce,
   interpretResponse,
+  validateHttpApiUrl,
+  executeRemoteQuery,
   HttpQueryError,
   MAX_RESPONSE_BYTES,
   REQUEST_TIMEOUT_MS,
@@ -138,4 +140,48 @@ test('REQUEST_TIMEOUT_MS: a hung server is bounded', () => {
   // request leaves the Query panel spinning in 'running' forever.
   assert.ok(Number.isFinite(REQUEST_TIMEOUT_MS));
   assert.ok(REQUEST_TIMEOUT_MS > 0 && REQUEST_TIMEOUT_MS <= 60_000);
+});
+
+// ─── validateHttpApiUrl ────────────────────────────────────────
+
+test('validateHttpApiUrl: ordinary scheme-less hosts pass', () => {
+  for (const ok of [
+    '',
+    'example.ditto.live',
+    'example.ditto.live:443',
+    'localhost:8080',
+    'example.ditto.live:443/some/base/path',
+  ]) {
+    assert.equal(validateHttpApiUrl(ok), null, ok);
+  }
+});
+
+test('validateHttpApiUrl: an `@` (URL userinfo) is refused', () => {
+  // `https://good.com@evil.com/…` parses as host evil.com with username
+  // good.com — the bearer key would be sent to the attacker's host.
+  assert.match(validateHttpApiUrl('good.com@evil.com') ?? '', /must not contain a username/);
+  assert.match(validateHttpApiUrl('user:pass@evil.com') ?? '', /must not contain/);
+});
+
+test('validateHttpApiUrl: a pasted scheme is refused with an actionable message', () => {
+  assert.match(validateHttpApiUrl('https://example.ditto.live') ?? '', /without a scheme/);
+});
+
+test('validateHttpApiUrl: unparseable or hostless values are refused', () => {
+  assert.match(validateHttpApiUrl('not a host') ?? '', /Not a valid host/);
+  assert.match(validateHttpApiUrl(':8080') ?? '', /Not a valid/);
+});
+
+test('executeRemoteQuery: refuses to send the bearer key to an `@`-trapped URL', async () => {
+  // Defence in depth: even a stored config that pre-dates the editor-side
+  // validation must be stopped here, before any socket is opened.
+  await assert.rejects(
+    executeRemoteQuery({
+      httpApiUrl: 'good.com@evil.example',
+      httpApiKey: 'secret-key',
+      allowUntrustedCerts: false,
+      query: 'SELECT * FROM t',
+    }),
+    (err: unknown) => err instanceof HttpQueryError && /Refusing to query/.test(err.message),
+  );
 });

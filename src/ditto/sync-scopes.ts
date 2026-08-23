@@ -29,8 +29,8 @@ export function validateCollectionSyncScopes(
     if (typeof candidate.scope !== 'string' || !VALID_SCOPES.has(candidate.scope)) {
       return `Collection "${candidate.collection.trim()}" has an unsupported sync scope.`;
     }
-    const typedEntry = candidate as unknown as CollectionSyncScopeEntry;
-    const collection = typedEntry.collection.trim();
+    // `candidate.collection` is a validated string at this point — no cast needed.
+    const collection = candidate.collection.trim();
     if (!collection) { return 'Collection name is required for every sync scope.'; }
     if (collection.startsWith('__')) {
       return `System collection "${collection}" cannot have a user collection sync scope.`;

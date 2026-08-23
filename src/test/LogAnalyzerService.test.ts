@@ -4,6 +4,8 @@ import { LogAnalyzerService } from '../logAnalyzer/LogAnalyzerService.js';
 import { AnalyzerSink } from '../logAnalyzer/AnalyzerSink.js';
 import { PatternEngine } from '../logAnalyzer/PatternEngine.js';
 import { ConnectionTracker } from '../logAnalyzer/ConnectionTracker.js';
+import { binVolumeByLevel, pickBinWidth } from '../logAnalyzer/Histograms.js';
+import type { LogLine } from '../logAnalyzer/types.js';
 
 function makeSvc(opts: { throttleMs?: number } = {}) {
   const sink = new AnalyzerSink({ capacity: 1000 });
@@ -424,8 +426,8 @@ test('Service: the trailing edge of a live burst is flushed', () => {
 });
 
 test('Service: start() does not leak the sink subscription', () => {
-  // The panel calls start() again on refresh. Overwriting liveSub left the old
-  // subscription attached, so every later line was processed once per start().
+  // A second start() must not stack subscriptions. Overwriting liveSub left
+  // the old subscription attached, so every later line was processed once per start().
   const { svc, sink } = makeThrottledSvc();
   svc.start();
   svc.start();
@@ -434,8 +436,8 @@ test('Service: start() does not leak the sink subscription', () => {
   assert.equal(svc.queryLines({ filter: 'all' }).total, 1, 'processed once, not three times');
 });
 
-test('Service: the refresh sequence does not duplicate the backfill', () => {
-  // What LogAnalyzerPanel does for analyzer.refresh: clear, then re-ingest.
+test('Service: the clear-then-restart sequence does not duplicate the backfill', () => {
+  // clear() is the user-facing reset; a later start() re-ingests without doubling.
   const { svc } = makeThrottledSvc();
   svc.start({ backfillLines: BACKFILL });
   const first = svc.queryLines({ filter: 'all' }).total;
@@ -523,6 +525,130 @@ test('Service: problem line ids do not survive a clear', () => {
   // A line reusing an old id must not be matched by a stale id set.
   assert.equal(svc.queryLines({ filter: 'problem' }).total, 0);
   assert.equal(svc.queryLines({ filter: 'critical' }).total, 0);
+});
+
+// ─── Incremental totals/bins vs naive scans ──────────────────────
+//
+// queryLines and the volume histogram used to re-scan the whole line buffer
+// on every call; both are now maintained incrementally at ingest (buffer-
+// scoped counters, per-second volume bins merged at flush). These tests pin
+// the incrementally-produced answers against the naive walks they replaced.
+
+/** The pre-optimisation queryLines: full newest-first scan, materialise all
+ *  matches, then slice the window. */
+function naiveQuery(
+  lines: LogLine[],
+  filter: 'critical' | 'error' | 'warn' | 'problem' | 'all',
+  problemIds: Set<number>,
+  criticalIds: Set<number>,
+  search = '',
+): LogLine[] {
+  const needle = search.trim().toLowerCase();
+  const matched: LogLine[] = [];
+  // `lines` comes from a filter:'all' query, which walks the buffer
+  // newest-first — the same order the old scan used.
+  for (const line of lines) {
+    let pass = false;
+    switch (filter) {
+      case 'all':      pass = true; break;
+      case 'error':    pass = line.level === 'error'; break;
+      case 'warn':     pass = line.level === 'warn'; break;
+      case 'problem':  pass = problemIds.has(line.id); break;
+      case 'critical': pass = criticalIds.has(line.id); break;
+    }
+    if (!pass) continue;
+    if (needle.length > 0) {
+      const userTagsHay = line.userTags ? ' ' + line.userTags.join(' ') : '';
+      const hay = (line.text + ' ' + (line.tag ?? '') + userTagsHay).toLowerCase();
+      if (!hay.includes(needle)) continue;
+    }
+    matched.push(line);
+  }
+  return matched;
+}
+
+function idSetFromProblems(svc: LogAnalyzerService, severity?: number): Set<number> {
+  const ids = new Set<number>();
+  for (const list of svc.getStateForTesting().problems.values()) {
+    for (const p of list) {
+      if (severity === undefined || p.severity === severity) { ids.add(p.line.id); }
+    }
+  }
+  return ids;
+}
+
+test('Service: queryLines results match the naive full-scan implementation', () => {
+  const { svc, sink } = makeSvc();
+  svc.start({ backfillLines: BACKFILL });
+  sink.write('error', '2026-08-23T18:56:02.000Z  ERROR  [ext]  deadlock again');
+  for (let i = 0; i < 40; i++) {
+    const level = i % 7 === 0 ? 'WARN' : i % 3 === 0 ? 'ERROR' : 'INFO';
+    sink.write('info', `2026-08-23T18:57:${String(i).padStart(2, '0')}.000Z  ${level.padEnd(5)}  [ext]  filler ${i}`);
+  }
+
+  const all = svc.queryLines({ filter: 'all', limit: 100_000 }).items;
+  const problemIds = idSetFromProblems(svc);
+  const criticalIds = idSetFromProblems(svc, 5);
+
+  const filters = ['all', 'error', 'warn', 'problem', 'critical'] as const;
+  for (const filter of filters) {
+    for (const search of [undefined, 'exception', 'ext', 'no-such-needle']) {
+      for (const [offset, limit] of [[0, 300], [2, 3], [500, 10]] as const) {
+        const naive = naiveQuery(all, filter, problemIds, criticalIds, search ?? '');
+        const got = svc.queryLines({ filter, search, limit, offset });
+        assert.deepEqual(
+          got.items.map(l => l.id),
+          naive.slice(offset, offset + limit).map(l => l.id),
+          `${filter}/search=${search}/offset=${offset}/limit=${limit} items`,
+        );
+        assert.equal(got.total, naive.length, `${filter}/search=${search} total`);
+      }
+    }
+  }
+});
+
+test('Service: the volume histogram equals a naive re-bin of the buffer', () => {
+  const { svc, sink } = makeThrottledSvc();
+  const histos: { volumeByLevel: unknown[]; }[] = [];
+  svc.onDiff(d => { if (d.type === 'histogramsUpdated') { histos.push(d.histograms); } });
+  svc.start({ backfillLines: BACKFILL });
+  sink.write('warn', '2026-08-23T18:56:10.000Z  WARN   [ext]  late warning');
+
+  svc.resume(); // force a flush so the trailing live line is reflected
+
+  const state = svc.getStateForTesting();
+  const range = state.startTime && state.endTime
+    ? state.endTime.getTime() - state.startTime.getTime()
+    : 0;
+  const binMs = pickBinWidth(Math.max(range, 1000));
+  const buffer = svc.queryLines({ filter: 'all', limit: 100_000 }).items;
+  const naive = binVolumeByLevel(buffer, binMs);
+  assert.deepEqual(histos[histos.length - 1].volumeByLevel, naive);
+});
+
+test('Service: counters stay exact across a buffer trim', () => {
+  // Push past the 2× cap so the chunked trim drops the oldest lines, then
+  // assert the incrementally-maintained totals still equal a naive count of
+  // what actually remains in the buffer.
+  const { svc, sink } = makeSvc();
+  svc.start();
+  const TOTAL = 100_001; // LINE_BUFFER_CAP * 2 + 1 → one chunked trim, leaving exactly the cap
+  for (let i = 0; i < TOTAL; i++) {
+    const level = i % 10 === 0 ? 'ERROR' : 'INFO ';
+    sink.write('info', `2026-08-23T18:59:${String(i % 60).padStart(2, '0')}.000Z  ${level}  [ext]  line ${i}`);
+  }
+  const remaining = svc.queryLines({ filter: 'all', limit: 200_000 }).items;
+  assert.equal(remaining.length, 50_000, 'buffer trimmed to the cap');
+  const wantErrors = remaining.filter(l => l.level === 'error').length;
+  assert.equal(svc.queryLines({ filter: 'error' }).total, wantErrors, 'error total');
+  assert.equal(svc.queryLines({ filter: 'warn' }).total, 0, 'warn total');
+  // And the incrementally-merged histogram covers exactly the remaining lines.
+  const state = svc.getStateForTesting();
+  const range = state.startTime && state.endTime
+    ? state.endTime.getTime() - state.startTime.getTime()
+    : 0;
+  const binMs = pickBinWidth(Math.max(range, 1000));
+  assert.deepEqual(state.histograms.volumeByLevel, binVolumeByLevel(remaining, binMs));
 });
 
 test('Service: the session snapshot is taken per flush, not per line', () => {

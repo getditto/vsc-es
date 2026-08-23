@@ -65,6 +65,13 @@ export const workspace = {
     };
   },
   onDidChangeConfiguration() { return { dispose() {} }; },
+  // Tests that drive a file-size gate set workspace.fsStatSize before the
+  // action (default 0 = an empty file). The map isn't needed — one size per
+  // test is enough because dialogs return one file at a time.
+  fsStatSize: 0,
+  fs: {
+    async stat() { return { size: workspace.fsStatSize }; },
+  },
 };
 
 export const ViewColumn = { Active: -1, Beside: -2, One: 1, Two: 2, Three: 3 };
@@ -165,6 +172,9 @@ class FakeWebviewPanel {
   }
 }
 
+/** No real progress UI in tests — run the task inline and resolve. */
+export const ProgressLocation = { Notification: 15 };
+
 export const window = {
   createWebviewPanel(viewType, title, viewColumn, options) {
     const panel = new FakeWebviewPanel(viewType, title, viewColumn, options);
@@ -172,11 +182,37 @@ export const window = {
     return panel;
   },
   showErrorMessage(message) { window.shownErrors.push(message); return Promise.resolve(undefined); },
-  showWarningMessage(message) { window.shownWarnings.push(message); return Promise.resolve(undefined); },
+  showWarningMessage(message) {
+    window.shownWarnings.push(message);
+    // Modal confirmations (e.g. Delete) await the user's choice; tests
+    // set window.warningResponse to the button label they want pressed.
+    const response = window.warningResponse;
+    window.warningResponse = undefined;
+    return Promise.resolve(response);
+  },
   showInformationMessage(message) { window.shownInfos.push(message); return Promise.resolve(undefined); },
+  /** Tests set window.openDialogResult to an array of Uri-like values
+   *  to simulate picking files; undefined/null = user cancelled. */
+  showOpenDialog() { return Promise.resolve(window.openDialogResult); },
+  /** Tests set window.quickPickResult to the item array the user "picked". */
+  showQuickPick() { return Promise.resolve(window.quickPickResult); },
+  /** Records the last validateInput callback so a test can exercise it, and
+   *  resolves to window.inputBoxResult (undefined = dismissed). */
+  showInputBox(options) {
+    window.lastInputBoxValidate = options?.validateInput;
+    return Promise.resolve(window.inputBoxResult);
+  },
+  withProgress(_options, task) {
+    return task({ report() {} }, { isCancellationRequested: false, onCancellationRequested() { return { dispose() {} }; } });
+  },
   shownErrors: [],
   shownWarnings: [],
   shownInfos: [],
+  openDialogResult: undefined,
+  quickPickResult: undefined,
+  inputBoxResult: undefined,
+  warningResponse: undefined,
+  lastInputBoxValidate: undefined,
 };
 
 export const commands = {
@@ -195,5 +231,11 @@ export function __resetStub() {
   window.shownErrors.length = 0;
   window.shownWarnings.length = 0;
   window.shownInfos.length = 0;
+  window.openDialogResult = undefined;
+  window.quickPickResult = undefined;
+  window.inputBoxResult = undefined;
+  window.warningResponse = undefined;
+  window.lastInputBoxValidate = undefined;
+  workspace.fsStatSize = 0;
   commands.executed.length = 0;
 }
