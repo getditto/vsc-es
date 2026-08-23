@@ -151,8 +151,12 @@ class FakeWebviewPanel {
     for (const l of [...this._disposeListeners]) { l(); }
   }
 
-  /** Deliver a message from the webview to the host. */
-  fireMessage(msg) { for (const l of [...this._messageListeners]) { l(msg); } }
+  /** Deliver a message from the webview to the host.
+   *
+   *  The listeners live on the webview, not the panel — reading them from
+   *  `this` here silently delivered nothing, which made every message-handling
+   *  assertion fail with "not iterable" rather than with a useful diff. */
+  fireMessage(msg) { for (const l of [...this.webview._messageListeners]) { l(msg); } }
 
   /** Drive a focus change. */
   fireViewState(active) {

@@ -65,6 +65,9 @@ const SYNC_STATUS_HANDLE_ID = '__sync_status';
 export class DittoManager {
   private session: ActiveSession | null = null;
   private status: DatabaseStatus = 'idle';
+  /** Which config `status` describes. Needed because a failed connect leaves
+   *  no session to infer it from. */
+  private statusConfigId: string | null = null;
   private syncState: SyncState = 'idle';
   private statusListeners = new Set<StatusListener>();
   private presenceListeners = new Set<PresenceListener>();
@@ -92,8 +95,13 @@ export class DittoManager {
   }
 
   getStatus(configId: string): DatabaseStatus {
-    if (!this.session) { return 'idle'; }
-    if (this.session.configId === configId) { return this.status; }
+    if (this.session?.configId === configId) { return this.status; }
+    // A failed connect holds no session — the catch tears the partial one down
+    // — so short-circuiting on `!this.session` made 'error' unreachable. The
+    // tree derives its red icon and the `database.error` context value from
+    // this, so the row fell back to the plain idle circle and the user got no
+    // lasting sign that the last attempt failed.
+    if (this.status === 'error' && this.statusConfigId === configId) { return 'error'; }
     return 'idle';
   }
 
@@ -966,17 +974,38 @@ export class DittoManager {
     } else {
       this.latestSnapshot = { local: this.localPeerInfo, remote: [] };
     }
-    for (const l of this.presenceListeners) { l(this.latestSnapshot); }
+    for (const l of this.presenceListeners) { this.notify(l, this.latestSnapshot); }
+  }
+
+  /**
+   * Invoke one listener, isolating its failure.
+   *
+   * Listeners are observers — a tree provider, a panel that may be mid-
+   * disposal — and their exceptions used to propagate out of setStatus and
+   * therefore out of connect(), turning an unrelated UI bug into a connection
+   * failure. `setStatus('activating', …)` runs before connect's try block, so a
+   * throw there escaped with no teardown at all. Matches the isolation
+   * AnalyzerSink.write already applies to its own listeners.
+   */
+  private notify<A extends unknown[]>(listener: (...args: A) => void, ...args: A): void {
+    try {
+      listener(...args);
+    } catch (err) {
+      this.log.warn('Listener threw; continuing', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private setStatus(s: DatabaseStatus, configId: string | null) {
     this.status = s;
-    for (const l of this.statusListeners) { l(s, configId); }
+    this.statusConfigId = configId;
+    for (const l of this.statusListeners) { this.notify(l, s, configId); }
   }
 
   private setSyncState(s: SyncState, configId: string | null) {
     if (this.syncState === s) { return; }
     this.syncState = s;
-    for (const l of this.syncListeners) { l(s, configId); }
+    for (const l of this.syncListeners) { this.notify(l, s, configId); }
   }
 }
