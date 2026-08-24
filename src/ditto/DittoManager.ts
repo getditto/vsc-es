@@ -221,6 +221,7 @@ export class DittoManager {
             `Cannot open the Ditto working directory because it is locked by another process: ${persistenceDir}\n` +
             `Another VS Code window may have this connection open, or a previous instance is still shutting down. ` +
             `Close other VS Code windows using this connection, or restart VS Code, then try again.`,
+            { cause: openErr },
           );
         }
         throw openErr;

@@ -102,7 +102,7 @@ export class FileSink {
     // single oversized payload would loop forever.
     while (true) {
       let size = 0;
-      try { size = (await fs.stat(active)).size; } catch { size = 0; }
+      try { size = (await fs.stat(active)).size; } catch { /* file absent → size stays 0 */ }
       if (size + Buffer.byteLength(payload) <= this.opts.maxBytes) break;
       const didRotate = await this.rotate(active);
       if (!didRotate) break;
