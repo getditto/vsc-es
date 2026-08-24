@@ -57,7 +57,7 @@ test('PatternEngine: user overrides bundled by key', () => {
   engine.load();
   const hits = engine.scan(line({ text: 'user-wins' }));
   assert.equal(hits.length, 1);
-  assert.equal(hits[0].severity, 4);
+  assert.equal(hits[0]?.severity, 4);
 });
 
 test('PatternEngine: invalid regex skips entry, other patterns still load', () => {
@@ -116,7 +116,7 @@ test('PatternEngine: rejects a user pattern that nests a quantifier', () => {
   engine.load();
   assert.deepEqual(engine.listKeys(), []);
   assert.deepEqual(engine.listRejected().map(r => r.key), ['evil']);
-  assert.match(engine.listRejected()[0].reason, /backtrack/);
+  assert.match(engine.listRejected()[0]?.reason ?? '', /backtrack/);
 });
 
 test('PatternEngine: bundled patterns skip the nested-quantifier check', () => {
@@ -136,7 +136,7 @@ test('PatternEngine: rejects an over-long user pattern', () => {
   }));
   engine.load();
   assert.deepEqual(engine.listKeys(), []);
-  assert.match(engine.listRejected()[0].reason, /512 characters/);
+  assert.match(engine.listRejected()[0]?.reason ?? '', /512 characters/);
 });
 
 test('PatternEngine: rejects a missing or empty pattern rather than matching everything', () => {

@@ -16,7 +16,7 @@ import type { LogLine } from '../../../src/logAnalyzer/types.js';
  *  (no need to churn the protocol), but they're no longer rendered. */
 @customElement('line-detail-drawer')
 export class LineDetailDrawer extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       position: fixed;
       top: 0;
@@ -156,7 +156,7 @@ export class LineDetailDrawer extends LitElement {
     this.dispatchEvent(new CustomEvent('drawer-close', { bubbles: true, composed: true }));
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const l = this.line;
     return html`
       <div class="head">

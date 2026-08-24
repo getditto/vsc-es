@@ -62,7 +62,7 @@ export class DittoResultTable extends LitElement {
    *  emitted events — used by callers that page client-side. */
   @property({ attribute: false }) pageOffset = 0;
 
-  static styles = css`
+  static override styles = css`
     :host { display: block; height: 100%; overflow: auto; }
     table {
       width: 100%;
@@ -109,7 +109,7 @@ export class DittoResultTable extends LitElement {
     }
   `;
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     if (this.rows.length === 0) {
       return html`<div class="empty">No rows.</div>`;
     }

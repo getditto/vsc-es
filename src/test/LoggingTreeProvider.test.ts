@@ -38,6 +38,7 @@ test('LoggingTreeProvider: appLevel item description shows current level', async
   const f = fakeLogger();
   const p = new LoggingTreeProvider(f.api);
   const [app] = p.getChildren();
+  assert.ok(app);
   const item = p.getTreeItem(app);
   assert.match(String(item.description), /info/);
 });

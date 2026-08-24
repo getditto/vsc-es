@@ -415,7 +415,7 @@ export class PresenceGraphScene {
     const list = [...this.peers.values()];
     for (let i = list.length - 1; i >= 0; i -= 1) {
       const n = list[i];
-      if (pillContainsPoint(ctx, n, world)) { return n; }
+      if (n && pillContainsPoint(ctx, n, world)) { return n; }
     }
     return undefined;
   }

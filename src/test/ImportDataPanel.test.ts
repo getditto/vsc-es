@@ -89,6 +89,7 @@ test('ImportDataPanel: a file over the 100 MB cap is refused by stat, before any
     showPanel();
     stub.window.openDialogResult = [stub.Uri.file(big)];
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel);
     await settle();
 
     panel.fireMessage({ type: 'importData.chooseFile' });
@@ -96,8 +97,8 @@ test('ImportDataPanel: a file over the 100 MB cap is refused by stat, before any
 
     const errors = postedOfType<{ type: string; message: string }>(panel.webview.posted, 'importData.error');
     assert.equal(errors.length, 1, `expected one error post; saw ${JSON.stringify(panel.webview.posted.map(m => (m as { type?: string }).type))}`);
-    assert.match(errors[0].message, /100 MB/, 'the message states the cap');
-    assert.match(errors[0].message, /limited to/, 'the message explains the refusal');
+    assert.match(errors[0]!.message, /100 MB/, 'the message states the cap');
+    assert.match(errors[0]!.message, /limited to/, 'the message explains the refusal');
     assert.equal(
       postedOfType(panel.webview.posted, 'importData.fileSelected').length, 0,
       'an over-cap file never reaches the parsed state',
@@ -117,6 +118,7 @@ test('ImportDataPanel: a valid small file is accepted and echoed back', async ()
     showPanel();
     stub.window.openDialogResult = [stub.Uri.file(file)];
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel);
     await settle();
 
     panel.fireMessage({ type: 'importData.chooseFile' });
@@ -126,8 +128,8 @@ test('ImportDataPanel: a valid small file is accepted and echoed back', async ()
       panel.webview.posted, 'importData.fileSelected',
     );
     assert.equal(selected.length, 1);
-    assert.equal(selected[0].documentCount, 2);
-    assert.equal(selected[0].fileName, 'docs.json');
+    assert.equal(selected[0]?.documentCount, 2);
+    assert.equal(selected[0]?.fileName, 'docs.json');
     assert.deepEqual(stub.window.shownErrors, []);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

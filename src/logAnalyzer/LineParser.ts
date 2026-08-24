@@ -27,6 +27,9 @@ export function parseLine(raw: string, id: number): LogLine {
     return { id, timestamp: null, level: 'info', tag: null, raw: safe, text: safe };
   }
   const [, tsRaw, lvlRaw, tag] = m;
+  if (tsRaw === undefined || lvlRaw === undefined) {
+    return { id, timestamp: null, level: 'info', tag: null, raw: safe, text: safe };
+  }
   const level = LEVEL_TOKENS[lvlRaw.trim()] ?? 'info';
   let timestamp: Date | null = null;
   const d = new Date(tsRaw);

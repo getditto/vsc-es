@@ -343,7 +343,7 @@ test('initial connect failure: toast and a rollback-free outcome', async () => {
   assert.equal(outcome.kind, 'connect-failed');
   assert.equal(outcome.kind === 'connect-failed' ? outcome.rollback : 'x', null);
   assert.equal(rec.errors.length, 1);
-  assert.match(rec.errors[0], /Connect failed: boom-B/);
+  assert.match(rec.errors[0]!, /Connect failed: boom-B/);
   assert.equal(rec.calls.filter(c => c === 'ui.showModalWarn').length, 0);
 });
 
@@ -352,9 +352,9 @@ test('confirmRollback maps the modal choice to a boolean', async () => {
   const yes = await confirmRollback(deps, { id: 'A', name: 'db-A' }, 'Connect to "db-B" failed: boom');
   assert.equal(yes, true);
   assert.equal(rec.modalArgs.length, 1);
-  assert.match(rec.modalArgs[0].message, /boom/);
-  assert.match(rec.modalArgs[0].message, /Reconnect to "db-A"\?/);
-  assert.deepEqual(rec.modalArgs[0].buttons, ['Reconnect to db-A', 'Stay disconnected']);
+  assert.match(rec.modalArgs[0]?.message ?? '', /boom/);
+  assert.match(rec.modalArgs[0]?.message ?? '', /Reconnect to "db-A"\?/);
+  assert.deepEqual(rec.modalArgs[0]?.buttons, ['Reconnect to db-A', 'Stay disconnected']);
 
   const { deps: deps2 } = buildDeps({ modalAnswer: 'Stay disconnected' });
   const no = await confirmRollback(deps2, { id: 'A', name: 'db-A' }, 'failed');
@@ -416,8 +416,8 @@ test('rollback failure: rollback connect also rejects, secondary error fires; no
 
   // showError fired with the secondary message naming both.
   assert.equal(rec.errors.length, 1);
-  assert.match(rec.errors[0], /also failed/);
-  assert.match(rec.errors[0], /db-A/);
+  assert.match(rec.errors[0]!, /also failed/);
+  assert.match(rec.errors[0]!, /db-A/);
 
   // No panel restore.
   assert.ok(!rec.calls.some(c => c.startsWith('panels.showQuery')));
@@ -441,6 +441,6 @@ test('rollback with a deleted from-config: error toast, no connect', async () =>
   await rollbackSwitch(deps, outcome.rollback);
 
   assert.equal(rec.errors.length, 1);
-  assert.match(rec.errors[0], /no longer available/);
+  assert.match(rec.errors[0]!, /no longer available/);
   assert.ok(!rec.calls.includes('manager.connect(A)'));
 });

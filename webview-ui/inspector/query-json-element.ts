@@ -12,7 +12,7 @@ import '../shared/json-viewer.js';
 export class QueryJsonElement extends LitElement {
   @property() json: string | undefined;
 
-  static styles = [codiconStyles, css`
+  static override styles = [codiconStyles, css`
     :host { display: block; padding: 12px; color: var(--vscode-foreground); }
     .empty {
       color: var(--vscode-descriptionForeground);
@@ -39,7 +39,7 @@ export class QueryJsonElement extends LitElement {
     }
   `];
 
-  render() {
+  override render() {
     if (!this.json) {
       return html`
         <div class="empty">

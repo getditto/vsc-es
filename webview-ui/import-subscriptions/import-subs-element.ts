@@ -27,7 +27,7 @@ type ViewState =
 export class ImportSubscriptionsElement extends LitElement {
   @state() private view: ViewState = { kind: 'loading' };
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block; padding: 24px; max-width: 820px;
       font-family: var(--vscode-font-family); color: var(--vscode-foreground);
@@ -106,7 +106,7 @@ export class ImportSubscriptionsElement extends LitElement {
 
   private cancel(): void { postToHost({ type: 'importSubs.cancel' }); }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <h2>Import Subscriptions from Server</h2>
       <div class="subtitle">

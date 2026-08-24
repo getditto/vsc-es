@@ -1,6 +1,6 @@
 // src/inspector/InspectorViewProvider.ts
 import * as vscode from 'vscode';
-import * as fs from 'node:fs/promises';
+import type { Attachment } from '@dittolive/ditto';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from './InspectorController.js';
 import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
@@ -232,18 +232,21 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Cache lookup. Key is (activeDatabaseId, attachmentId) — the same
-    // attachment referenced from two different query rows shares an
-    // entry. On hit we skip the SDK round-trip entirely; the user gets
-    // the preview/save back immediately instead of waiting for another
-    // download when they switch tabs and come back. Cache is cleared on
-    // disconnect (see extension.ts), so a stale entry can't outlive
-    // its database.
+    // Cache lookup (preview only). Key is (activeDatabaseId, attachmentId)
+    // — the same attachment referenced from two different query rows shares
+    // an entry. On hit we skip the SDK round-trip entirely; the user gets
+    // the preview back immediately instead of waiting for another download
+    // when they switch tabs and come back. Cache is cleared on disconnect
+    // (see extension.ts), so a stale entry can't outlive its database.
+    //
+    // The save path deliberately skips the byte cache: saving streams
+    // natively via `Attachment.copyToPath` (see saveAttachment below) and
+    // never touches a JS-side buffer, so cached bytes are irrelevant to it.
     const activeDbId = this.manager.getActiveConfigId();
-    if (activeDbId) {
+    if (!save && activeDbId) {
       const cached = this.attachmentCache.get(activeDbId, tokenAny.id);
       if (cached) {
-        await this.deliverAttachment(tokenId, save, cached.bytes, cached.mimeType, cached.filename);
+        await this.deliverAttachment(tokenId, cached.bytes, cached.mimeType);
         return;
       }
     }
@@ -268,7 +271,6 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'inspector.attachmentError', tokenId, message: 'Fetch returned null' });
         return;
       }
-      const buf = await att.data();
       const meta = (att.metadata ?? {}) as Record<string, unknown>;
       // Real-world tokens come from a few different writers — SwiftUI
       // uses `mimeType`/`name`, the Node SDK examples use `contentType`/
@@ -276,6 +278,13 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       // viewer doesn't fall back to "application/octet-stream" for a
       // perfectly-valid image.
       const filename = attachmentFilename(meta);
+
+      if (save) {
+        await this.saveAttachment(tokenId, att, filename);
+        return;
+      }
+
+      const buf = await att.data();
       const contentType = attachmentContentType(meta) ?? 'application/octet-stream';
 
       // Populate cache before delivery — a later switch-back will hit.
@@ -291,7 +300,7 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         });
       }
 
-      await this.deliverAttachment(tokenId, save, buf, contentType, filename);
+      await this.deliverAttachment(tokenId, buf, contentType);
     } catch (err) {
       log.error('Attachment fetch failed', {
         tokenId,
@@ -306,33 +315,45 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Shared "we have the bytes, now hand them to the user" path. Split
-   * out so cache hits and fresh fetches converge on identical delivery
-   * semantics — the webview can't tell which one happened.
+   * The Download path. Opens the OS save dialog (cancelling is a silent
+   * no-op, unchanged from the literal-write behaviour) and copies the
+   * attachment STRAIGHT to the picked file via `Attachment.copyToPath`
+   * through the manager — the blob never becomes a JS `Uint8Array` here.
    *
-   * `save = true` opens the OS save dialog; cancelling is a silent
-   * no-op (matches the prior behaviour). `save = false` posts a
-   * `data:` URI to the inline viewer; see the comment block below for
-   * why we use data URIs instead of webview resource URIs.
+   * Download is intentionally uncapped (the user explicitly asked for the
+   * file), so the old `att.data()` + `fs.writeFile` route transiently held
+   * the full attachment in the shared extension host's heap; for a big
+   * blob that is a real heap spike. The SDK's native copy avoids it
+   * entirely. Errors surface through fetchAttachment's single catch, which
+   * posts `inspector.attachmentError`.
+   */
+  private async saveAttachment(
+    tokenId: string,
+    att: Attachment,
+    filename: string | undefined,
+  ): Promise<void> {
+    const ext = filename?.split('.').pop() ?? 'bin';
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(filename ?? `attachment.${ext}`),
+    });
+    if (!uri) { return; }
+    await this.manager.saveAttachmentToPath(att, uri.fsPath);
+    this.post({ type: 'inspector.attachmentSaved', tokenId, path: uri.fsPath });
+  }
+
+  /**
+   * Shared "we have the bytes, now hand them to the inline viewer" path.
+   * Split out so cache hits and fresh preview fetches converge on
+   * identical delivery semantics — the webview can't tell which one
+   * happened. Posts a `data:` URI to the inline viewer; see the comment
+   * block below for why we use data URIs instead of webview resource
+   * URIs. The save path never reaches here — see saveAttachment.
    */
   private async deliverAttachment(
     tokenId: string,
-    save: boolean,
     buf: Buffer,
     contentType: string,
-    filename: string | undefined,
   ): Promise<void> {
-    if (save) {
-      const ext = filename?.split('.').pop() ?? 'bin';
-      const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(filename ?? `attachment.${ext}`),
-      });
-      if (!uri) { return; }
-      await fs.writeFile(uri.fsPath, buf);
-      this.post({ type: 'inspector.attachmentSaved', tokenId, path: uri.fsPath });
-      return;
-    }
-
     // Defense in depth by ACTUAL byte count: the fetch path already
     // refused over-cap tokens by their declared `len`, but a token can
     // lie, and the cache-hit path re-enters here without re-checking the

@@ -36,7 +36,7 @@ test('Logger: writes to channel and file at default info level', async () => {
   logger.info('hello');
   await logger.flush();
   assert.equal(ch.lines.length, 1);
-  assert.match(ch.lines[0].line, /INFO/);
+  assert.match(ch.lines[0]!.line, /INFO/);
   const file = await fs.readFile(path.join(dir, 'ditto-edge-studio.log'), 'utf8');
   assert.match(file, /INFO.*hello/);
   await logger.dispose();
@@ -86,7 +86,7 @@ test('Logger: withTag prepends tag to messages', async () => {
   const sub = logger.withTag('ext:DittoManager');
   sub.info('Connected');
   await logger.flush();
-  assert.match(ch.lines[0].line, /\[ext:DittoManager\]/);
+  assert.match(ch.lines[0]!.line, /\[ext:DittoManager\]/);
   await logger.dispose();
 });
 
@@ -119,8 +119,8 @@ test('Logger: redacts secrets in production mode', async () => {
   const logger = createLogger({ channel: ch.api, fileDir: dir, mode: 'production' });
   logger.info('Login OK', { token: 'sk_live_xxx' });
   await logger.flush();
-  assert.doesNotMatch(ch.lines[0].line, /sk_live_xxx/);
-  assert.match(ch.lines[0].line, /\[redacted\]/);
+  assert.doesNotMatch(ch.lines[0]!.line, /sk_live_xxx/);
+  assert.match(ch.lines[0]!.line, /\[redacted\]/);
   await logger.dispose();
 });
 
@@ -170,8 +170,8 @@ test('Logger: registered known secrets are redacted in production', async () => 
   logger.registerKnownSecrets(['live-secret-value-9f8e7d']);
   logger.info('attaching live-secret-value-9f8e7d to request');
   await logger.flush();
-  assert.doesNotMatch(ch.lines[0].line, /live-secret-value-9f8e7d/);
-  assert.match(ch.lines[0].line, /\[redacted\]/);
+  assert.doesNotMatch(ch.lines[0]!.line, /live-secret-value-9f8e7d/);
+  assert.match(ch.lines[0]!.line, /\[redacted\]/);
   await logger.dispose();
 });
 
@@ -182,7 +182,7 @@ test('Logger: known secrets under 8 chars are ignored', async () => {
   logger.registerKnownSecrets(['short']);
   logger.info('this line mentions short plainly');
   await logger.flush();
-  assert.match(ch.lines[0].line, /short/);
+  assert.match(ch.lines[0]!.line, /short/);
   await logger.dispose();
 });
 
@@ -194,7 +194,7 @@ test('Logger: clearKnownSecrets stops redacting previously registered values', a
   logger.clearKnownSecrets();
   logger.info('mentions stale-secret-0001 after clear');
   await logger.flush();
-  assert.match(ch.lines[0].line, /stale-secret-0001/);
+  assert.match(ch.lines[0]!.line, /stale-secret-0001/);
   await logger.dispose();
 });
 
@@ -219,8 +219,8 @@ test('Logger: writes to extraSinks alongside channel and file', async () => {
   logger.info('via-extra-sink');
   await logger.flush();
   assert.equal(captured.length, 1);
-  assert.equal(captured[0].level, 'info');
-  assert.match(captured[0].line, /via-extra-sink/);
+  assert.equal(captured[0]?.level, 'info');
+  assert.match(captured[0]?.line ?? '', /via-extra-sink/);
   await logger.dispose();
 });
 

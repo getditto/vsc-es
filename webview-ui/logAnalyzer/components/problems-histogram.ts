@@ -15,7 +15,7 @@ const SEV_COLOR: Record<number, string> = {
 
 @customElement('problems-histogram')
 export class ProblemsHistogram extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host { display: block; }
     svg { width: 100%; height: 120px; }
     .empty {
@@ -28,7 +28,7 @@ export class ProblemsHistogram extends LitElement {
   @property({ type: Array })
   bins: AnalyzerState['histograms']['problemsOverTime'] = [];
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     if (this.bins.length === 0) {
       return html`<div class="empty">No problems yet.</div>`;
     }

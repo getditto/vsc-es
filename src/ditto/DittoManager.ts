@@ -13,6 +13,7 @@ import {
   type DQLQueryArguments,
   type TransportConfig,
   type PresenceGraph,
+  type Attachment,
   type AttachmentFetcher,
   type AttachmentFetchEvent,
 } from '@dittolive/ditto';
@@ -56,9 +57,9 @@ export type SyncState = 'active' | 'idle';
 interface ActiveSession {
   configId: string;
   ditto: Ditto;
-  presenceObserver?: { stop?: () => void };
+  presenceObserver?: { stop?: () => void } | undefined;
   subscriptionHandles: Map<string, { cancel: () => void }>;
-  presenceCoalesceTimer?: NodeJS.Timeout;
+  presenceCoalesceTimer?: NodeJS.Timeout | undefined;
 }
 
 /** Cap on rows shipped to an observer webview per firing. The Differ still
@@ -473,6 +474,24 @@ export class DittoManager {
   ): AttachmentFetcher | null {
     if (!this.session) { return null; }
     return this.session.ditto.store.fetchAttachment(token, onEvent);
+  }
+
+  /**
+   * Save a fetched attachment to `destPath` WITHOUT materializing its bytes
+   * in the extension-host heap: the SDK's `Attachment.copyToPath` performs a
+   * native store-to-disk copy, so the whole blob never becomes a JS
+   * `Uint8Array` (which `attachment.data()` + `fs.writeFile` would give you,
+   * doubling peak memory for the duration of the write).
+   *
+   * Used by the Inspector's uncapped Download action — the user explicitly
+   * asked for the file, so large attachments must be writable without heap
+   * pressure on the shared extension host.
+   *
+   * Throws whatever the SDK throws (e.g. permission errors surface as a
+   * `DittoError` whose message the caller reports).
+   */
+  async saveAttachmentToPath(attachment: Attachment, destPath: string): Promise<void> {
+    await attachment.copyToPath(destPath);
   }
 
   /** Run a raw DQL query and return its rows. No EXPLAIN side-trip, no

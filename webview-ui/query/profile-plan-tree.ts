@@ -19,7 +19,7 @@ import {
 export class DittoProfilePlanTree extends LitElement {
   @property({ attribute: false }) root!: QueryProfileOperator;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       background: var(--vscode-editorWidget-background);
@@ -70,7 +70,7 @@ export class DittoProfilePlanTree extends LitElement {
     }
   `;
 
-  render() {
+  override render() {
     const totalExec = subtreeExecNs(this.root);
     const laid = layout(this.root, 0);
     const flat = flatten(laid);

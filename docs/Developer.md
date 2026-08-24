@@ -477,6 +477,15 @@ add a fourth:
   `webview-ui/inspector/attachment-viewer-element.ts`: detects
   `_meta`-shaped tokens in the selected row's JSON, renders inline
   for known image MIME types, otherwise offers a Save action.
+- **Download streams natively.** The Inspector's save-to-disk action
+  goes through `DittoManager.saveAttachmentToPath`
+  (`Attachment.copyToPath` under the hood), a native store-to-disk
+  copy — the blob never becomes a JS `Uint8Array` in the extension
+  host. Download is intentionally uncapped, so the old `att.data()` +
+  `fs.writeFile` route (full blob in heap for the duration of the
+  write) was a real memory spike for big attachments. The inline
+  preview path keeps `att.data()` + the byte cache, bounded by
+  `ATTACHMENT_PREVIEW_LIMIT` — see `src/inspector/InspectorViewProvider.ts`.
 
 ### Logging
 
@@ -517,7 +526,9 @@ add a fourth:
   here: no `WebviewPanelSerializer` is registered, and panel state is instead
   persisted per-database through `OpenPanelsTracker` and replayed by the switch
   orchestrator's restore path. That covers reconnect but not a window reload,
-  and the memory cost is real and paid per open panel. Revisiting means moving
+  and the memory cost is real and paid per open panel — bounded for the Query
+  Editor by `MAX_OPEN_QUERY_TABS` (20 live tabs; the next `show()` refuses
+  with a toast instead of growing memory without limit). Revisiting means moving
   each panel to `getState`/`setState` (the API is already declared in
   `webview-ui/shared/messaging.ts` and unused) — a per-panel migration with no
   current test coverage of panel state, so it wants doing deliberately.

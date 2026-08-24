@@ -133,14 +133,14 @@ export interface PeerInfo {
   id: string;
   isDittoServer: boolean;
   deviceName: string;
-  os?: PeerOS;
-  dittoSdkVersion?: string;
-  peerMetadata?: Record<string, unknown>;
-  identityMetadata?: Record<string, unknown>;
+  os?: PeerOS | undefined;
+  dittoSdkVersion?: string | undefined;
+  peerMetadata?: Record<string, unknown> | undefined;
+  identityMetadata?: Record<string, unknown> | undefined;
   connections: ConnectionInfo[];
   syncSessionStatus: SyncSessionStatus;
-  syncedUpToLocalCommitId?: number;
-  lastUpdateReceivedTime?: number;
+  syncedUpToLocalCommitId?: number | undefined;
+  lastUpdateReceivedTime?: number | undefined;
 }
 
 export interface LocalPeerInfo {
@@ -181,5 +181,5 @@ export interface PeerListSnapshot {
   /** Optional full presence graph (no direct-only filter, all edges).
    *  Populated when the manager has a real presence snapshot; absent
    *  for the synthetic "no active session" payload. */
-  presenceGraph?: RawPresenceGraph;
+  presenceGraph?: RawPresenceGraph | undefined;
 }

@@ -90,8 +90,8 @@ test('live DQL: insert and select round-trip for names that need quoting', async
       await exec(`INSERT INTO ${target} DOCUMENTS (:doc)`, { doc: { _id: 'a', qty: 1 } });
       const rows = await exec(`SELECT * FROM ${target}`);
       assert.equal(rows.length, 1, `round-trip for ${name}`);
-      assert.equal(rows[0]._id, 'a');
-      assert.equal(rows[0].qty, 1);
+      assert.equal(rows[0]?._id, 'a');
+      assert.equal(rows[0]?.qty, 1);
     }
   });
 });
@@ -296,7 +296,7 @@ test('live DQL: COUNT(*) hydration query parses for awkward names', async () => 
     const rows = await exec(
       `SELECT COUNT(*) AS numDocs FROM ${quoteIdentifier('order-items', 'collection')}`,
     );
-    assert.equal(Number(rows[0].numDocs), 2);
+    assert.equal(Number(rows[0]?.numDocs), 2);
   });
 });
 

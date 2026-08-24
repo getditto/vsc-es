@@ -9,7 +9,7 @@ import type { AnalyzerState } from '../../../src/logAnalyzer/types.js';
  *  aligned across renders. */
 @customElement('duration-histogram')
 export class DurationHistogram extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       color: var(--vscode-foreground);
@@ -33,7 +33,7 @@ export class DurationHistogram extends LitElement {
   @property({ type: Array })
   bins: AnalyzerState['histograms']['connectionDurations'] = [];
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     if (this.bins.length === 0 || this.bins.every((b) => b.count === 0)) {
       return html`<div class="empty">No closed sessions yet.</div>`;
     }

@@ -23,7 +23,7 @@ export type QueryResultMetadata = {
    *  — see `isProfilableSelect`). Undefined for HTTP runs, non-SELECT
    *  statements, profiling-disabled runs, and any case where Ditto
    *  didn't emit a parseable envelope (forward-compatible degrade). */
-  profile?: QueryProfile;
+  profile?: QueryProfile | undefined;
   /** True when the result set exceeded the host's row cap and only the
    *  first `resultCount` rows were shipped to the webview. */
   truncated?: boolean;
@@ -45,7 +45,7 @@ export type InspectorContent =
       databaseId: string;
       tab: QueryInspectorTab;
       lastResultMetadata?: QueryResultMetadata;
-      selectedRowJson?: string;
+      selectedRowJson?: string | undefined;
     }
   | {
       /** Active feature = Observer panel for a specific observer.
@@ -56,7 +56,7 @@ export type InspectorContent =
       databaseId: string;
       observerId: string;
       tab: 'json' | 'help';
-      selectedRowJson?: string;
+      selectedRowJson?: string | undefined;
     };
 
 /** SDK attachment token as found in document fields. The Node SDK
@@ -81,7 +81,7 @@ export interface DetectedAttachment {
    *  metadata keys vary across writers — SwiftUI uses `mimeType`/
    *  `name`, the SDK docs use `contentType`/`filename`. We accept all
    *  variants here so the viewer doesn't show "?" for valid tokens. */
-  metadata: { id: string; length: number; contentType?: string; filename?: string };
+  metadata: { id: string; length: number; contentType?: string | undefined; filename?: string | undefined };
 }
 
 /** True when an object looks like an attachment token from any known

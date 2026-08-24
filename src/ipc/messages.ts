@@ -41,7 +41,7 @@ export type EditorOut =
   | { type: 'editor.activeConnectionChanged'; isActiveConnection: boolean }
   | { type: 'editor.systemSettingsLoaded'; options: SystemSettingOption[] }
   | { type: 'editor.systemSettingsLoadError'; message: string }
-  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' };
+  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' | undefined };
 
 // ─── Subscription editor panel ─────────────────────────────────
 export type SubIn =
@@ -49,7 +49,7 @@ export type SubIn =
   | { type: 'sub.cancel' };
 
 export type SubOut =
-  | { type: 'sub.init'; id?: string; name: string; query: string };
+  | { type: 'sub.init'; id?: string | undefined; name: string; query: string };
 
 // ─── Import Subscriptions from Server panel ────────────────────
 export type ImportSubsIn =
@@ -93,7 +93,7 @@ export type ImportDataOut =
       type: 'importData.init';
       databaseName: string;
       existingCollections: string[];
-      preselectedCollection?: string;
+      preselectedCollection?: string | undefined;
     }
   | { type: 'importData.collectionsRefreshed'; existingCollections: string[] }
   | {
@@ -107,7 +107,7 @@ export type ImportDataOut =
       type: 'importData.progress';
       current: number;
       total: number;
-      currentDocumentId?: string;
+      currentDocumentId?: string | undefined;
     }
   | {
       type: 'importData.done';
@@ -131,7 +131,7 @@ export type AddIndexIn =
   | { type: 'addIndex.cancel' };
 
 export type AddIndexOut =
-  | { type: 'addIndex.init'; collections: string[]; preselected?: string }
+  | { type: 'addIndex.init'; collections: string[]; preselected?: string | undefined }
   | { type: 'addIndex.error'; message: string }
   | { type: 'addIndex.created' };
 
@@ -151,7 +151,7 @@ export interface LocalNetworkInterface {
    *  AccessPoint transport. */
   kind: 'lan' | 'loopback' | 'other';
   /** First non-internal MAC we see for this interface. */
-  mac?: string;
+  mac?: string | undefined;
   /** All IPv4 addresses; usually one but VPNs/aliases produce multiples. */
   ipv4: { address: string; cidr: string }[];
   /** All IPv6 addresses (link-local + global). */

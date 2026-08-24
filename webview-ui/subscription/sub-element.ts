@@ -10,7 +10,7 @@ export class SubscriptionEditor extends LitElement {
   @state() private name = '';
   @state() private query = '';
 
-  static styles = css`
+  static override styles = css`
     :host { display: block; padding: 24px; max-width: 640px; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
     h2 { margin-top: 24px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vscode-descriptionForeground); }
     label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--vscode-descriptionForeground); }
@@ -39,7 +39,7 @@ export class SubscriptionEditor extends LitElement {
   private save() { postToHost({ type: 'sub.save', id: this.subId, name: this.name, query: this.query }); }
   private cancel() { postToHost({ type: 'sub.cancel' }); }
 
-  render() {
+  override render() {
     return html`
       <h2>Basic Information</h2>
       <label>Name</label>

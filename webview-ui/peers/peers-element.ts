@@ -214,7 +214,7 @@ export class PeerListing extends LitElement {
   private tickInterval: number | null = null;
   private completeClearTimer: number | null = null;
 
-  static styles = css`
+  static override styles = css`
     /* @font-face for codicon registers at document level via panelHtml's <link>;
        the rules below define .codicon glyphs INSIDE shadow DOM (Lit Constructed
        Stylesheets don't support @import, and class selectors don't cross
@@ -748,12 +748,12 @@ export class PeerListing extends LitElement {
     }
   });
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
     this.tickInterval = window.setInterval(() => { this.nowTick++; }, 30_000);
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this.tickInterval !== null) { window.clearInterval(this.tickInterval); }
     if (this.completeClearTimer !== null) {
@@ -820,7 +820,7 @@ export class PeerListing extends LitElement {
     } catch { /* clipboard may be unavailable; silently fail */ }
   }
 
-  render() {
+  override render() {
     return html`
       <h1 class="page-title">Presence</h1>
       <div class="header">

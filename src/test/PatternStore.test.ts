@@ -92,7 +92,7 @@ test('PatternStore: non-object entries in the user file are skipped with a warn'
 
   const user = store.listAll().user;
   assert.deepEqual(user.map(p => p.key), ['good'], 'only the object-valued entry is loaded');
-  assert.equal(user[0].pattern, 'boom');
+  assert.equal(user[0]?.pattern, 'boom');
   assert.equal(warnings.length, 4, 'each malformed entry warned');
   assert.ok(warnings.every(w => w.includes('skipping malformed entry')));
 });

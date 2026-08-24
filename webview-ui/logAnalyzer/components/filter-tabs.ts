@@ -10,7 +10,7 @@ export type FilterKey = 'all' | 'critical' | 'error' | 'warn' | 'problem';
  *  is one of the FilterKey values. */
 @customElement('filter-tabs')
 export class FilterTabs extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: flex;
       gap: 4px;
@@ -59,7 +59,7 @@ export class FilterTabs extends LitElement {
     this.dispatchEvent(new CustomEvent('filter-change', { detail: { key }, bubbles: true, composed: true }));
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const tab = (key: FilterKey, label: string, count: number, cls?: string): TemplateResult => html`
       <button
         class="tab ${this.active === key ? 'active' : ''} ${cls ?? ''}"

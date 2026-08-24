@@ -94,7 +94,7 @@ export class LogAnalyzerService {
    *  anything older would be read and then dropped. */
   static readonly BACKFILL_LINE_LIMIT = LINE_BUFFER_CAP;
 
-  start(p: { backfillLines?: readonly string[]; minTimestamp?: Date } = {}): void {
+  start(p: { backfillLines?: readonly string[]; minTimestamp?: Date | undefined } = {}): void {
     // Dispose first: start() is called again by the panel's refresh, and
     // overwriting liveSub left the previous subscription attached, so every
     // later line was processed once per start() — counts and the line buffer
@@ -175,9 +175,9 @@ export class LogAnalyzerService {
   public queryLines(opts: {
     level?: 'critical' | 'error' | 'warn' | 'problem' | 'all';
     filter?: 'critical' | 'error' | 'warn' | 'problem' | 'all';
-    search?: string;
-    limit?: number;
-    offset?: number;
+    search?: string | undefined;
+    limit?: number | undefined;
+    offset?: number | undefined;
   }): { items: LogLine[]; total: number } {
     // Accept both `level` and `filter` for flexibility — the IPC layer
     // sends `filter`, but the original spec called it `level`.
@@ -220,7 +220,7 @@ export class LogAnalyzerService {
         let matchIndex = 0;
         for (let i = this.lineBuffer.length - 1; i >= 0 && items.length < limit; i--) {
           const line = this.lineBuffer[i];
-          if (!passes(line)) continue;
+          if (!line || !passes(line)) continue;
           if (matchIndex >= offset) { items.push(line); }
           matchIndex++;
         }
@@ -234,7 +234,7 @@ export class LogAnalyzerService {
     let matchIndex = 0;
     for (let i = this.lineBuffer.length - 1; i >= 0; i--) {
       const line = this.lineBuffer[i];
-      if (!passes(line)) continue;
+      if (!line || !passes(line)) continue;
       const userTagsHay = line.userTags ? ' ' + line.userTags.join(' ') : '';
       const hay = (line.text + ' ' + (line.tag ?? '') + userTagsHay).toLowerCase();
       if (!hay.includes(search)) continue;
@@ -253,8 +253,8 @@ export class LogAnalyzerService {
     after: LogLine[];
   } {
     const idx = this.lineBuffer.findIndex(l => l.id === lineId);
-    if (idx < 0) return { line: null, before: [], after: [] };
-    const line = this.lineBuffer[idx];
+    const line = idx >= 0 ? this.lineBuffer[idx] : undefined;
+    if (!line) return { line: null, before: [], after: [] };
     const beforeStart = Math.max(0, idx - contextBefore);
     const afterEnd = Math.min(this.lineBuffer.length, idx + 1 + contextAfter);
     const before = this.lineBuffer.slice(beforeStart, idx);
@@ -316,7 +316,7 @@ export class LogAnalyzerService {
     // until the first match, not per line forever.
     if (this.state.sdkVersion === null && line.text.includes('sdk.version=')) {
       const m = /\bsdk\.version=(\S+)/.exec(line.text);
-      if (m) { this.state.sdkVersion = m[1]; }
+      if (m?.[1]) { this.state.sdkVersion = m[1]; }
     }
     if (line.timestamp) {
       if (!this.state.startTime || line.timestamp < this.state.startTime) this.state.startTime = line.timestamp;

@@ -168,6 +168,7 @@ export class ImportDataPanel {
     });
     if (!picked || picked.length === 0) { return; }
     const file = picked[0];
+    if (!file) { return; }
     log.info('User selected import file', { path: file.fsPath });
 
     // Size gate BEFORE readFile: the file is read whole and parsed

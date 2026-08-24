@@ -27,8 +27,8 @@ test('AnalyzerSink: snapshot returns recent lines bounded by capacity', () => {
   for (let i = 0; i < 5; i++) sink.write('info', `2026-06-09T14:00:0${i}.000Z  INFO   [sdk]  msg${i}`);
   const snap = sink.snapshot();
   assert.equal(snap.length, 3);
-  assert.equal(snap[0].text, 'msg2');
-  assert.equal(snap[2].text, 'msg4');
+  assert.equal(snap[0]?.text, 'msg2');
+  assert.equal(snap[2]?.text, 'msg4');
 });
 
 test('AnalyzerSink: firstLiveId returns the id of the first live line', () => {
@@ -66,6 +66,7 @@ test('AnalyzerSink: text is lazily derived but still survives IPC serialisation'
   const sink = new AnalyzerSink({ capacity: 10 });
   sink.write('info', '2026-06-09T14:00:00.000Z  INFO   [sdk]  lazily derived body');
   const line = sink.snapshot()[0];
+  assert.ok(line);
 
   assert.equal(line.raw, '2026-06-09T14:00:00.000Z  INFO   [sdk]  lazily derived body');
   assert.equal(line.text, 'lazily derived body');

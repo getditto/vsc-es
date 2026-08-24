@@ -54,7 +54,7 @@ import type {
  *  and the Presence + Peer Listing panels already cover that ground. */
 @customElement('ditto-log-analyzer')
 export class DittoLogAnalyzer extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       /* Fill the webview viewport so the log table can grow into the
          space freed when other accordion sections collapse. */
@@ -167,7 +167,7 @@ export class DittoLogAnalyzer extends LitElement {
    *  re-attach cannot leave a second handler bound to the stale element. */
   readonly hostMessages = new HostMessages<AnalyzerOut>(this, msg => this.handleMessage(msg));
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener('reveal-line', this.onRevealLine);
     this.addEventListener('filter-change', this.onFilterChange);
@@ -178,7 +178,7 @@ export class DittoLogAnalyzer extends LitElement {
     this.requestLines();
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     this.removeEventListener('reveal-line', this.onRevealLine);
     this.removeEventListener('filter-change', this.onFilterChange);
     this.removeEventListener('line-clicked', this.onLineClicked);
@@ -408,7 +408,7 @@ export class DittoLogAnalyzer extends LitElement {
     };
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const tc = this.tabCounts();
     const total = this.tableTotal;
     return html`

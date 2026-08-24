@@ -23,7 +23,7 @@ export interface ImportProgress {
   total: number;
   /** _id of the row currently being processed, when surfacable. Undefined
    *  on batch-completion ticks since the batch ran as one unit. */
-  currentDocumentId?: string;
+  currentDocumentId?: string | undefined;
 }
 
 export interface ImportResult {
@@ -223,7 +223,7 @@ export async function importDocuments(opts: ImportOptions): Promise<ImportResult
   const activeAtStart = opts.checkActive?.();
 
   const batches = chunkArray(opts.documents, batchSize);
-  for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+  for (const [batchIndex, batch] of batches.entries()) {
     // The DB-switch orchestrator can close the panel without cancelling
     // this in-flight import; without this check the remaining batches
     // would silently land in the NEW database.
@@ -234,7 +234,6 @@ export async function importDocuments(opts: ImportOptions): Promise<ImportResult
       errors.push(`Import cancelled — the active database changed mid-import.${written}`);
       return { successCount, failureCount, errors, cancelled: true };
     }
-    const batch = batches[batchIndex];
     const batchStartIndex = batchIndex * batchSize;
     const firstId = idOf(batch[0]);
 
@@ -256,8 +255,7 @@ export async function importDocuments(opts: ImportOptions): Promise<ImportResult
       // Batch failed — fall back to single inserts to identify rows.
       // Don't surface the batch error itself; the per-row errors are
       // far more actionable.
-      for (let i = 0; i < batch.length; i += 1) {
-        const doc = batch[i];
+      for (const [i, doc] of batch.entries()) {
         const globalIndex = batchStartIndex + i;
         const docId = idOf(doc) ?? 'unknown';
         try {

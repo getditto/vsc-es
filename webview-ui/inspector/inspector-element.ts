@@ -33,7 +33,7 @@ export class DittoInspectorElement extends LitElement {
   // a fresh install sees the tab until the host's first push lands.
   @state() private settings: { collectMetrics: boolean } = { collectMetrics: true };
 
-  static styles = [codiconStyles, css`
+  static override styles = [codiconStyles, css`
     :host {
       display: block;
       height: 100%;
@@ -121,7 +121,7 @@ export class DittoInspectorElement extends LitElement {
     postToHost({ type: 'inspector.tabSelected', tab });
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const c = this.content;
     switch (c.kind) {
       case 'none':

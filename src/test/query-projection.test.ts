@@ -93,8 +93,8 @@ test('projectQueryRows: expectsEnvelope with a non-envelope last row keeps that 
   assert.equal(r.rows.length, 3, 'no row lost');
   assert.deepEqual(r.rows.map(x => x._id), ['r0', 'r1', 'r2']);
   assert.equal(r.profile, undefined);
-  assert.ok(items[2].reads >= 2, 're-read after the envelope probe');
-  assert.ok(items[2].demats >= 1, 'and still dematerialized');
+  assert.ok((items[2]?.reads ?? 0) >= 2, 're-read after the envelope probe');
+  assert.ok((items[2]?.demats ?? 0) >= 1, 'and still dematerialized');
 });
 
 test('projectQueryRows: empty result set', () => {

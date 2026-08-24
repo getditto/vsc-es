@@ -18,8 +18,8 @@ test('validateJsonDocuments: parses array of objects with _id', () => {
   const raw = JSON.stringify([{ _id: 'a', name: 'Alice' }, { _id: 'b', name: 'Bob' }]);
   const docs = validateJsonDocuments(raw);
   assert.equal(docs.length, 2);
-  assert.equal(docs[0]._id, 'a');
-  assert.equal(docs[1]._id, 'b');
+  assert.equal(docs[0]?._id, 'a');
+  assert.equal(docs[1]?._id, 'b');
 });
 
 test('validateJsonDocuments: rejects non-array top level', () => {
@@ -160,7 +160,7 @@ test('chunkArray: chunk size 0 throws', () => {
 // ─── importDocuments (the orchestrator) ────────────────────────
 
 test('importDocuments: happy path inserts all docs in batches; success count matches total', async () => {
-  const calls: { query: string; args?: Record<string, unknown> }[] = [];
+  const calls: { query: string; args?: Record<string, unknown> | undefined }[] = [];
   const execute = async (query: string, args?: Record<string, unknown>) => { calls.push({ query, args }); };
   const docs = Array.from({ length: 7 }, (_, i) => ({ _id: `id-${i}` }));
   const result = await importDocuments({
@@ -226,8 +226,8 @@ test('importDocuments: batch failure → falls back to single-doc inserts, error
   assert.equal(result.successCount, 2);
   assert.equal(result.failureCount, 1);
   assert.equal(result.errors.length, 1);
-  assert.match(result.errors[0], /Document b/);
-  assert.match(result.errors[0], /row 2 bad/);
+  assert.match(result.errors[0]!, /Document b/);
+  assert.match(result.errors[0]!, /row 2 bad/);
 });
 
 test('importDocuments: every doc in a failing batch can fail independently', async () => {
@@ -261,11 +261,11 @@ test('importDocuments: progress callback fires at expected boundaries', async ()
   // 3 batches (2,2,1) → 6 ticks total: 3 "starting" + 3 "completed".
   assert.equal(ticks.length, 6);
   // First tick: starting batch 1, currentDocumentId='id-0'.
-  assert.equal(ticks[0].current, 1);
-  assert.equal(ticks[0].currentDocumentId, 'id-0');
+  assert.equal(ticks[0]?.current, 1);
+  assert.equal(ticks[0]?.currentDocumentId, 'id-0');
   // Last tick: completion of final partial batch → current = total.
-  assert.equal(ticks[ticks.length - 1].current, 5);
-  assert.equal(ticks[ticks.length - 1].total, 5);
+  assert.equal(ticks[ticks.length - 1]?.current, 5);
+  assert.equal(ticks[ticks.length - 1]?.total, 5);
 });
 
 test('importDocuments: progress callback that throws does not abort import', async () => {
@@ -316,8 +316,8 @@ test('importDocuments: a database switch mid-import aborts the remaining batches
   assert.equal(result.failureCount, 0);
   assert.deepEqual(usedBatches, ['db-A'], 'no batch executed against the new database');
   assert.equal(result.errors.length, 1);
-  assert.match(result.errors[0], /database changed mid-import/);
-  assert.match(result.errors[0], /3 of 9/, 'partial progress is surfaced');
+  assert.match(result.errors[0]!, /database changed mid-import/);
+  assert.match(result.errors[0]!, /3 of 9/, 'partial progress is surfaced');
 });
 
 test('importDocuments: no checkActive polling when the callback is absent', async () => {
@@ -348,7 +348,7 @@ test('importDocuments: a switch detected before the FIRST batch writes nothing',
   assert.equal(result.cancelled, true);
   assert.equal(executed, false, 'execute must not run once the snapshot differs');
   assert.equal(result.successCount, 0);
-  assert.match(result.errors[0], /database changed mid-import/);
+  assert.match(result.errors[0]!, /database changed mid-import/);
 });
 
 test('importDocuments: empty document set returns zero counts without calling execute', async () => {

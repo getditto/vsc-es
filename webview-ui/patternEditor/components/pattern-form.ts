@@ -9,7 +9,7 @@ import type { LogLevel } from '../../../src/logging/types.js';
  *  replaceKey? }`) and `cancel` bubbling events. */
 @customElement('pattern-form')
 export class PatternForm extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 12px;
@@ -81,7 +81,7 @@ export class PatternForm extends LitElement {
   @state() private userTag = '';
   @state() private testInput = '';
 
-  protected updated(changed: Map<string, unknown>): void {
+  protected override updated(changed: Map<string, unknown>): void {
     if (changed.has('editing')) {
       if (this.editing) {
         this.key = this.editing.key;
@@ -160,7 +160,7 @@ export class PatternForm extends LitElement {
     this.dispatchEvent(new CustomEvent('cancel', { bubbles: true, composed: true }));
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const re = this.regexError();
     const coll = this.collidesWithBundled();
     const levels: ReadonlyArray<LogLevel> = ['error', 'warn', 'info', 'debug', 'trace'];

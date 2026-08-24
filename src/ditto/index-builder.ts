@@ -132,7 +132,12 @@ export function parseIndexKeys(rawFields: unknown): IndexField[] {
  *  with its keys permuted. */
 export function indexKeysMatch(a: readonly IndexField[], b: readonly IndexField[]): boolean {
   if (a.length !== b.length) { return false; }
-  return a.every((f, i) => f.name === b[i].name && f.ascending === b[i].ascending);
+  for (let i = 0; i < a.length; i += 1) {
+    const fa = a[i];
+    const fb = b[i];
+    if (!fa || !fb || fa.name !== fb.name || fa.ascending !== fb.ascending) { return false; }
+  }
+  return true;
 }
 
 /** `field ASC, other DESC` — for tree labels and log lines. */

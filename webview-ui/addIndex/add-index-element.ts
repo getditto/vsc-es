@@ -19,7 +19,7 @@ export class AddIndexElement extends LitElement {
   @state() private isCreating = false;
   @state() private errorMessage: string | undefined;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 24px;
@@ -209,7 +209,11 @@ export class AddIndexElement extends LitElement {
     const to = i + delta;
     if (to < 0 || to >= this.fields.length) { return; }
     const next = [...this.fields];
-    [next[i], next[to]] = [next[to], next[i]];
+    const a = next[i];
+    const b = next[to];
+    if (a === undefined || b === undefined) { return; }
+    next[i] = b;
+    next[to] = a;
     this.fields = next;
   }
 
@@ -217,7 +221,7 @@ export class AddIndexElement extends LitElement {
     postToHost({ type: 'addIndex.cancel' });
   }
 
-  render() {
+  override render() {
     return html`
       <h2>Index</h2>
 

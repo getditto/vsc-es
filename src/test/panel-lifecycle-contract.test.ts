@@ -98,7 +98,7 @@ interface PanelUnderTest {
   /** Create one. Returns nothing useful — the panel is found via the stub. */
   show(): void;
   /** The panel's own static teardown, if it exposes one. */
-  disposeAll?: () => void;
+  disposeAll?: (() => void) | undefined;
 }
 
 /** A stub, except where a real primitive is required. `path.join` and
@@ -199,6 +199,7 @@ test('every panel: sets webview HTML with a CSP', async () => {
     resetAll(all);
     p.show();
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel, `${p.name} created no webview panel`);
     assert.ok(panel.webview.html.length > 0, `${p.name} left html empty`);
     assert.match(panel.webview.html, /Content-Security-Policy/i, `${p.name} has no CSP`);
     assert.match(panel.webview.html, /default-src 'none'/, `${p.name} CSP does not deny by default`);
@@ -212,9 +213,9 @@ test('every panel: restricts localResourceRoots', async () => {
   for (const p of all) {
     resetAll(all);
     p.show();
-    const opts = stub.createdWebviewPanels[0].options;
+    const opts = stub.createdWebviewPanels[0]?.options;
     assert.ok(
-      Array.isArray(opts.localResourceRoots),
+      Array.isArray(opts?.localResourceRoots),
       `${p.name} did not restrict localResourceRoots`,
     );
   }
@@ -229,6 +230,7 @@ test('every panel: closing the webview removes its message listener', async () =
     resetAll(all);
     p.show();
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel, `${p.name} created no webview panel`);
     assert.ok(panel.webview._messageListeners.length > 0, `${p.name} registered no handler`);
 
     panel.dispose(); // the user's X button
@@ -248,6 +250,7 @@ test('every panel: closing the webview removes its dispose and view-state listen
     resetAll(all);
     p.show();
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel, `${p.name} created no webview panel`);
     panel.dispose();
     await Promise.resolve();
 
@@ -270,6 +273,7 @@ test('every panel: the static teardown closes the webview', async () => {
     resetAll(all);
     p.show();
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel, `${p.name} created no webview panel`);
     assert.equal(panel.disposed, false);
 
     p.disposeAll();
@@ -288,6 +292,7 @@ test('every panel: dispose is idempotent', async () => {
     resetAll(all);
     p.show();
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel, `${p.name} created no webview panel`);
     assert.doesNotThrow(() => { panel.dispose(); panel.dispose(); }, `${p.name} double-dispose threw`);
     if (p.disposeAll) {
       assert.doesNotThrow(() => { p.disposeAll!(); p.disposeAll!(); }, `${p.name} double static dispose threw`);
@@ -305,13 +310,14 @@ test('every panel: showing again after disposal builds a fresh panel', async () 
     resetAll(all);
     p.show();
     const first = stub.createdWebviewPanels[0];
+    assert.ok(first, `${p.name} created no webview panel`);
     first.dispose();
     await Promise.resolve();
 
     p.show();
     const created = stub.createdWebviewPanels;
     assert.ok(created.length >= 2, `${p.name} did not create a new panel after disposal`);
-    assert.equal(created[created.length - 1].disposed, false, `${p.name} handed back a disposed panel`);
+    assert.equal(created[created.length - 1]?.disposed, false, `${p.name} handed back a disposed panel`);
   }
   resetAll(all);
 });
@@ -324,6 +330,7 @@ test('every panel: a message arriving after disposal does not throw', async () =
     resetAll(all);
     p.show();
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel, `${p.name} created no webview panel`);
     panel.dispose();
     await Promise.resolve();
     assert.doesNotThrow(
@@ -342,6 +349,7 @@ test('every panel: an unknown message type is inert, not fatal', async () => {
     resetAll(all);
     p.show();
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel, `${p.name} created no webview panel`);
     assert.doesNotThrow(
       () => panel.fireMessage({ type: 'nonexistent.type.from.a.newer.webview' }),
       `${p.name} threw on an unknown message`,
@@ -364,6 +372,7 @@ test('every panel: a malformed message does not throw', async () => {
       resetAll(all);
       p.show();
       const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel, `${p.name} created no webview panel`);
       assert.doesNotThrow(
         () => panel.fireMessage(bad),
         `${p.name} threw on message ${JSON.stringify(bad)}`,
@@ -381,6 +390,7 @@ test('every panel: a view-state change does not throw', async () => {
     resetAll(all);
     p.show();
     const panel = stub.createdWebviewPanels[0];
+    assert.ok(panel, `${p.name} created no webview panel`);
     assert.doesNotThrow(() => { panel.fireViewState(true); panel.fireViewState(false); }, `${p.name} threw on focus change`);
     panel.dispose();
     await Promise.resolve();

@@ -19,7 +19,7 @@ import type { KeyedRawPattern } from '../../src/logAnalyzer/PatternEngine.js';
  *  the user can correct their input. */
 @customElement('ditto-pattern-editor')
 export class DittoPatternEditor extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 12px;
@@ -62,7 +62,7 @@ export class DittoPatternEditor extends LitElement {
    *  re-attach cannot leave a second handler bound to the stale element. */
   readonly hostMessages = new HostMessages<PatternEditorOut>(this, msg => this.handleMessage(msg));
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener('edit', this.onEdit);
     this.addEventListener('delete', this.onDelete);
@@ -70,7 +70,7 @@ export class DittoPatternEditor extends LitElement {
     this.addEventListener('cancel', this.onCancel as EventListener);
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     this.removeEventListener('edit', this.onEdit);
     this.removeEventListener('delete', this.onDelete);
     this.removeEventListener('save', this.onSave);
@@ -133,7 +133,7 @@ export class DittoPatternEditor extends LitElement {
     this.errMessage = null;
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <div class="toolbar">
         <button @click=${() => this.startAdd()}>+ Add Pattern</button>

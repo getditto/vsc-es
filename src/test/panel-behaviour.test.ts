@@ -111,7 +111,8 @@ async function showPeerListing(manager: FakeManager): Promise<FakePanel> {
     recordingLogger().logger,
   );
   await settle();
-  return stub.createdWebviewPanels[0];
+  // show() just created this panel, so index 0 is present.
+  return stub.createdWebviewPanels[0]!;
 }
 
 test('PeerListingPanel: the sync toggle reaches the manager', async () => {
@@ -198,7 +199,8 @@ async function showAnalyzer(
     recordingLogger().logger, noopInspector,
   );
   await settle();
-  return stub.createdWebviewPanels[0];
+  // show() just created this panel, so index 0 is present.
+  return stub.createdWebviewPanels[0]!;
 }
 
 test('LogAnalyzerPanel: bootstrap starts the service with the backfill lines', async () => {
@@ -206,7 +208,7 @@ test('LogAnalyzerPanel: bootstrap starts the service with the backfill lines', a
   await showAnalyzer(svc, () => Promise.resolve(['line a', 'line b']));
 
   assert.equal(svc.starts.length, 1);
-  assert.deepEqual(svc.starts[0].lines, ['line a', 'line b']);
+  assert.deepEqual(svc.starts[0]?.lines, ['line a', 'line b']);
 });
 
 test('LogAnalyzerPanel: a failed backfill still starts live ingestion', async () => {
@@ -216,13 +218,13 @@ test('LogAnalyzerPanel: a failed backfill still starts live ingestion', async ()
   const panel = await showAnalyzer(svc, () => Promise.reject(new Error('disk gone')));
 
   assert.equal(svc.starts.length, 1, 'started anyway');
-  assert.equal(svc.starts[0].lines, undefined, 'with no backfill');
+  assert.equal(svc.starts[0]?.lines, undefined, 'with no backfill');
   const errs = panel.webview.posted.filter(
     (m): m is { type: string; stage: string } =>
       typeof m === 'object' && m !== null && (m as { type?: string }).type === 'analyzer.error',
   );
   assert.equal(errs.length, 1, 'and told the webview');
-  assert.equal(errs[0].stage, 'backfill');
+  assert.equal(errs[0]?.stage, 'backfill');
 });
 
 test('LogAnalyzerPanel: a line detail request posts the detail payload', async () => {
@@ -237,7 +239,7 @@ test('LogAnalyzerPanel: a line detail request posts the detail payload', async (
       typeof m === 'object' && m !== null && (m as { type?: string }).type === 'analyzer.lineDetail',
   );
   assert.equal(details.length, 1, 'one detail response');
-  assert.equal(details[0].requestId, 'd1', 'request id echoed back');
+  assert.equal(details[0]?.requestId, 'd1', 'request id echoed back');
 });
 
 test('LogAnalyzerPanel: repeated line queries each reach the service once', async () => {
@@ -283,14 +285,14 @@ test('LogAnalyzerPanel: a line query echoes its offset back', async () => {
   });
   await settle();
 
-  assert.deepEqual(svc.queried[svc.queried.length - 1].offset, 600, 'offset reached the service');
+  assert.deepEqual(svc.queried[svc.queried.length - 1]?.offset, 600, 'offset reached the service');
   const results = panel.webview.posted.filter(
     (m): m is { type: string; requestId: string; offset: number } =>
       typeof m === 'object' && m !== null && (m as { type?: string }).type === 'analyzer.linesResult',
   );
   assert.equal(results.length, 1);
-  assert.equal(results[0].requestId, 'r1');
-  assert.equal(results[0].offset, 600, 'the response must say which window it is');
+  assert.equal(results[0]?.requestId, 'r1');
+  assert.equal(results[0]?.offset, 600, 'the response must say which window it is');
 });
 
 test('LogAnalyzerPanel: opening the pattern editor goes through the command', async () => {

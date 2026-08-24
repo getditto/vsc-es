@@ -28,11 +28,11 @@ export interface CompiledPattern {
   regex: RegExp;
   severity: 1 | 2 | 3 | 4 | 5;
   recommendation: string;
-  levelFilter?: LogLevel;
-  tagFilter?: RegExp;
+  levelFilter?: LogLevel | undefined;
+  tagFilter?: RegExp | undefined;
   /** Trimmed, non-empty user tag to attach to matching lines, or
    *  undefined when the pattern didn't supply one. */
-  userTag?: string;
+  userTag?: string | undefined;
   source: 'bundled' | 'user';
 }
 

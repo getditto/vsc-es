@@ -121,7 +121,8 @@ function buildSwitchDeps(
         const panel = QueryEditorPanel.show(
           context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, metrics, loggerArg,
         );
-        if (queryText !== undefined && queryText.length > 0) {
+        // undefined when the tab cap refused — nothing to load into.
+        if (panel && queryText !== undefined && queryText.length > 0) {
           panel.loadQuery(queryText);
         }
       },
@@ -140,7 +141,9 @@ const sdkLevelMap: Record<LogLevel, DittoSdkLogLevel> = {
 async function pickLogLevel(current: LogLevel, title: string): Promise<LogLevel | undefined> {
   const items = (['error', 'warn', 'info', 'debug', 'trace'] as LogLevel[]).map(l => ({
     label: l,
-    description: l === current ? '(current)' : undefined,
+    // QuickPickItem.description doesn't admit explicit undefined under
+    // exactOptionalPropertyTypes, so the non-current rows omit the key.
+    ...(l === current ? { description: '(current)' } : {}),
   }));
   const picked = await vscode.window.showQuickPick(items, { title });
   return picked?.label;
@@ -854,7 +857,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         openLabel: 'Select parent folder for quickstart',
       });
       if (!picked || picked.length === 0) { return; }
-      const parentDir = picked[0].fsPath;
+      const first = picked[0];
+      if (!first) { return; }
+      const parentDir = first.fsPath;
       const targetDir = path.join(parentDir, QUICKSTART_FOLDER_NAME);
 
       // 4. Inspect target, prompt if needed.
@@ -1037,7 +1042,8 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         context, manager, configStore, secretStore, cur.configId,
         tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger,
       );
-      panel.loadQuery(query);
+      // undefined when the tab cap refused — nothing to load into.
+      panel?.loadQuery(query);
     }),
     vscode.commands.registerCommand('dittoVsce.refreshCollections', async () => {
       try { await collectionsRepo.refresh(); }

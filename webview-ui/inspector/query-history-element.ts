@@ -14,7 +14,7 @@ interface QueryHistoryEntry { id: string; query: string; timestamp?: number; }
 export class QueryHistoryElement extends LitElement {
   @property({ type: Array }) entries: QueryHistoryEntry[] = [];
 
-  static styles = [codiconStyles, css`
+  static override styles = [codiconStyles, css`
     :host { display: block; padding: 8px; color: var(--vscode-foreground); }
     .row {
       display: flex;
@@ -54,7 +54,7 @@ export class QueryHistoryElement extends LitElement {
     }
   `];
 
-  render() {
+  override render() {
     if (!this.entries?.length) {
       return html`
         <div class="empty">

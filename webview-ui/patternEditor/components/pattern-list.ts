@@ -7,7 +7,7 @@ import type { KeyedRawPattern } from '../../../src/logAnalyzer/PatternEngine.js'
  *  `edit` / `delete` events that the root element handles. */
 @customElement('pattern-list')
 export class PatternList extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       color: var(--vscode-foreground);
@@ -55,7 +55,7 @@ export class PatternList extends LitElement {
     this.dispatchEvent(new CustomEvent('delete', { detail: { key }, bubbles: true, composed: true }));
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <h3>Bundled (read-only)</h3>
       ${this.bundled.length === 0

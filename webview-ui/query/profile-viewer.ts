@@ -46,7 +46,7 @@ export class DittoProfileViewer extends LitElement {
 
   @state() private planMode: PlanMode = 'card';
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 0;
@@ -156,7 +156,7 @@ export class DittoProfileViewer extends LitElement {
     .empty code  { font-family: var(--vscode-editor-font-family); }
   `;
 
-  render() {
+  override render() {
     if (this.profile) { return this.renderPopulated(this.profile); }
     if (this.mode === 'http') { return this.renderHttpState(); }
     if (this.lastQueryText && !isSelectStatement(this.lastQueryText)) { return this.renderNonSelectState(); }

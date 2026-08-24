@@ -74,6 +74,7 @@ export class ConnectionTracker {
       const idx = this.open.findIndex(s => s.matchKey === key);
       if (idx === -1) { this.unmatched++; return; }
       const s = this.open[idx];
+      if (!s) { this.unmatched++; return; }
       s.end = ts;
       this.closed.push(s);
       this.open.splice(idx, 1);

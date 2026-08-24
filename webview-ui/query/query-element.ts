@@ -67,7 +67,7 @@ export class QueryEditor extends LitElement {
   // outside the popover close it (handled at document level).
   @state() private settingsMenuOpen = false;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: flex;
       flex-direction: column;
@@ -419,7 +419,8 @@ export class QueryEditor extends LitElement {
         this.currentPage = 1;
         {
           const sizes = this.pageSizes;
-          if (!sizes.includes(this.pageSize)) { this.pageSize = sizes[0]; }
+          const first = sizes[0];
+          if (!sizes.includes(this.pageSize) && first !== undefined) { this.pageSize = first; }
         }
         break;
       case 'query.error':
@@ -440,7 +441,8 @@ export class QueryEditor extends LitElement {
         // Pin the current selection to a still-valid mode (e.g. host
         // re-pushes after a config change that removed HTTP creds).
         if (!this.availableModes.includes(this.mode)) {
-          this.mode = this.availableModes[0];
+          const fallback = this.availableModes[0];
+          if (fallback) { this.mode = fallback; }
         }
         break;
       case 'query.settings':
@@ -471,7 +473,7 @@ export class QueryEditor extends LitElement {
     }
   });
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
     // Click-away closes the context menu — register at the document
     // level so a click anywhere outside the menu (including outside
@@ -484,7 +486,7 @@ export class QueryEditor extends LitElement {
     document.addEventListener('click', this.onDocumentClick);
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     document.removeEventListener('click', this.closeContextMenu);
     document.removeEventListener('contextmenu', this.closeContextMenu);
     document.removeEventListener('click', this.onDocumentClick);
@@ -741,7 +743,7 @@ export class QueryEditor extends LitElement {
     }
   }
 
-  render() {
+  override render() {
     const showModePicker = this.availableModes.length > 1;
     return html`
       <div class="editor-pane">

@@ -58,7 +58,7 @@ export class QueryMetricsElement extends LitElement {
   @state() private records: QueryMetricsRecord[] = [];
   @state() private selectedId: string | null = null;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: flex;
       flex-direction: column;
@@ -224,7 +224,8 @@ export class QueryMetricsElement extends LitElement {
         this.selectedId = null;
       }
       if (this.selectedId === null && this.records.length > 0) {
-        this.selectedId = this.records[0].id;
+        const newest = this.records[0];
+        if (newest) { this.selectedId = newest.id; }
       }
     }
   }
@@ -233,7 +234,7 @@ export class QueryMetricsElement extends LitElement {
 
   private clear(): void { postToHost({ type: 'metrics.clear' }); }
 
-  render() {
+  override render() {
     return html`
       <div class="header">
         <span class="title">Query Metrics</span>

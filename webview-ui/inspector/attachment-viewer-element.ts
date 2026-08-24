@@ -23,8 +23,8 @@ type AttachmentMsg = Extract<InspectorOut, { type:
 interface AttachmentMetadata {
   id: string;
   length: number;
-  contentType?: string;
-  filename?: string;
+  contentType?: string | undefined;
+  filename?: string | undefined;
 }
 
 /** Real SDK token shape: `{id, len, metadata}` (no `_meta` wrapper).
@@ -104,7 +104,7 @@ export class AttachmentViewerElement extends LitElement {
   @state() private progress: Record<string, number> = {};
   @state() private errors: Record<string, string> = {};
 
-  static styles = [codiconStyles, css`
+  static override styles = [codiconStyles, css`
     :host { display: block; margin-top: 12px; color: var(--vscode-foreground); }
     .att {
       padding: 8px;
@@ -151,7 +151,7 @@ export class AttachmentViewerElement extends LitElement {
    *  re-attach cannot leave a second handler bound to the stale element. */
   readonly hostMessages = new HostMessages<AttachmentMsg>(this, msg => this.onHostMessage(msg));
 
-  protected willUpdate(changed: Map<string, unknown>): void {
+  protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has('json')) {
       // Attachment state is keyed by tokenIds derived from the CURRENT
       // row's JSON. Keeping entries for every row ever selected would grow
@@ -172,7 +172,7 @@ export class AttachmentViewerElement extends LitElement {
     }
   }
 
-  render() {
+  override render() {
     if (!this.json) { return html``; }
     let parsed: unknown;
     try {

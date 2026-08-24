@@ -70,10 +70,10 @@ test('toImportableSubscriptions: simple happy path', () => {
   ];
   const result = toImportableSubscriptions(peers, []);
   assert.equal(result.length, 1);
-  assert.equal(result[0].collectionName, 'tasks');
-  assert.equal(result[0].query, 'SELECT * FROM tasks');
-  assert.equal(result[0].deviceName, 'iPhone 15');
-  assert.equal(result[0].deviceInfo, 'iOS 4.7.0');
+  assert.equal(result[0]?.collectionName, 'tasks');
+  assert.equal(result[0]?.query, 'SELECT * FROM tasks');
+  assert.equal(result[0]?.deviceName, 'iPhone 15');
+  assert.equal(result[0]?.deviceInfo, 'iOS 4.7.0');
 });
 
 test('toImportableSubscriptions: filters out system collections', () => {
@@ -90,7 +90,7 @@ test('toImportableSubscriptions: filters out system collections', () => {
   ];
   const result = toImportableSubscriptions(peers, []);
   assert.equal(result.length, 1);
-  assert.equal(result[0].collectionName, 'tasks');
+  assert.equal(result[0]?.collectionName, 'tasks');
 });
 
 test('toImportableSubscriptions: filters out queries already in local store', () => {
@@ -107,7 +107,7 @@ test('toImportableSubscriptions: filters out queries already in local store', ()
   const existing = [sub('s1', 'SELECT * FROM tasks')];
   const result = toImportableSubscriptions(peers, existing);
   assert.equal(result.length, 1);
-  assert.equal(result[0].collectionName, 'users');
+  assert.equal(result[0]?.collectionName, 'users');
 });
 
 test('toImportableSubscriptions: dedupes identical queries across peers (keeps first peer)', () => {
@@ -125,7 +125,7 @@ test('toImportableSubscriptions: dedupes identical queries across peers (keeps f
   ];
   const result = toImportableSubscriptions(peers, []);
   assert.equal(result.length, 1);
-  assert.equal(result[0].deviceName, 'Alpha');
+  assert.equal(result[0]?.deviceName, 'Alpha');
 });
 
 test('toImportableSubscriptions: id is stable across runs (derived from query)', () => {
@@ -134,7 +134,7 @@ test('toImportableSubscriptions: id is stable across runs (derived from query)',
   ];
   const a = toImportableSubscriptions(peers, []);
   const b = toImportableSubscriptions(peers, []);
-  assert.equal(a[0].id, b[0].id);
+  assert.equal(a[0]?.id, b[0]?.id);
 });
 
 test('toImportableSubscriptions: falls back to peer _id when device_name missing', () => {
@@ -146,7 +146,7 @@ test('toImportableSubscriptions: falls back to peer _id when device_name missing
     }),
   ];
   const result = toImportableSubscriptions(peers, []);
-  assert.equal(result[0].deviceName, 'abc-123');
+  assert.equal(result[0]?.deviceName, 'abc-123');
 });
 
 test('toImportableSubscriptions: skips peers with no local_subscriptions', () => {

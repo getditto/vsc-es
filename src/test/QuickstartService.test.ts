@@ -318,8 +318,8 @@ test('cloneOrPull fresh-clone runs `git clone` into the parent dir', async () =>
     const result = await svc.cloneOrPull(parent, 'fresh-clone', () => {}, ac.signal);
 
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args, ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME]);
-    assert.equal(calls[0].cwd, parent);
+    assert.deepEqual(calls[0]?.args, ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME]);
+    assert.equal(calls[0]?.cwd, parent);
     assert.equal(result.repoRoot, path.join(parent, QUICKSTART_FOLDER_NAME));
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
@@ -336,8 +336,8 @@ test('cloneOrPull pull-existing runs `git pull` inside the existing checkout', a
     const result = await svc.cloneOrPull(parent, 'pull-existing', () => {}, ac.signal);
 
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args, ['pull', '--ff-only']);
-    assert.equal(calls[0].cwd, path.join(parent, QUICKSTART_FOLDER_NAME));
+    assert.deepEqual(calls[0]?.args, ['pull', '--ff-only']);
+    assert.equal(calls[0]?.cwd, path.join(parent, QUICKSTART_FOLDER_NAME));
     assert.equal(result.repoRoot, path.join(parent, QUICKSTART_FOLDER_NAME));
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
@@ -359,7 +359,7 @@ test('cloneOrPull replace-and-clone removes existing folder then clones', async 
     // Stale file gone before clone ran
     assert.equal(fs.existsSync(path.join(target, 'stale.txt')), false);
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args, ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME]);
+    assert.deepEqual(calls[0]?.args, ['clone', '--progress', QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME]);
     assert.equal(result.repoRoot, target);
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });

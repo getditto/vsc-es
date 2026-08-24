@@ -28,7 +28,7 @@ test('subscriptions are scoped per database', async () => {
   await s.save('db2', { id: 'sub2', name: 'b', query: 'SELECT 2' });
   assert.equal(s.list('db1').length, 1);
   assert.equal(s.list('db2').length, 1);
-  assert.equal(s.list('db1')[0].id, 'sub1');
+  assert.equal(s.list('db1')[0]?.id, 'sub1');
 });
 
 test('save() updates an existing subscription by id', async () => {
@@ -36,7 +36,7 @@ test('save() updates an existing subscription by id', async () => {
   await s.save('db1', { id: 'sub1', name: 'a', query: 'SELECT 1' });
   await s.save('db1', { id: 'sub1', name: 'a-renamed', query: 'SELECT 1' });
   assert.equal(s.list('db1').length, 1);
-  assert.equal(s.list('db1')[0].name, 'a-renamed');
+  assert.equal(s.list('db1')[0]?.name, 'a-renamed');
 });
 
 test('delete() removes a subscription', async () => {

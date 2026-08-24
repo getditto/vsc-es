@@ -42,6 +42,14 @@ function unquoteIdentifierToken(token: string): string {
 const ATTACHMENT_SOFT_LIMIT = 10 * 1024 * 1024;
 const ATTACHMENT_HARD_LIMIT = 20 * 1024 * 1024;
 
+/** Cap on simultaneously open Query Editor tabs. Each tab runs with
+ *  `retainContextWhenHidden: true` and holds its last result set (up to
+ *  MAX_QUERY_ROWS rows) alive even when hidden, so an unbounded tab count
+ *  is an unbounded memory promise. 20 is far above realistic interactive
+ *  use, low enough to bound the retention. Exported so tests bound their
+ *  assertions against the same number rather than hardcoding it. */
+export const MAX_OPEN_QUERY_TABS = 20;
+
 /**
  * File-type allowlist for attachments. Maps a friendly category label
  * (shown in the VS Code `showOpenDialog` filter dropdown) to the
@@ -102,8 +110,11 @@ function computeColumns(rows: Record<string, unknown>[]): string[] {
 export class QueryEditorPanel {
   private static readonly _instances = new Set<QueryEditorPanel>();
 
-  /** Open a NEW Query Editor tab. Multiple instances may coexist. Returns the
-   *  newly-created panel so callers can drive it (e.g. loadQuery). */
+  /** Open a NEW Query Editor tab. Multiple instances may coexist, up to
+   *  MAX_OPEN_QUERY_TABS — at the cap this refuses, shows a message, and
+   *  returns undefined with no side effects (no panel, no tracker slot).
+   *  Returns the newly-created panel so callers can drive it (e.g.
+   *  loadQuery). */
   static show(
     context: vscode.ExtensionContext,
     manager: DittoManager,
@@ -116,7 +127,16 @@ export class QueryEditorPanel {
     favorites: QueryFavoritesStore,
     metrics: QueryMetricsStore,
     logger: Logger,
-  ): QueryEditorPanel {
+  ): QueryEditorPanel | undefined {
+    // Counts LIVE tabs only — dispose() deletes from _instances first, so a
+    // closed tab never counts toward the cap. There is no reuse/refocus
+    // path: every show() call is a request for a genuinely new tab.
+    if (QueryEditorPanel._instances.size >= MAX_OPEN_QUERY_TABS) {
+      vscode.window.showInformationMessage(
+        `You have ${MAX_OPEN_QUERY_TABS} query tabs open. Close one to open another.`,
+      );
+      return undefined;
+    }
     const inst = new QueryEditorPanel(
       context, manager, configs, secrets, databaseId, tracker, inspector, history, favorites, metrics, logger,
     );
@@ -717,6 +737,7 @@ export class QueryEditorPanel {
     });
     if (!picked || picked.length === 0) { return; }
     const fileUri = picked[0];
+    if (!fileUri) { return; }
     const filePath = fileUri.fsPath;
     const filename = filePath.split(/[\\/]/).pop() ?? 'file';
     const ext = (filename.split('.').pop() ?? '').toLowerCase();

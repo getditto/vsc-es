@@ -98,8 +98,9 @@ export function parseShowAllOptions(result: unknown): SystemSettingOption[] {
     let value = firstPresent(record, ['value', 'current_value', 'current']);
     if (!parameter) {
       const entries = Object.entries(record);
-      if (entries.length !== 1) { continue; }
-      const [singleParameter, singleValue] = entries[0];
+      const first = entries.length === 1 ? entries[0] : undefined;
+      if (!first) { continue; }
+      const [singleParameter, singleValue] = first;
       value = singleValue;
       const option = optionFromValue(singleParameter, value);
       if (option) { options.push(option); }

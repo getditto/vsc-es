@@ -61,7 +61,9 @@ function deps(tracker: OpenPanelsTracker) {
 }
 
 function show(tracker: OpenPanelsTracker): QueryEditorPanel {
-  return QueryEditorPanel.show(...(deps(tracker) as unknown as Parameters<typeof QueryEditorPanel.show>));
+  const panel = QueryEditorPanel.show(...(deps(tracker) as unknown as Parameters<typeof QueryEditorPanel.show>));
+  assert.ok(panel, 'this test never approaches MAX_OPEN_QUERY_TABS');
+  return panel;
 }
 
 test('QueryEditorPanel: a user-closed tab releases its tracker slot', async () => {
@@ -73,7 +75,7 @@ test('QueryEditorPanel: a user-closed tab releases its tracker slot', async () =
   // The X button: VS Code disposes the panel and the handler runs from
   // onDidDispose. Nothing set preserveTabs, so the slot must go — otherwise
   // reconnect restores a tab the user deliberately closed.
-  stub.createdWebviewPanels[0].dispose();
+  stub.createdWebviewPanels[0]!.dispose();
   await Promise.resolve();
 
   assert.equal(tracker.get('db-A').query.length, 0, 'slot released');

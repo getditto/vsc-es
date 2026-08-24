@@ -66,7 +66,7 @@ export class DatabaseEditor extends LitElement {
   @state() private saving = false;
   private initialSystemSettings: SystemSetting[] = [];
 
-  static styles = css`
+  static override styles = css`
     :host { display: block; padding: 24px; max-width: 720px; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
     h2 { margin-top: 32px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vscode-descriptionForeground); }
     label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--vscode-descriptionForeground); }
@@ -493,7 +493,7 @@ export class DatabaseEditor extends LitElement {
 
   private cancel() { postToHost({ type: 'editor.cancel' }); }
 
-  render() {
+  override render() {
     if (!this.config) {
       return this.initError
         ? html`<div class="error-banner" role="alert">${this.initError}</div>

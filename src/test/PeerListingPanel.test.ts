@@ -78,7 +78,7 @@ async function showPanel(): Promise<{ panel: FakePanel; manager: FakeManager }> 
     recordingLogger(),
   );
   await settle();
-  return { panel: stub.createdWebviewPanels[0], manager };
+  return { panel: stub.createdWebviewPanels[0]!, manager };
 }
 
 function peerStatePosts(panel: FakePanel): unknown[] {

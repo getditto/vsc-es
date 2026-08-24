@@ -9,13 +9,13 @@ import type { StoredSubscription } from '../models/DittoConfig.js';
  */
 export interface SmallPeerInfo {
   _id: string;
-  device_name?: string;
-  ditto_sdk_language?: string;
-  ditto_sdk_platform?: string;
-  ditto_sdk_version?: string;
+  device_name?: string | undefined;
+  ditto_sdk_language?: string | undefined;
+  ditto_sdk_platform?: string | undefined;
+  ditto_sdk_version?: string | undefined;
   local_subscriptions?: {
     queries?: { query: string }[];
-  };
+  } | undefined;
 }
 
 /** A subscription that the user can choose to import — one row in the picker. */
@@ -51,7 +51,7 @@ export interface ImportableSubscription {
  */
 export function extractCollectionName(query: string): string | null {
   const m = /(?:^|\s)FROM\s+(?:COLLECTION\s+)?(`(?:[^`]|``)*`|\S+)/i.exec(query);
-  return m ? m[1] : null;
+  return m?.[1] ?? null;
 }
 
 /** A query targets a Ditto-internal collection (those with the `__` prefix). */

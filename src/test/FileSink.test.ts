@@ -155,8 +155,8 @@ test('FileSink: readTailLines spans the rotation set newest-first', async () => 
   // Chronological, contiguous, and ending at the newest line written.
   assert.equal(tail[tail.length - 1], 'line 099');
   for (let i = 1; i < tail.length; i++) {
-    const prev = Number(tail[i - 1].slice(5));
-    const cur = Number(tail[i].slice(5));
+    const prev = Number(tail[i - 1]?.slice(5));
+    const cur = Number(tail[i]?.slice(5));
     assert.equal(cur, prev + 1, `ordering broke at ${tail[i - 1]} → ${tail[i]}`);
   }
   await sink.dispose();

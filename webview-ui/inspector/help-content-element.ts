@@ -15,7 +15,7 @@ export class HelpContentElement extends LitElement {
   @state() private htmlContent = '';
   @state() private failed = false;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       height: 100%;
@@ -75,7 +75,7 @@ export class HelpContentElement extends LitElement {
     }
   `;
 
-  updated(changed: Map<string, unknown>): void {
+  override updated(changed: Map<string, unknown>): void {
     if (changed.has('uri')) {
       if (this.uri) {
         void this.load();
@@ -108,7 +108,7 @@ export class HelpContentElement extends LitElement {
     }
   }
 
-  render() {
+  override render() {
     if (!this.uri) {
       return html`<div class="placeholder">Loading help…</div>`;
     }

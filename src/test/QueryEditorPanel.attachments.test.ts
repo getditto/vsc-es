@@ -56,7 +56,7 @@ const noopLogger = (): Logger => {
 
 interface RecordedExecute {
   query: string;
-  args?: Record<string, unknown>;
+  args?: Record<string, unknown> | undefined;
 }
 
 /** Minimal manager fake: runs stay local, executeRaw is recorded. */
@@ -127,6 +127,7 @@ test('QueryEditorPanel: add attachment backtick-quotes the backticked collection
   const { manager, recorded } = makeManager();
   showPanel(manager);
   const panel = stub.createdWebviewPanels[0];
+  assert.ok(panel);
   await settle();
 
   await runQuery(panel, 'SELECT * FROM `my coll`');
@@ -139,10 +140,10 @@ test('QueryEditorPanel: add attachment backtick-quotes the backticked collection
 
   assert.equal(recorded.length, 1, `one UPDATE executed; saw ${JSON.stringify(recorded.map(r => r.query))}`);
   assert.equal(
-    recorded[0].query,
+    recorded[0]?.query,
     'UPDATE `my coll` SET `order-items` = :att WHERE _id = :docId',
   );
-  assert.equal(recorded[0].args?.docId, 'a');
+  assert.equal(recorded[0]?.args?.docId, 'a');
   assert.deepEqual(
     stub.window.shownErrors, [],
     `no error toast expected; saw ${JSON.stringify(stub.window.shownErrors)}`,
@@ -154,6 +155,7 @@ test('QueryEditorPanel: delete attachment quotes an exotic field and the collect
   const { manager, recorded } = makeManager();
   showPanel(manager);
   const panel = stub.createdWebviewPanels[0];
+  assert.ok(panel);
   await settle();
 
   await runQuery(panel, 'SELECT * FROM `my coll`');
@@ -169,10 +171,10 @@ test('QueryEditorPanel: delete attachment quotes an exotic field and the collect
 
   assert.equal(recorded.length, 1, `one UPDATE executed; saw ${JSON.stringify(recorded.map(r => r.query))}`);
   assert.equal(
-    recorded[0].query,
+    recorded[0]?.query,
     'UPDATE `my coll` SET `Bestellungen` = NULL WHERE _id = :docId',
   );
-  assert.equal(recorded[0].args?.docId, 'a');
+  assert.equal(recorded[0]?.args?.docId, 'a');
 });
 
 test('QueryEditorPanel: a JSON null row is rejected with a readable warning, not a TypeError', async () => {
@@ -182,6 +184,7 @@ test('QueryEditorPanel: a JSON null row is rejected with a readable warning, not
   const { manager, recorded } = makeManager();
   showPanel(manager);
   const panel = stub.createdWebviewPanels[0];
+  assert.ok(panel);
   await settle();
 
   await runQuery(panel, 'SELECT * FROM tasks');
@@ -202,6 +205,7 @@ test('QueryEditorPanel: the field-name input validator allows quoting-safe names
   const { manager } = makeManager();
   showPanel(manager);
   const panel = stub.createdWebviewPanels[0];
+  assert.ok(panel);
   await settle();
 
   await runQuery(panel, 'SELECT * FROM tasks');

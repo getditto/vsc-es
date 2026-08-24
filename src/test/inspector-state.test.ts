@@ -23,13 +23,13 @@ test('detectAttachments: bare {id, len, metadata} token (real SDK shape)', () =>
   };
   const found = detectAttachments(doc);
   assert.equal(found.length, 1);
-  assert.equal(found[0].path, 'Image2');
-  assert.equal(found[0].metadata.contentType, 'image/png');
-  assert.equal(found[0].metadata.filename, 'Body.png');
-  assert.equal(found[0].metadata.length, 153107);
+  assert.equal(found[0]?.path, 'Image2');
+  assert.equal(found[0]?.metadata.contentType, 'image/png');
+  assert.equal(found[0]?.metadata.filename, 'Body.png');
+  assert.equal(found[0]?.metadata.length, 153107);
   // Token round-trips for the SDK's fetchAttachment call.
-  assert.equal(found[0].token.id, 'RUHqxmQe-CdOGbUU3GRvB_Im3HUMMgO25K85NPQ5c2wHqg');
-  assert.equal(found[0].token.len, 153107);
+  assert.equal(found[0]?.token.id, 'RUHqxmQe-CdOGbUU3GRvB_Im3HUMMgO25K85NPQ5c2wHqg');
+  assert.equal(found[0]?.token.len, 153107);
 });
 
 test('detectAttachments: SDK-style metadata keys (contentType / filename)', () => {
@@ -38,8 +38,8 @@ test('detectAttachments: SDK-style metadata keys (contentType / filename)', () =
   };
   const found = detectAttachments(doc);
   assert.equal(found.length, 1);
-  assert.equal(found[0].metadata.contentType, 'image/png');
-  assert.equal(found[0].metadata.filename, 'a.png');
+  assert.equal(found[0]?.metadata.contentType, 'image/png');
+  assert.equal(found[0]?.metadata.filename, 'a.png');
 });
 
 test('detectAttachments: nested object with attachment', () => {
@@ -50,7 +50,7 @@ test('detectAttachments: nested object with attachment', () => {
   };
   const found = detectAttachments(doc);
   assert.equal(found.length, 1);
-  assert.equal(found[0].path, 'profile.picture');
+  assert.equal(found[0]?.path, 'profile.picture');
 });
 
 test('detectAttachments: multiple attachments in array', () => {
@@ -62,8 +62,8 @@ test('detectAttachments: multiple attachments in array', () => {
   };
   const found = detectAttachments(doc);
   assert.equal(found.length, 2);
-  assert.equal(found[0].path, 'photos[0]');
-  assert.equal(found[1].path, 'photos[1]');
+  assert.equal(found[0]?.path, 'photos[0]');
+  assert.equal(found[1]?.path, 'photos[1]');
 });
 
 test('detectAttachments: multiple top-level attachment fields', () => {
@@ -94,8 +94,8 @@ test('detectAttachments: bigint `len` coerces to number (SDK quirk)', () => {
   };
   const found = detectAttachments(doc);
   assert.equal(found.length, 1);
-  assert.equal(found[0].metadata.length, 42);
-  assert.equal(typeof found[0].token.len, 'number');
+  assert.equal(found[0]?.metadata.length, 42);
+  assert.equal(typeof found[0]?.token.len, 'number');
 });
 
 test('detectAttachments: not-a-token shapes are skipped', () => {

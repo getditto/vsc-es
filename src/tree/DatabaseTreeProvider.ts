@@ -289,13 +289,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
           : node.status === 'error'
             ? new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'))
             : new vscode.ThemeIcon('circle-outline');
-        item.description = node.status === 'active' ? 'connected' : undefined;
+        if (node.status === 'active') { item.description = 'connected'; }
         item.contextValue = `database.${node.status}`;
         item.tooltip = node.config.name;
         item.id = `db.${node.config.id}`;
-        item.command = node.status === 'idle' || node.status === 'error'
-          ? { command: 'dittoVsce.connect', title: 'Connect', arguments: [node] }
-          : undefined;
+        if (node.status === 'idle' || node.status === 'error') {
+          item.command = { command: 'dittoVsce.connect', title: 'Connect', arguments: [node] };
+        }
 
         const ls = this.lifecycleFor?.();
         let transitionLabel: string | undefined;
@@ -309,7 +309,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
           item.iconPath = new vscode.ThemeIcon('sync~spin');
           item.description = transitionLabel;
           item.contextValue = 'database.transitioning';
-          item.command = undefined;
+          delete item.command;
         }
         return item;
       }

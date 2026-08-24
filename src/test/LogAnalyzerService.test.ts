@@ -48,7 +48,7 @@ test('Service: user_tag from matched pattern propagates to line.userTags', () =>
   const lines = svc.queryLines({ filter: 'all' }).items;
   assert.equal(lines.length, 1);
   // Sorted + deduped; the no-user_tag pattern contributes nothing.
-  assert.deepEqual(lines[0].userTags, ['auth', 'query']);
+  assert.deepEqual(lines[0]?.userTags, ['auth', 'query']);
 });
 
 test('Service: queryLines search matches against user tags', () => {
@@ -70,7 +70,7 @@ test('Service: queryLines search matches against user tags', () => {
   // 'query' substring matches via line.userTags (the user-applied label)
   // on line 1, and does NOT match line 2 (no foo → no pattern hit → no tag).
   assert.equal(r.items.length, 1);
-  assert.match(r.items[0].text, /foo/);
+  assert.match(r.items[0]?.text ?? '', /foo/);
 });
 
 test('Service: backfill text is processed before live', () => {
@@ -162,8 +162,8 @@ test('Service: backfill IDs are negative, live IDs non-negative', () => {
   const problems = state.problems.get('deadlock_critical') ?? [];
   assert.equal(problems.length, 2);
   // First problem is from backfill (negative id); second from live (>=0)
-  assert.ok(problems[0].line.id < 0, `backfill id should be negative, got ${problems[0].line.id}`);
-  assert.ok(problems[1].line.id >= 0, `live id should be non-negative, got ${problems[1].line.id}`);
+  assert.ok((problems[0]?.line.id ?? 0) < 0, `backfill id should be negative, got ${problems[0]?.line.id}`);
+  assert.ok((problems[1]?.line.id ?? -1) >= 0, `live id should be non-negative, got ${problems[1]?.line.id}`);
 });
 
 test('Service: pause stops emitting diffs but state still accumulates', () => {
@@ -230,7 +230,7 @@ test('Service: queryLines filters by level=error', () => {
   const r = svc.queryLines({ filter: 'error' });
   assert.equal(r.items.length, 1);
   assert.equal(r.total, 1);
-  assert.equal(r.items[0].level, 'error');
+  assert.equal(r.items[0]?.level, 'error');
 });
 
 test('Service: queryLines applies case-insensitive search', () => {
@@ -249,8 +249,8 @@ test('Service: queryLines returns newest first', () => {
   sink.write('info', '2026-06-09T14:00:01.000Z  INFO   [sdk]  two');
   sink.write('info', '2026-06-09T14:00:02.000Z  INFO   [sdk]  three');
   const r = svc.queryLines({ filter: 'all' });
-  assert.equal(r.items[0].text, 'three');
-  assert.equal(r.items[2].text, 'one');
+  assert.equal(r.items[0]?.text, 'three');
+  assert.equal(r.items[2]?.text, 'one');
 });
 
 test('Service: queryLines respects limit and offset for pagination', () => {
@@ -262,7 +262,7 @@ test('Service: queryLines respects limit and offset for pagination', () => {
   assert.equal(page1.total, 10);
   const page2 = svc.queryLines({ filter: 'all', limit: 3, offset: 3 });
   assert.equal(page2.items.length, 3);
-  assert.notEqual(page1.items[0].id, page2.items[0].id);
+  assert.notEqual(page1.items[0]?.id, page2.items[0]?.id);
 });
 
 test('Service: queryLines problem filter returns lines that matched any pattern', () => {
@@ -272,7 +272,7 @@ test('Service: queryLines problem filter returns lines that matched any pattern'
   sink.write('info',  '2026-06-09T14:00:01.000Z  INFO   [sdk]  ok');
   const r = svc.queryLines({ filter: 'problem' });
   assert.equal(r.items.length, 1);
-  assert.match(r.items[0].text, /deadlock/);
+  assert.match(r.items[0]?.text ?? '', /deadlock/);
 });
 
 test('Service: getLineDetail returns target line + before/after context', () => {
@@ -309,7 +309,7 @@ test('Service: clear() empties the sessions view and keeps it empty', () => {
   sink.write('info', '2026-06-09T14:00:03.000Z  INFO   [sdk]  physical connection started remote=def transport_type=LAN role=Client');
   const after = svc.getStateForTesting().sessions;
   assert.equal(after.length, 1);
-  assert.equal(after[0].remotePeer, 'def');
+  assert.equal(after[0]?.remotePeer, 'def');
 });
 
 // ─── Summary/table agreement ───────────────────────────────────
@@ -349,6 +349,7 @@ test('Service: the summary after a backfill agrees with what the tabs query', ()
   svc.start({ backfillLines: BACKFILL });
 
   const last = summaries[summaries.length - 1];
+  assert.ok(last);
   assert.equal(last.counts.totalLines, svc.queryLines({ filter: 'all' }).total, 'Lines vs All tab');
   assert.equal(last.counts.errors, svc.queryLines({ filter: 'error' }).total, 'Errors vs Errors tab');
   assert.equal(last.counts.warnings, svc.queryLines({ filter: 'warn' }).total, 'Warnings vs Warnings tab');
@@ -375,7 +376,7 @@ test('Service: the volume histogram counts this analyzer\'s lines, not the share
   const total = bins.reduce((n: number, b: any) =>
     n + b.counts.error + b.counts.warn + b.counts.info + b.counts.debug + b.counts.trace, 0);
   assert.equal(total, svc.queryLines({ filter: 'all' }).total);
-  assert.equal(summaries[summaries.length - 1].counts.totalLines, total, 'histogram vs Lines');
+  assert.equal(summaries[summaries.length - 1]?.counts.totalLines, total, 'histogram vs Lines');
 });
 
 test('Service: clear() empties the volume histogram too', () => {
@@ -623,7 +624,7 @@ test('Service: the volume histogram equals a naive re-bin of the buffer', () => 
   const binMs = pickBinWidth(Math.max(range, 1000));
   const buffer = svc.queryLines({ filter: 'all', limit: 100_000 }).items;
   const naive = binVolumeByLevel(buffer, binMs);
-  assert.deepEqual(histos[histos.length - 1].volumeByLevel, naive);
+  assert.deepEqual(histos[histos.length - 1]?.volumeByLevel, naive);
 });
 
 test('Service: counters stay exact across a buffer trim', () => {

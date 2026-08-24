@@ -18,7 +18,7 @@ const LEVEL_COLORS: Record<string, string> = {
 
 @customElement('level-histogram')
 export class LevelHistogram extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host { display: block; }
     svg { width: 100%; height: 120px; }
     .empty {
@@ -31,7 +31,7 @@ export class LevelHistogram extends LitElement {
   @property({ type: Array })
   bins: AnalyzerState['histograms']['volumeByLevel'] = [];
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     if (this.bins.length === 0) {
       return html`<div class="empty">No volume data yet.</div>`;
     }

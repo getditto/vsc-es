@@ -33,7 +33,7 @@ export class CollectionsRepository {
   private readonly _changeEmitter = new vscode.EventEmitter<DittoCollection[]>();
   readonly onChange: vscode.Event<DittoCollection[]> = this._changeEmitter.event;
   private readonly log: Logger;
-  private collectionsObserver?: { cancel(): void };
+  private collectionsObserver?: { cancel(): void } | undefined;
 
   constructor(
     private readonly manager: DittoManager,
@@ -83,8 +83,9 @@ export class CollectionsRepository {
       'SELECT * FROM system:indexes WHERE _id = :id',
       { id: `${collection}.${indexName}` },
     );
-    if (existing.length > 0) {
-      const existingKeys = parseIndexKeys(existing[0].fields);
+    const firstExisting = existing[0];
+    if (firstExisting) {
+      const existingKeys = parseIndexKeys(firstExisting.fields);
       if (indexKeysMatch(existingKeys, cleaned)) {
         this.log.info('Index already exists with the same definition', { collection, indexName });
         return;
@@ -263,13 +264,15 @@ export class CollectionsRepository {
       )),
     );
     countResults.forEach((res, i) => {
+      const c = collections[i];
+      if (!c) { return; }
       if (res.status === 'fulfilled') {
         const first = res.value[0];
         const n = first?.numDocs;
-        if (typeof n === 'number') { collections[i].documentCount = n; }
+        if (typeof n === 'number') { c.documentCount = n; }
       } else {
         this.log.warn('COUNT(*) failed for collection', {
-          collection: collections[i].name,
+          collection: c.name,
           err: res.reason instanceof Error ? res.reason.message : String(res.reason),
         });
       }

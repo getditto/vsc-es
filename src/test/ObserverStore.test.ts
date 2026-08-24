@@ -34,8 +34,8 @@ test('per-database isolation', async () => {
   await s.save('B', { id: 'o2', name: 'b', query: 'SELECT 2' });
   assert.equal(s.list('A').length, 1);
   assert.equal(s.list('B').length, 1);
-  assert.equal(s.list('A')[0].id, 'o1');
-  assert.equal(s.list('B')[0].id, 'o2');
+  assert.equal(s.list('A')[0]?.id, 'o1');
+  assert.equal(s.list('B')[0]?.id, 'o2');
 });
 
 test('delete by id', async () => {

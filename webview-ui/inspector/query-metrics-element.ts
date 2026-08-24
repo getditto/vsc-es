@@ -27,7 +27,7 @@ export class QueryMetricsElement extends LitElement {
    *  inspector-element which sources it from the host. */
   @property({ type: Boolean }) hideLimitHint = false;
 
-  static styles = [codiconStyles, css`
+  static override styles = [codiconStyles, css`
     :host { display: block; padding: 12px; color: var(--vscode-foreground); }
     .empty {
       color: var(--vscode-descriptionForeground);
@@ -130,7 +130,7 @@ export class QueryMetricsElement extends LitElement {
     postToHost({ type: 'inspector.dismissLimitHint' });
   };
 
-  render() {
+  override render() {
     const md = this.metadata;
     if (!md) {
       return html`

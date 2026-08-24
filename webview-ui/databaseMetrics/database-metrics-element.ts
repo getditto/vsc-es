@@ -81,7 +81,7 @@ export class DatabaseMetricsElement extends LitElement {
   @state() private sortKey: SortKey = 'cborPayloadBytes';
   @state() private sortDir: SortDir = 'desc';
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 16px;
@@ -243,7 +243,7 @@ export class DatabaseMetricsElement extends LitElement {
     }
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const loading = this.view.kind === 'loading';
     const snap = this.view.kind === 'loaded' ? this.view.snapshot : undefined;
     const stamp = snap ? new Date(snap.computedAt).toLocaleTimeString() : null;

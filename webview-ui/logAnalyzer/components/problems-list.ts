@@ -17,7 +17,7 @@ const SEV_LABELS: Record<number, { label: string; cls: string }> = {
  *  `reveal-line` CustomEvent that bubbles up to the root element. */
 @customElement('problems-list')
 export class ProblemsList extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host { display: block; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
     .group { border: 1px solid var(--vscode-panel-border); border-radius: 4px; margin: 6px 0; }
     .header { padding: 6px 10px; cursor: pointer; display: flex; gap: 10px; align-items: center; }
@@ -51,14 +51,14 @@ export class ProblemsList extends LitElement {
     }));
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     if (this.groups.length === 0) {
       return html`<div class="rec">Watching for problems. None detected.</div>`;
     }
     return html`
       ${this.groups.map(g => {
         const sev = g.items[0]?.severity ?? 1;
-        const lab = SEV_LABELS[sev];
+        const lab = SEV_LABELS[sev] ?? { label: 'INFO', cls: 'sev1' };
         const open = this.expanded.has(g.key);
         return html`
           <div class="group">

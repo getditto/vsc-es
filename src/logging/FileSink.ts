@@ -194,7 +194,8 @@ export class FileSink {
         // (itself a line boundary, or EOF), so this is whole lines only.
         const complete = combined.subarray(firstNl + 1).toString('utf8').split('\n');
         for (let i = complete.length - 1; i >= 0 && out.length < target; i -= 1) {
-          if (complete[i].length > 0) { out.push(complete[i]); }
+          const entry = complete[i];
+          if (entry !== undefined && entry.length > 0) { out.push(entry); }
         }
       }
       // Reached the start of the file: the carry is its first line.

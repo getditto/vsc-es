@@ -62,7 +62,7 @@ export class PresenceGraphElement extends LitElement {
   private panLastX = 0;
   private panLastY = 0;
   private isPanning = false;
-  private pointerStart: { x: number; y: number; nodeKey?: string } | undefined;
+  private pointerStart: { x: number; y: number; nodeKey?: string | undefined } | undefined;
   private pointerMoved = false;
   /** Whether the pointer is currently over the canvas. Maintained even while
    *  dragging, when hover updates themselves are suppressed. */
@@ -70,7 +70,7 @@ export class PresenceGraphElement extends LitElement {
 
   private static readonly DRAG_THRESHOLD = 4;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       position: relative;
@@ -206,7 +206,7 @@ export class PresenceGraphElement extends LitElement {
     }
   `;
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     this.stopRaf();
     this.clearIdleTimer();
     this.settled = false;
@@ -224,11 +224,11 @@ export class PresenceGraphElement extends LitElement {
     super.disconnectedCallback();
   }
 
-  protected firstUpdated(): void {
+  protected override firstUpdated(): void {
     this.setupScene();
   }
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
     // VS Code reparents webview panels when they move between editor groups,
     // which re-runs this on the same element — but firstUpdated does NOT
@@ -248,7 +248,7 @@ export class PresenceGraphElement extends LitElement {
     this.applyInputAndStartRaf();
   }
 
-  protected updated(changed: Map<string, unknown>): void {
+  protected override updated(changed: Map<string, unknown>): void {
     if (!this.scene) { return; }
     const modeChanged = changed.has('directConnectedOnly');
     if (modeChanged) {
@@ -575,7 +575,7 @@ export class PresenceGraphElement extends LitElement {
 
   // ─── Render ───────────────────────────────────────────────
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <canvas
         class=${[this.dragging ? 'dragging' : '', this.hoveringNode ? 'hover-node' : '']

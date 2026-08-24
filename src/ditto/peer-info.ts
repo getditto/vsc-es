@@ -15,9 +15,9 @@ export interface SyncStatusRow {
   is_ditto_server: boolean;
   /** May be undefined when the SDK row arrived without a recognized status —
    *  the merge layer treats presence-graph peers as 'Connected' in that case. */
-  sync_session_status?: SyncSessionStatus;
-  synced_up_to_local_commit_id?: number;
-  last_update_received_time?: number;
+  sync_session_status?: SyncSessionStatus | undefined;
+  synced_up_to_local_commit_id?: number | undefined;
+  last_update_received_time?: number | undefined;
 }
 
 const SYNC_SESSION_STATUSES: readonly SyncSessionStatus[] = [

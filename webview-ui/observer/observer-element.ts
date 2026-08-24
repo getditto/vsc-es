@@ -39,7 +39,7 @@ export class DittoObserverPanel extends LitElement {
 
   static readonly eventBufferCap = 500;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: flex;
       flex-direction: column;
@@ -105,7 +105,7 @@ export class DittoObserverPanel extends LitElement {
     }
   });
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const selectedEvent = this.selectedEventId
       ? this.events.find(e => e.id === this.selectedEventId) ?? null
       : null;

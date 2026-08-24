@@ -194,6 +194,12 @@ export const window = {
   /** Tests set window.openDialogResult to an array of Uri-like values
    *  to simulate picking files; undefined/null = user cancelled. */
   showOpenDialog() { return Promise.resolve(window.openDialogResult); },
+  /** Tests set window.saveDialogResult to a Uri to simulate the user
+   *  picking a save destination; undefined = user cancelled. */
+  showSaveDialog(options) {
+    window.lastSaveDialogOptions = options;
+    return Promise.resolve(window.saveDialogResult);
+  },
   /** Tests set window.quickPickResult to the item array the user "picked". */
   showQuickPick() { return Promise.resolve(window.quickPickResult); },
   /** Records the last validateInput callback so a test can exercise it, and
@@ -209,6 +215,8 @@ export const window = {
   shownWarnings: [],
   shownInfos: [],
   openDialogResult: undefined,
+  saveDialogResult: undefined,
+  lastSaveDialogOptions: undefined,
   quickPickResult: undefined,
   inputBoxResult: undefined,
   warningResponse: undefined,
@@ -232,6 +240,8 @@ export function __resetStub() {
   window.shownWarnings.length = 0;
   window.shownInfos.length = 0;
   window.openDialogResult = undefined;
+  window.saveDialogResult = undefined;
+  window.lastSaveDialogOptions = undefined;
   window.quickPickResult = undefined;
   window.inputBoxResult = undefined;
   window.warningResponse = undefined;

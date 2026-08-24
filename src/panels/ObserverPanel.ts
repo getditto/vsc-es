@@ -76,11 +76,11 @@ export class ObserverPanel {
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
-  private cancelObserver?: { cancel(): void };
+  private cancelObserver?: { cancel(): void } | undefined;
   /** Coalescing buffer for events pushed to the webview. Matches the
    *  SwiftUI 100ms flush window. */
   private pendingEvents: ObserverEvent[] = [];
-  private flushTimer?: NodeJS.Timeout;
+  private flushTimer?: NodeJS.Timeout | undefined;
   private static readonly flushIntervalMs = 100;
 
   private constructor(

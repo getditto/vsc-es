@@ -49,8 +49,11 @@ const inputs = (el: Element): HTMLInputElement[] =>
   [...el.shadowRoot!.querySelectorAll('.key-row input')] as HTMLInputElement[];
 const selects = (el: Element): HTMLSelectElement[] =>
   [...el.shadowRoot!.querySelectorAll('.key-row select')] as HTMLSelectElement[];
-const rowButtons = (el: Element, i: number): HTMLButtonElement[] =>
-  [...rows(el)[i].querySelectorAll('button')] as HTMLButtonElement[];
+const rowButtons = (el: Element, i: number): HTMLButtonElement[] => {
+  const row = rows(el)[i];
+  assert.ok(row, `row ${i} exists`);
+  return [...row.querySelectorAll('button')] as HTMLButtonElement[];
+};
 const addFieldButton = (el: Element): HTMLButtonElement =>
   el.shadowRoot!.querySelector('.add-field') as HTMLButtonElement;
 const createButton = (el: Element): HTMLButtonElement =>
@@ -58,6 +61,7 @@ const createButton = (el: Element): HTMLButtonElement =>
 
 async function type(el: Element, i: number, value: string): Promise<void> {
   const input = inputs(el)[i];
+  assert.ok(input, `input ${i} exists`);
   input.value = value;
   input.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event('input', { bubbles: true }));
   await el.updateComplete;
@@ -65,12 +69,14 @@ async function type(el: Element, i: number, value: string): Promise<void> {
 
 async function setDirection(el: Element, i: number, dir: 'ASC' | 'DESC'): Promise<void> {
   const sel = selects(el)[i];
+  assert.ok(sel, `select ${i} exists`);
   sel.value = dir;
   sel.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event('change', { bubbles: true }));
   await el.updateComplete;
 }
 
-async function click(el: Element, btn: HTMLButtonElement): Promise<void> {
+async function click(el: Element, btn: HTMLButtonElement | undefined): Promise<void> {
+  assert.ok(btn, 'button exists');
   btn.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event('click', { bubbles: true }));
   await el.updateComplete;
 }
@@ -78,7 +84,7 @@ async function click(el: Element, btn: HTMLButtonElement): Promise<void> {
 test('AddIndex: starts with one empty field row', async t => {
   const el = await mount(t);
   assert.equal(rows(el).length, 1);
-  assert.equal(inputs(el)[0].value, '');
+  assert.equal(inputs(el)[0]?.value, '');
 });
 
 test('AddIndex: Add field appends a row', async t => {
@@ -97,11 +103,11 @@ test('AddIndex: removing a row leaves the others, and never leaves zero rows', a
   // Remove is the third button in a row (up, down, remove).
   await click(el, rowButtons(el, 0)[2]);
   assert.equal(rows(el).length, 1);
-  assert.equal(inputs(el)[0].value, 'second', 'removed the right row');
+  assert.equal(inputs(el)[0]?.value, 'second', 'removed the right row');
 
   await click(el, rowButtons(el, 0)[2]);
   assert.equal(rows(el).length, 1, 'an empty editor has nothing to type into');
-  assert.equal(inputs(el)[0].value, '');
+  assert.equal(inputs(el)[0]?.value, '');
 });
 
 test('AddIndex: reorder swaps adjacent keys', async t => {
@@ -122,10 +128,10 @@ test('AddIndex: reorder swaps adjacent keys', async t => {
 test('AddIndex: the reorder buttons are disabled at the ends', async t => {
   const el = await mount(t);
   await click(el, addFieldButton(el));
-  assert.equal(rowButtons(el, 0)[0].disabled, true, 'first row cannot move up');
-  assert.equal(rowButtons(el, 0)[1].disabled, false);
-  assert.equal(rowButtons(el, 1)[0].disabled, false);
-  assert.equal(rowButtons(el, 1)[1].disabled, true, 'last row cannot move down');
+  assert.equal(rowButtons(el, 0)[0]?.disabled, true, 'first row cannot move up');
+  assert.equal(rowButtons(el, 0)[1]?.disabled, false);
+  assert.equal(rowButtons(el, 1)[0]?.disabled, false);
+  assert.equal(rowButtons(el, 1)[1]?.disabled, true, 'last row cannot move down');
 });
 
 test('AddIndex: Create is disabled until a field has a name', async t => {
@@ -170,9 +176,9 @@ test('AddIndex: each row exposes an accessible name', async t => {
   // Five controls per row with icon-only labels; without these the editor is
   // unusable with a screen reader.
   const el = await mount(t);
-  assert.equal(inputs(el)[0].getAttribute('aria-label'), 'Index field 1');
-  assert.equal(selects(el)[0].getAttribute('aria-label'), 'Sort direction for field 1');
-  assert.equal(rowButtons(el, 0)[2].getAttribute('aria-label'), 'Remove field 1');
+  assert.equal(inputs(el)[0]?.getAttribute('aria-label'), 'Index field 1');
+  assert.equal(selects(el)[0]?.getAttribute('aria-label'), 'Sort direction for field 1');
+  assert.equal(rowButtons(el, 0)[2]?.getAttribute('aria-label'), 'Remove field 1');
 });
 
 test('AddIndex: direction defaults to ASC and is settable per row', async t => {

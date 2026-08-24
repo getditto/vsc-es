@@ -44,7 +44,7 @@ test('save() updates an existing config by id', async () => {
   await store.save(cfg);
   await store.save({ ...cfg, name: 'A renamed' });
   assert.equal(store.list().length, 1);
-  assert.equal(store.list()[0].name, 'A renamed');
+  assert.equal(store.list()[0]?.name, 'A renamed');
 });
 
 test('get(id) returns the matching config or undefined', async () => {
@@ -70,7 +70,7 @@ test('save() rejects a different config with a duplicate databaseId', async () =
   await assert.rejects(() => store.save(dup), /already exists.*"A"/);
   // The rejected config should not have been persisted.
   assert.equal(store.list().length, 1);
-  assert.equal(store.list()[0].name, 'A');
+  assert.equal(store.list()[0]?.name, 'A');
 });
 
 test('save() allows updating the same config with its own databaseId', async () => {
@@ -80,7 +80,7 @@ test('save() allows updating the same config with its own databaseId', async () 
   // Re-saving the same record (same id, same databaseId) must not self-conflict.
   await store.save({ ...cfg, name: 'A renamed' });
   assert.equal(store.list().length, 1);
-  assert.equal(store.list()[0].name, 'A renamed');
+  assert.equal(store.list()[0]?.name, 'A renamed');
 });
 
 test('save() treats whitespace-only databaseId differences as duplicates', async () => {
@@ -95,7 +95,7 @@ test('listeners fire on save and delete', async () => {
   const events: string[] = [];
   store.onDidChange(() => events.push('change'));
   await store.save(makeConfig());
-  await store.delete(store.list()[0].id);
+  await store.delete(store.list()[0]!.id);
   assert.deepEqual(events, ['change', 'change']);
 });
 

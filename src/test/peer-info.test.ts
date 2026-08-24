@@ -209,13 +209,13 @@ test('each remote peer becomes a PeerInfo with id/deviceName/os/sdkVersion mappe
     [],
   );
   assert.equal(snapshot.remote.length, 1);
-  assert.equal(snapshot.remote[0].id, 'k1');
-  assert.equal(snapshot.remote[0].deviceName, 'phone');
-  assert.equal(snapshot.remote[0].os, 'Android');
-  assert.equal(snapshot.remote[0].dittoSdkVersion, '4.10.0');
+  assert.equal(snapshot.remote[0]?.id, 'k1');
+  assert.equal(snapshot.remote[0]?.deviceName, 'phone');
+  assert.equal(snapshot.remote[0]?.os, 'Android');
+  assert.equal(snapshot.remote[0]?.dittoSdkVersion, '4.10.0');
   // Presence-graph peer with no sync_status row defaults to 'Connected' —
   // the presence-graph fact alone is evidence the peer is connected.
-  assert.equal(snapshot.remote[0].syncSessionStatus, 'Connected');
+  assert.equal(snapshot.remote[0]?.syncSessionStatus, 'Connected');
 });
 
 test('sync status row matched by peer key flows through; missing match defaults to Connected', () => {
@@ -257,7 +257,7 @@ test('isDittoServer precedence: __sync_status.is_ditto_server overrides presence
     null,
     [],
   );
-  assert.equal(snapshot.remote[0].isDittoServer, true);
+  assert.equal(snapshot.remote[0]?.isDittoServer, true);
 });
 
 test('isDittoServer defaults to false when no sync row, even if peer.isConnectedToDittoServer is true', () => {
@@ -271,7 +271,7 @@ test('isDittoServer defaults to false when no sync row, even if peer.isConnected
     null,
     [],
   );
-  assert.equal(snapshot.remote[0].isDittoServer, false);
+  assert.equal(snapshot.remote[0]?.isDittoServer, false);
 });
 
 test('order preservation: existing peers keep position, new peers append, absent peers drop', () => {
@@ -341,7 +341,7 @@ test('mergePeerList drops multihop peers (peer with no connection involving loca
     [],
   );
   assert.equal(snapshot.remote.length, 1);
-  assert.equal(snapshot.remote[0].id, 'direct');
+  assert.equal(snapshot.remote[0]?.id, 'direct');
   assert.equal(snapshot.remote.find(p => p.id === 'multihop'), undefined);
 });
 
@@ -363,9 +363,9 @@ test('mergePeerList filters out connections that don\'t involve local peer', () 
     [],
   );
   assert.equal(snapshot.remote.length, 1);
-  assert.equal(snapshot.remote[0].connections.length, 1);
-  assert.equal(snapshot.remote[0].connections[0].id, 'c-direct');
-  assert.equal(snapshot.remote[0].connections[0].connectionType, 'AccessPoint');
+  assert.equal(snapshot.remote[0]?.connections.length, 1);
+  assert.equal(snapshot.remote[0]?.connections[0]?.id, 'c-direct');
+  assert.equal(snapshot.remote[0]?.connections[0]?.connectionType, 'AccessPoint');
 });
 
 test('parseSyncStatusRow coerces bigint commitId/timestamp (Node SDK quirk)', () => {
@@ -508,7 +508,7 @@ test('mergePeerList deduplicates connections by type', () => {
     [],
   );
   assert.equal(snapshot.remote.length, 1);
-  assert.equal(snapshot.remote[0].connections.length, 1);
-  assert.equal(snapshot.remote[0].connections[0].id, 'c-forward');
-  assert.equal(snapshot.remote[0].connections[0].connectionType, 'Bluetooth');
+  assert.equal(snapshot.remote[0]?.connections.length, 1);
+  assert.equal(snapshot.remote[0]?.connections[0]?.id, 'c-forward');
+  assert.equal(snapshot.remote[0]?.connections[0]?.connectionType, 'Bluetooth');
 });

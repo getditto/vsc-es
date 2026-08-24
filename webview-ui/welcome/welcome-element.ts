@@ -75,7 +75,7 @@ export class WelcomeElement extends LitElement {
    *  to "Reference" in that mode. */
   @state() private hasExistingDatabases = false;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       max-width: 880px;
@@ -287,7 +287,7 @@ export class WelcomeElement extends LitElement {
     postToHost({ type: 'welcome.close' });
   };
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       ${this.renderHero()}
       ${this.renderWhatIsDitto()}

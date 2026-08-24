@@ -43,12 +43,12 @@ test('layout/flatten: two leaves are placed symmetrically around root center', (
   // flat[0] = root, flat[1] = left child, flat[2] = right child
   assert.equal(flat.length, 3);
   // Root center = 344/2 = 172
-  assert.equal(flat[0].absX, 172);
+  assert.equal(flat[0]?.absX, 172);
   // Symmetry around root center:
-  assert.equal(flat[1].absX + flat[2].absX, 2 * flat[0].absX);
+  assert.equal((flat[1]?.absX ?? NaN) + (flat[2]?.absX ?? NaN), 2 * (flat[0]?.absX ?? NaN));
   // Concrete positions: left at 80, right at 264
-  assert.equal(flat[1].absX, 80);
-  assert.equal(flat[2].absX, 264);
+  assert.equal(flat[1]?.absX, 80);
+  assert.equal(flat[2]?.absX, 264);
 });
 
 test('layout/flatten: a single child is centered under its parent', () => {
@@ -60,7 +60,7 @@ test('layout/flatten: a single child is centered under its parent', () => {
   const flat = flatten(laid);
   assert.equal(flat.length, 2);
   // Root and child should be vertically aligned (same absX).
-  assert.equal(flat[0].absX, flat[1].absX);
+  assert.equal(flat[0]?.absX, flat[1]?.absX);
 });
 
 test('layout/flatten: three leaves at top level', () => {
@@ -72,7 +72,7 @@ test('layout/flatten: three leaves at top level', () => {
   // [root, leftChild, midChild, rightChild]
   assert.equal(flat.length, 4);
   // Root at 264 (subtreeWidth/2)
-  assert.equal(flat[0].absX, 264);
+  assert.equal(flat[0]?.absX, 264);
   // Left at 80, mid at 80+160+24+80 = 344-(160-80)... let's compute:
   //   childLeftEdge starts at (528 - 528)/2 = 0
   //   leftChild center = 0 + 80 = 80
@@ -80,7 +80,7 @@ test('layout/flatten: three leaves at top level', () => {
   //   midChild center = 184 + 80 = 264
   //   childLeftEdge += 160 + 24 = 368
   //   rightChild center = 368 + 80 = 448
-  assert.equal(flat[1].absX, 80);
-  assert.equal(flat[2].absX, 264);
-  assert.equal(flat[3].absX, 448);
+  assert.equal(flat[1]?.absX, 80);
+  assert.equal(flat[2]?.absX, 264);
+  assert.equal(flat[3]?.absX, 448);
 });

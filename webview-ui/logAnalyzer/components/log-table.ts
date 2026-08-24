@@ -20,7 +20,7 @@ const MIN_COLUMN_WIDTH = 40;
  *  lockstep without re-rendering all rows on each pixel of drag. */
 @customElement('log-table')
 export class LogTable extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       /* Fill the available height from the parent's flex layout, but keep
@@ -138,9 +138,9 @@ export class LogTable extends LitElement {
   @state() private colWidths = { ts: 110, lvl: 60, tag: 220, utag: 120 };
   private dragging: { col: 'ts' | 'lvl' | 'tag' | 'utag'; startX: number; startW: number } | null = null;
 
-  private resizeObserver?: ResizeObserver;
+  private resizeObserver?: ResizeObserver | undefined;
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener('scroll', this.onScroll);
     // Track the viewport height continuously — a one-shot read in
@@ -155,7 +155,7 @@ export class LogTable extends LitElement {
     this.resizeObserver.observe(this);
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     this.removeEventListener('scroll', this.onScroll);
     this.resizeObserver?.disconnect();
     this.resizeObserver = undefined;
@@ -266,7 +266,7 @@ export class LogTable extends LitElement {
    *  head + rows pick them up. Done in updated() (not render()) so render
    *  stays pure, and via setProperty rather than cssText so unrelated
    *  inline styles on the host are not clobbered. */
-  protected updated(changed: Map<string, unknown>): void {
+  protected override updated(changed: Map<string, unknown>): void {
     if (changed.has('colWidths')) {
       const s = (this as unknown as HTMLElement).style;
       s.setProperty('--col-ts', `${this.colWidths.ts}px`);
@@ -276,7 +276,7 @@ export class LogTable extends LitElement {
     }
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     if (this.totalRows === 0) {
       return html`
         ${this.renderHead()}

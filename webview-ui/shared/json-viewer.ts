@@ -61,8 +61,8 @@ const selectionField = StateField.define<{ ranges: DocumentRange[]; selected: nu
       return { ranges, selected, deco: prev.deco };
     }
     const builder = new RangeSetBuilder<Decoration>();
-    if (selected >= 0 && selected < ranges.length) {
-      const r = ranges[selected];
+    const r = selected >= 0 && selected < ranges.length ? ranges[selected] : undefined;
+    if (r) {
       const startLine = tr.state.doc.lineAt(Math.min(r.from, tr.state.doc.length)).number;
       const endLine = tr.state.doc.lineAt(Math.min(Math.max(r.to - 1, r.from), tr.state.doc.length)).number;
       for (let n = startLine; n <= endLine; n++) {
@@ -93,17 +93,17 @@ export class JsonViewer extends LitElement {
    *  Inspector tabs (JSON, Metrics) opt in. */
   @property({ type: Boolean }) wrap = false;
 
-  private view?: EditorView;
+  private view?: EditorView | undefined;
   private readonly readOnlyCompartment = new Compartment();
   private readonly wrapCompartment = new Compartment();
 
   // Render in light DOM so CodeMirror's own stylesheets and theming reach
   // the editor surface — its CSS-in-JS is global, not shadow-scoped.
-  protected createRenderRoot(): HTMLElement {
+  protected override createRenderRoot(): HTMLElement {
     return this;
   }
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
     // VS Code reparents webview panels when they move between editor groups,
     // re-running this on the same element — but firstUpdated does NOT
@@ -114,7 +114,7 @@ export class JsonViewer extends LitElement {
     if (!this.view) { this.setupView(); }
   }
 
-  firstUpdated(): void {
+  override firstUpdated(): void {
     this.setupView();
   }
 
@@ -132,7 +132,7 @@ export class JsonViewer extends LitElement {
       rootNode instanceof ShadowRoot || rootNode instanceof Document ? rootNode : undefined;
     this.view = new EditorView({
       parent: host,
-      root: rootOption,
+      ...(rootOption === undefined ? {} : { root: rootOption }),
       state: EditorState.create({
         doc: this.value,
         extensions: [
@@ -204,7 +204,7 @@ export class JsonViewer extends LitElement {
     }
   }
 
-  updated(changed: Map<string, unknown>): void {
+  override updated(changed: Map<string, unknown>): void {
     if (!this.view) { return; }
     const effects: StateEffect<unknown>[] = [];
     if (changed.has('value')) {
@@ -229,13 +229,13 @@ export class JsonViewer extends LitElement {
     }
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
     this.view?.destroy();
     this.view = undefined;
   }
 
-  render() {
+  override render() {
     return html`<div class="cm-host" style="height:100%;"></div>`;
   }
 }

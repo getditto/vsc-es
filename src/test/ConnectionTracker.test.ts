@@ -11,9 +11,9 @@ test('ConnectionTracker: pairs start with end by remote+role', () => {
   t.consume(L('2026-06-09T14:05:00.000Z  INFO   [sdk]  physical connection ended remote=abc role=Client'));
   const sessions = t.snapshot();
   assert.equal(sessions.length, 1);
-  assert.equal(sessions[0].remotePeer, 'abc');
-  assert.equal(sessions[0].transport, 'Websocket');
-  assert.equal(sessions[0].end?.toISOString(), '2026-06-09T14:05:00.000Z');
+  assert.equal(sessions[0]?.remotePeer, 'abc');
+  assert.equal(sessions[0]?.transport, 'Websocket');
+  assert.equal(sessions[0]?.end?.toISOString(), '2026-06-09T14:05:00.000Z');
 });
 
 test('ConnectionTracker: ditto_init closes all open sessions', () => {
@@ -38,7 +38,7 @@ test('ConnectionTracker: sessions still open render with end=null', () => {
   t.consume(L('2026-06-09T14:00:00.000Z  INFO   [sdk]  physical connection started remote=abc'));
   const s = t.snapshot();
   assert.equal(s.length, 1);
-  assert.equal(s[0].end, null);
+  assert.equal(s[0]?.end, null);
 });
 
 test('ConnectionTracker: unparseable line is ignored', () => {
@@ -52,9 +52,9 @@ test('ConnectionTracker: missing fields default to unknown', () => {
   t.consume(L('2026-06-09T14:00:00.000Z  INFO   [sdk]  physical connection started'));
   const s = t.snapshot();
   assert.equal(s.length, 1);
-  assert.equal(s[0].remotePeer, 'unknown');
-  assert.equal(s[0].transport, 'unknown');
-  assert.equal(s[0].role, 'unknown');
+  assert.equal(s[0]?.remotePeer, 'unknown');
+  assert.equal(s[0]?.transport, 'unknown');
+  assert.equal(s[0]?.role, 'unknown');
 });
 
 test('ConnectionTracker: double-start without end records both as open', () => {
@@ -90,5 +90,5 @@ test('ConnectionTracker: the open-session list is bounded', () => {
   const open = t.snapshot();
   assert.ok(open.length <= 2_000, `open sessions must be bounded, saw ${open.length}`);
   // The most recent sessions are the ones worth keeping.
-  assert.equal(open[open.length - 1].remotePeer, 'peer4999');
+  assert.equal(open[open.length - 1]?.remotePeer, 'peer4999');
 });

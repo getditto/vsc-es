@@ -32,9 +32,9 @@ test('getRootChildren returns one database node per stored config (idle by defau
   const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs(), emptyObservers());
   const roots = await provider.getRootChildren();
   assert.equal(roots.length, 2);
-  assert.equal(roots[0].kind, 'database');
-  assert.equal(roots[0].kind === 'database' && roots[0].status, 'idle');
-  assert.equal(roots[1].kind === 'database' && roots[1].config.name, 'B');
+  assert.equal(roots[0]?.kind, 'database');
+  assert.equal(roots[0]?.kind === 'database' && roots[0].status, 'idle');
+  assert.equal(roots[1]?.kind === 'database' && roots[1].config.name, 'B');
 });
 
 test('idle database has no children', async () => {
@@ -42,6 +42,7 @@ test('idle database has no children', async () => {
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
   const provider = new DatabaseTreeProvider(cfg, () => 'idle', emptySubs(), emptyObservers());
   const [root] = await provider.getRootChildren();
+  assert.ok(root);
   const children = await provider.getNodeChildren(root);
   assert.deepEqual(children, []);
 });
@@ -51,6 +52,7 @@ test('active database has a single databaseDetails wrapper child', async () => {
   await cfg.save({ ...newConfig(), id: '1', name: 'A', databaseId: 'dbA' });
   const provider = new DatabaseTreeProvider(cfg, () => 'active', emptySubs(), emptyObservers());
   const [root] = await provider.getRootChildren();
+  assert.ok(root);
   const children = await provider.getNodeChildren(root);
   assert.deepEqual(children.map(c => c.kind), ['databaseDetails']);
 });
@@ -69,7 +71,9 @@ test('databaseDetails expands to subs + inline collections + section + peers + q
     cfg, () => 'active', emptySubs(), emptyObservers(), undefined, collections as any,
   );
   const [root] = await provider.getRootChildren();
+  assert.ok(root);
   const [details] = await provider.getNodeChildren(root);
+  assert.ok(details);
   const grandchildren = await provider.getNodeChildren(details);
   // Collections render directly between Subscriptions and the features
   // divider — no "Collections" wrapper any more.
@@ -101,7 +105,9 @@ test('collection expands to documentsLeaf + indexesParent', async () => {
     cfg, () => 'active', emptySubs(), emptyObservers(), undefined, collections as any,
   );
   const [root] = await provider.getRootChildren();
+  assert.ok(root);
   const [details] = await provider.getNodeChildren(root);
+  assert.ok(details);
   const dbChildren = await provider.getNodeChildren(details);
   const collection = dbChildren.find(n => n.kind === 'collection')!;
   const leaves = await provider.getNodeChildren(collection);
@@ -123,15 +129,17 @@ test('indexesParent expands to one index node per declared index', async () => {
     cfg, () => 'active', emptySubs(), emptyObservers(), undefined, collections as any,
   );
   const [root] = await provider.getRootChildren();
+  assert.ok(root);
   const [details] = await provider.getNodeChildren(root);
+  assert.ok(details);
   const dbChildren = await provider.getNodeChildren(details);
   const collection = dbChildren.find(n => n.kind === 'collection')!;
   const collChildren = await provider.getNodeChildren(collection);
   const indexes = collChildren.find(n => n.kind === 'indexesParent')!;
   const idxNodes = await provider.getNodeChildren(indexes);
   assert.equal(idxNodes.length, 1);
-  assert.equal(idxNodes[0].kind, 'index');
-  assert.equal(idxNodes[0].kind === 'index' && idxNodes[0].index.displayName, 'by_due');
+  assert.equal(idxNodes[0]?.kind, 'index');
+  assert.equal(idxNodes[0]?.kind === 'index' && idxNodes[0].index.displayName, 'by_due');
 });
 
 test('Subscriptions parent expands to leaves from SubscriptionStore', async () => {
@@ -141,13 +149,15 @@ test('Subscriptions parent expands to leaves from SubscriptionStore', async () =
   await subs.save('1', { id: 's1', name: 'tasks-all', query: 'SELECT * FROM tasks' });
   const provider = new DatabaseTreeProvider(cfg, () => 'active', subs, emptyObservers());
   const [root] = await provider.getRootChildren();
+  assert.ok(root);
   const [details] = await provider.getNodeChildren(root);
+  assert.ok(details);
   const dbChildren = await provider.getNodeChildren(details);
   const subsParent = dbChildren.find(n => n.kind === 'subscriptionsParent')!;
   const leaves = await provider.getNodeChildren(subsParent);
   assert.equal(leaves.length, 1);
-  assert.equal(leaves[0].kind, 'subscription');
-  assert.equal(leaves[0].kind === 'subscription' && leaves[0].sub.name, 'tasks-all');
+  assert.equal(leaves[0]?.kind, 'subscription');
+  assert.equal(leaves[0]?.kind === 'subscription' && leaves[0].sub.name, 'tasks-all');
 });
 
 test('Subscription expands to a single subscriptionQuery leaf carrying the full DQL', async () => {
@@ -157,15 +167,18 @@ test('Subscription expands to a single subscriptionQuery leaf carrying the full 
   await subs.save('1', { id: 's1', name: 'tasks-all', query: 'SELECT * FROM tasks WHERE done = false' });
   const provider = new DatabaseTreeProvider(cfg, () => 'active', subs, emptyObservers());
   const [root] = await provider.getRootChildren();
+  assert.ok(root);
   const [details] = await provider.getNodeChildren(root);
+  assert.ok(details);
   const dbChildren = await provider.getNodeChildren(details);
   const subsParent = dbChildren.find(n => n.kind === 'subscriptionsParent')!;
   const [sub] = await provider.getNodeChildren(subsParent);
+  assert.ok(sub);
   const queryLeaves = await provider.getNodeChildren(sub);
   assert.equal(queryLeaves.length, 1);
-  assert.equal(queryLeaves[0].kind, 'subscriptionQuery');
+  assert.equal(queryLeaves[0]?.kind, 'subscriptionQuery');
   assert.equal(
-    queryLeaves[0].kind === 'subscriptionQuery' && queryLeaves[0].sub.query,
+    queryLeaves[0]?.kind === 'subscriptionQuery' && queryLeaves[0].sub.query,
     'SELECT * FROM tasks WHERE done = false',
   );
 });

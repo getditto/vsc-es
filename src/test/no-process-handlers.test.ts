@@ -46,7 +46,8 @@ test('no extension-host code registers a process-level error handler', async () 
       // Skip comments — the explanation in extension.ts names these events.
       const code = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
       const m = /process\s*\.\s*(?:on|once|addListener|prependListener)\s*\(\s*['"]([^'"]+)['"]/.exec(code);
-      if (m && FORBIDDEN.includes(m[1])) {
+      // The regex's capture group is mandatory, so a match implies m[1] exists.
+      if (m && FORBIDDEN.includes(m[1]!)) {
         offenders.push(`${file}:${i + 1} process.on('${m[1]}')`);
       }
     }

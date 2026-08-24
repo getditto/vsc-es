@@ -46,7 +46,7 @@ export class ImportDataElement extends LitElement {
   @state() private errorMessage: string | undefined;
   @state() private done: { successCount: number; failureCount: number; errors: string[]; collection: string } | undefined;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 24px;
@@ -249,13 +249,15 @@ export class ImportDataElement extends LitElement {
           this.useExistingCollection = true;
           this.selectedExistingCollection = msg.preselectedCollection;
         } else if (msg.existingCollections.length > 0 && !this.selectedExistingCollection) {
-          this.selectedExistingCollection = msg.existingCollections[0];
+          const first = msg.existingCollections[0];
+          if (first) { this.selectedExistingCollection = first; }
         }
         break;
       case 'importData.collectionsRefreshed':
         this.existingCollections = msg.existingCollections;
         if (!this.selectedExistingCollection && msg.existingCollections.length > 0) {
-          this.selectedExistingCollection = msg.existingCollections[0];
+          const first = msg.existingCollections[0];
+          if (first) { this.selectedExistingCollection = first; }
         }
         break;
       case 'importData.fileSelected':
@@ -343,7 +345,7 @@ export class ImportDataElement extends LitElement {
 
   // ─── Render ────────────────────────────────────────────────
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <h2>Import JSON Data</h2>
       <div class="subtitle">

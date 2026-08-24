@@ -51,7 +51,7 @@ export class AnalyzerSink implements Sink {
   }
 
   firstLiveId(): number {
-    if (this.buf.length === 0) { return 0; }
-    return this.buf[Math.max(0, this.buf.length - this.capacity)].id;
+    const first = this.buf[Math.max(0, this.buf.length - this.capacity)];
+    return first ? first.id : 0;
   }
 }

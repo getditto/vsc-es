@@ -22,8 +22,8 @@ const stub = vscode as unknown as {
   __resetStub(): void;
 };
 
-function recordingLogger(): { logger: Logger; errors: { msg: string; ctx?: LogContext }[] } {
-  const errors: { msg: string; ctx?: LogContext }[] = [];
+function recordingLogger(): { logger: Logger; errors: { msg: string; ctx?: LogContext | undefined }[] } {
+  const errors: { msg: string; ctx?: LogContext | undefined }[] = [];
   const logger = {
     error: (msg: string, ctx?: LogContext) => { errors.push({ msg, ctx }); },
     warn: () => {}, info: () => {}, debug: () => {}, trace: () => {},
@@ -45,9 +45,9 @@ test('webviewMessageHandler: a rejected handler is logged and surfaced to the us
   await Promise.resolve();
 
   assert.equal(errors.length, 1, 'logged exactly once');
-  assert.equal(errors[0].msg, 'Query editor action failed');
-  assert.equal(errors[0].ctx?.err, 'no active database', 'the cause is in the log line');
-  assert.equal(errors[0].ctx?.messageType, 'query.run', 'and which message caused it');
+  assert.equal(errors[0]?.msg, 'Query editor action failed');
+  assert.equal(errors[0]?.ctx?.err, 'no active database', 'the cause is in the log line');
+  assert.equal(errors[0]?.ctx?.messageType, 'query.run', 'and which message caused it');
 
   assert.deepEqual(
     stub.window.shownErrors,
@@ -88,7 +88,7 @@ test('webviewMessageHandler: a non-Error rejection still produces a readable mes
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.equal(errors[0].ctx?.err, 'plain string');
+  assert.equal(errors[0]?.ctx?.err, 'plain string');
   assert.deepEqual(stub.window.shownErrors, ['Save observer failed: plain string']);
 });
 

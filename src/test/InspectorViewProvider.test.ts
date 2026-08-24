@@ -26,6 +26,12 @@ const noopLogger = (): Logger => {
   return self;
 };
 
+// Test-only seams on the vscode stub (`scripts/vscode-stub.mjs`): the save
+// dialog's scripted result.
+const stubWindow = (vscode as unknown as {
+  window: { saveDialogResult: unknown };
+}).window;
+
 interface FakeView {
   posted: { type: string; [k: string]: unknown }[];
   messageListeners: ((msg: unknown) => void)[];
@@ -34,6 +40,7 @@ interface FakeView {
 function resolveProvider(manager: {
   fetchAttachmentCalls: number;
   fetchAttachment(token: unknown, cb: (ev: unknown) => void): Promise<{ data(): Promise<Buffer>; metadata?: unknown }> | undefined;
+  saveAttachmentToPath?(att: unknown, destPath: string): Promise<void>;
 }): { posted: FakeView['posted'] } & { fire(msg: unknown): void } {
   const view: FakeView = { posted: [], messageListeners: [] };
   // Real cache — it's plain in-memory and participates in the byte-count
@@ -44,7 +51,10 @@ function resolveProvider(manager: {
     { onContentChange: () => ({ dispose: () => {} }), getContent: () => ({ kind: 'none' }) } as never,
     { list: () => [], onChange: () => ({ dispose: () => {} }) } as never,
     { list: () => [], onChange: () => ({ dispose: () => {} }) } as never,
-    { getActiveConfigId: () => 'db-A', fetchAttachment: manager.fetchAttachment.bind(manager) } as never,
+    { getActiveConfigId: () => 'db-A',
+      fetchAttachment: manager.fetchAttachment.bind(manager),
+      saveAttachmentToPath: manager.saveAttachmentToPath?.bind(manager),
+    } as never,
     noopLogger(),
     { get: () => ({ hideLimitHint: false }), dismissLimitHint: async () => {} } as never,
     { get: (dbId: string, attId: string) => attachmentCache.get(dbId, attId),
@@ -93,9 +103,9 @@ test('inspector: an over-cap token is refused by DECLARED length, before any fet
   assert.equal(manager.fetchAttachmentCalls, 0, 'never fetched a byte');
   const errs = p.posted.filter(m => m.type === 'inspector.attachmentError');
   assert.equal(errs.length, 1, `saw ${JSON.stringify(p.posted.map(m => m.type))}`);
-  assert.match(String(errs[0].message), /too large to preview/);
-  assert.match(String(errs[0].message), /20 MB/, 'the cap is stated');
-  assert.match(String(errs[0].message), /Download/, 'the save path is pointed at');
+  assert.match(String(errs[0]?.message), /too large to preview/);
+  assert.match(String(errs[0]?.message), /20 MB/, 'the cap is stated');
+  assert.match(String(errs[0]?.message), /Download/, 'the save path is pointed at');
 });
 
 test('inspector: the over-cap gate does NOT block the Download/save flow', async () => {
@@ -116,6 +126,81 @@ test('inspector: the over-cap gate does NOT block the Download/save flow', async
   await settle();
 
   assert.equal(manager.fetchAttachmentCalls, 1, 'the save flow starts fetching');
+});
+
+test('inspector: Download saves through the native copy — data() never runs, no byte cache', async () => {
+  // The whole point of the streaming save path: for an uncapped Download,
+  // the blob must never become a JS-side Uint8Array in the extension host.
+  // Pin it by making data() observable — any call fails the test — and by
+  // asserting the save goes through manager.saveAttachmentToPath
+  // (Attachment.copyToPath under the hood) with the dialog-picked path.
+  let dataCalls = 0;
+  const saves: { dest: string }[] = [];
+  const manager = {
+    fetchAttachmentCalls: 0,
+    fetchAttachment(_token: unknown, _cb: (ev: unknown) => void) {
+      manager.fetchAttachmentCalls += 1;
+      return Promise.resolve({
+        data: async () => { dataCalls += 1; return Buffer.from('blob'); },
+        metadata: { filename: 'photo.png' },
+      });
+    },
+    async saveAttachmentToPath(_att: unknown, destPath: string) {
+      saves.push({ dest: destPath });
+    },
+  };
+  const p = resolveProvider(manager);
+
+  stubWindow.saveDialogResult = vscode.Uri.file('/tmp/out.png');
+  try {
+    p.fire({
+      type: 'inspector.saveAttachment',
+      tokenId: 't1',
+      token: { id: 'att-1', len: 4, metadata: { filename: 'photo.png' } },
+    });
+    await settle();
+
+    assert.equal(dataCalls, 0, 'att.data() must never run on the save path');
+    assert.deepEqual(saves, [{ dest: '/tmp/out.png' }]);
+    const savedMsgs = p.posted.filter(m => m.type === 'inspector.attachmentSaved');
+    assert.equal(savedMsgs.length, 1, `saw ${JSON.stringify(p.posted.map(m => m.type))}`);
+    assert.equal(savedMsgs[0]?.path, '/tmp/out.png');
+    const errors = p.posted.filter(m => m.type === 'inspector.attachmentError');
+    assert.equal(errors.length, 0, `unexpected errors: ${JSON.stringify(errors)}`);
+  } finally {
+    stubWindow.saveDialogResult = undefined;
+  }
+});
+
+test('inspector: Download with a cancelled save dialog is a silent no-op', async () => {
+  let dataCalls = 0;
+  const manager = {
+    fetchAttachmentCalls: 0,
+    fetchAttachment(_token: unknown, _cb: (ev: unknown) => void) {
+      manager.fetchAttachmentCalls += 1;
+      return Promise.resolve({
+        data: async () => { dataCalls += 1; return Buffer.from('blob'); },
+        metadata: {},
+      });
+    },
+    async saveAttachmentToPath() {
+      assert.fail('saveAttachmentToPath must not run when the dialog is cancelled');
+    },
+  };
+  const p = resolveProvider(manager);
+
+  // No saveDialogResult set → the stub resolves undefined (user cancelled).
+  p.fire({
+    type: 'inspector.saveAttachment',
+    tokenId: 't1',
+    token: { id: 'att-2', len: 4, metadata: {} },
+  });
+  await settle();
+
+  assert.equal(dataCalls, 0);
+  assert.equal(p.posted.filter(m => m.type === 'inspector.attachmentSaved').length, 0);
+  assert.equal(p.posted.filter(m => m.type === 'inspector.attachmentError').length, 0,
+    'cancelling the save dialog must not surface as an error');
 });
 
 test('inspector: a cache hit with a lying token is refused by ACTUAL byte count, pre-base64', async () => {
@@ -148,5 +233,5 @@ test('inspector: a cache hit with a lying token is refused by ACTUAL byte count,
   assert.equal(loaded.length, 0, 'no base64 payload was posted');
   const errs = p.posted.filter(m => m.type === 'inspector.attachmentError');
   assert.equal(errs.length, 1);
-  assert.match(String(errs[0].message), /too large to preview/);
+  assert.match(String(errs[0]?.message), /too large to preview/);
 });

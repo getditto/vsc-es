@@ -385,18 +385,19 @@ function paintedPeers(el: any, ctx: RecordingContext2D): Map<string, PaintedPeer
     let fillAlpha = NaN;
     let strokeWidth = NaN;
     for (let j = opIndex - 1; j >= 0; j -= 1) {
-      if (ctx.__ops[j].op === 'stroke' && Number.isNaN(strokeWidth)) {
-        strokeWidth = ctx.__ops[j].lineWidth;
-      } else if (ctx.__ops[j].op === 'fill') {
-        fillAlpha = ctx.__ops[j].globalAlpha;
+      const op = ctx.__ops[j];
+      if (op?.op === 'stroke' && Number.isNaN(strokeWidth)) {
+        strokeWidth = op.lineWidth;
+      } else if (op?.op === 'fill') {
+        fillAlpha = op.globalAlpha;
         break;
       }
     }
     out.set(keys[i], {
       fillAlpha,
       strokeWidth,
-      x: ctx.__ops[opIndex].tx,
-      y: ctx.__ops[opIndex].ty,
+      x: ctx.__ops[opIndex]?.tx ?? NaN,
+      y: ctx.__ops[opIndex]?.ty ?? NaN,
     });
   });
   return out;

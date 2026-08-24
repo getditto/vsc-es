@@ -74,14 +74,15 @@ test('parses an envelope-wrapped profile', () => {
   assert.ok(p.capturedAtMs >= before && p.capturedAtMs <= after);
   assert.equal(p.plan.name, 'sequence');
   assert.equal(p.plan.children.length, 3);
-  assert.equal(p.plan.children[0].name, 'indexScan');
-  assert.equal(p.plan.children[0].stats?.execNs, 133_700);
-  assert.equal(p.plan.children[0].stats?.documentsOut, 38);
+  assert.equal(p.plan.children[0]?.name, 'indexScan');
+  assert.equal(p.plan.children[0]?.stats?.execNs, 133_700);
+  assert.equal(p.plan.children[0]?.stats?.documentsOut, 38);
 });
 
 test('preserves operator attributes as ordered (key,value) pairs', () => {
   const p = parseProfileItem(envelopeFixture)!;
   const indexScan = p.plan.children[0];
+  assert.ok(indexScan);
   const keys = indexScan.attributes.map(a => a.key);
   // Sorted alphabetically (the parser uses sorted-key iteration for
   // determinism) and excludes reserved keys.

@@ -53,14 +53,16 @@ export function projectQueryRows(
   // rows, so the result table never shows the profile envelope as a row.
   if (opts.expectsEnvelope && count > 0) {
     const last = items[count - 1];
-    try {
-      const parsed = parseProfileItem(last.value as Record<string, unknown>);
-      if (parsed) {
-        profile = parsed;
-        count -= 1;
+    if (last) {
+      try {
+        const parsed = parseProfileItem(last.value as Record<string, unknown>);
+        if (parsed) {
+          profile = parsed;
+          count -= 1;
+        }
+      } finally {
+        try { last.dematerialize(); } catch { /* ignore */ }
       }
-    } finally {
-      try { last.dematerialize(); } catch { /* ignore */ }
     }
   }
 
@@ -68,6 +70,7 @@ export function projectQueryRows(
   const rows: Record<string, unknown>[] = [];
   for (let i = 0; i < count; i += 1) {
     const item = items[i];
+    if (!item) { continue; }
     try {
       if (i < projected) { rows.push(item.value as Record<string, unknown>); }
     } finally {

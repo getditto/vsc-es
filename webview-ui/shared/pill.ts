@@ -17,7 +17,7 @@ export class DittoPill extends LitElement {
   // so this is defense-in-depth, not a current bug.
   @property({ type: String, reflect: true }) color: PillColor = 'blue';
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: inline-flex;
       align-items: center;
@@ -40,7 +40,7 @@ export class DittoPill extends LitElement {
     :host([color='purple']) { background: rgba(142, 36,170,0.16); border: 1px solid rgba(142, 36,170,0.35); color: var(--vscode-charts-purple, #8e24aa); }
   `;
 
-  render() {
+  override render() {
     return html`<span class="label">${this.label}</span><span class="value">${this.value}</span>`;
   }
 }
