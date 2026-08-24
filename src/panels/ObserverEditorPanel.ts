@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
-import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
+import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
 import type { ObserverStore } from '../storage/ObserverStore.js';
 import type { StoredObserver } from '../models/StoredObserver.js';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
-import type { LogIn, LogOut, SubIn, SubOut } from '../ipc/messages.js';
+import type { SubIn, SubOut } from '../ipc/messages.js';
 import { ObserverPanel } from './ObserverPanel.js';
+import { randomId } from '../util/id.js';
 
 /** Editor for creating/renaming an observer. Reuses the existing
  *  subscription-form webview bundle (`subscription.js`) because the
@@ -71,15 +72,13 @@ export class ObserverEditorPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (msg: SubIn | LogIn) => this.handle(msg), undefined, this.disposables,
+      webviewMessageHandler<SubIn>(
+        this.logger, 'ext:observerEditor', 'Save observer failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
-
-    this.panel.webview.postMessage({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.disposables.push(levelSub);  // Push directly onto disposables so DB-switch disposal releases it.
 
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {
@@ -105,11 +104,7 @@ export class ObserverEditorPanel {
     this.panel.webview.postMessage(payload);
   }
 
-  private async handle(msg: SubIn | LogIn): Promise<void> {
-    if (msg.type === 'log') {
-      this.logger.withTag('webview:dittoObserverEditor')[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: SubIn): Promise<void> {
     if (msg.type === 'sub.cancel') { this.panel.dispose(); return; }
     if (msg.type === 'sub.save') {
       if (!msg.name.trim() || !msg.query.trim()) {
@@ -122,7 +117,7 @@ export class ObserverEditorPanel {
         return;
       }
       const observer: StoredObserver = {
-        id: msg.id ?? cryptoRandomId(),
+        id: msg.id ?? randomId(16),
         name: msg.name.trim(),
         query: msg.query.trim(),
       };
@@ -141,10 +136,4 @@ export class ObserverEditorPanel {
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }
-}
-
-function cryptoRandomId(): string {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }

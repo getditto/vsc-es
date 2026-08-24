@@ -103,6 +103,36 @@ test('saveConnectionAtomically restores an edited config after a partial secret 
   assert.equal(storedSecrets.token, 'old-token');
 });
 
+test('the error names the operation that failed — delete vs save', async () => {
+  // Users read this toast; "could not be saved" on a deliberate delete is
+  // nonsense, so the action word is part of the message.
+  let deleteErr: unknown;
+  await deleteConnectionAtomically({
+    get: () => config('old'),
+    async save() {},
+    async delete() { throw new Error('nope'); },
+  }, {
+    async read() { return { token: 'old-token' }; },
+    async write() {},
+    async deleteAll() {},
+  }, 'config-id').catch((e) => { deleteErr = e; });
+  assert.ok(deleteErr instanceof ConnectionPersistenceError);
+  assert.match(deleteErr.message, /could not be deleted/);
+  assert.doesNotMatch(deleteErr.message, /could not be saved/);
+
+  let saveErr: unknown;
+  await saveConnectionAtomically({
+    get: () => config('old'),
+    async save() { throw new Error('nope'); },
+    async delete() {},
+  }, {
+    async read() { return { token: 'old-token' }; },
+    async write() {},
+  }, config('new'), { token: 'new-token' }).catch((e) => { saveErr = e; });
+  assert.ok(saveErr instanceof ConnectionPersistenceError);
+  assert.match(saveErr.message, /could not be saved/);
+});
+
 test('saveConnectionAtomically removes a newly created config after secret failure', async () => {
   let storedConfig: StoredDittoConfig | undefined;
   let deleted = false;

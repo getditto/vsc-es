@@ -1,16 +1,21 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { CollectionsRepository } from '../ditto/CollectionsRepository.js';
 import type { Logger } from '../logging/types.js';
-import type { ImportDataIn, ImportDataOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { ImportDataIn, ImportDataOut } from '../ipc/messages.js';
 import {
   ImportValidationError,
   importDocuments,
   validateJsonDocuments,
 } from '../ditto/ImportService.js';
+
+/** Hard cap on import file size. The file is read whole and parsed
+ *  synchronously, so an unbounded read blocks the shared extension host
+ *  for seconds and can OOM it on a pathological file. Exported for tests. */
+export const MAX_IMPORT_BYTES = 100 * 1024 * 1024;
 
 /**
  * Webview panel that walks the user through importing a JSON file into
@@ -104,21 +109,13 @@ export class ImportDataPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (msg: ImportDataIn | LogIn) => { void this.handle(msg); },
+      webviewMessageHandler<ImportDataIn>(
+        this.logger, 'ext:importData', 'Import data failed', (msg) => this.handle(msg),
+      ),
       undefined,
       this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
-
-    // Mirror channel level for webview-side log filtering (same pattern
-    // every other panel uses).
-    void this.panel.webview.postMessage({
-      type: 'log.levelChanged', level: logger.getChannelLevel(),
-    } satisfies LogOut);
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      void this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     // Defensive setTimeout so the webview has a tick to register its
     // `message` listener before the init payload lands — matches the
@@ -141,12 +138,7 @@ export class ImportDataPanel {
     });
   }
 
-  private async handle(msg: ImportDataIn | LogIn): Promise<void> {
-    if (msg.type === 'log') {
-      const wlog = this.logger.withTag('webview:dittoImportData');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: ImportDataIn): Promise<void> {
     switch (msg.type) {
       case 'importData.chooseFile':
         await this.chooseFile();
@@ -176,7 +168,28 @@ export class ImportDataPanel {
     });
     if (!picked || picked.length === 0) { return; }
     const file = picked[0];
+    if (!file) { return; }
     log.info('User selected import file', { path: file.fsPath });
+
+    // Size gate BEFORE readFile: the file is read whole and parsed
+    // synchronously below, so an unbounded read would block (or OOM) the
+    // shared extension host. stat is nearly free even for huge files.
+    try {
+      const stat = await fs.stat(file.fsPath);
+      if (stat.size > MAX_IMPORT_BYTES) {
+        const actualMb = (stat.size / (1024 * 1024)).toFixed(1);
+        const capMb = MAX_IMPORT_BYTES / (1024 * 1024);
+        const message = `File is ${actualMb} MB — JSON imports are limited to ${capMb} MB. Split the file into smaller chunks and import them one at a time.`;
+        log.warn('Import file refused: over the size cap', { path: file.fsPath, size: stat.size });
+        this.post({ type: 'importData.error', message });
+        return;
+      }
+    } catch (err) {
+      const message = `Could not read file: ${err instanceof Error ? err.message : String(err)}`;
+      log.warn('File stat failed', { path: file.fsPath, err: message });
+      this.post({ type: 'importData.error', message });
+      return;
+    }
 
     let raw: string;
     try {
@@ -243,6 +256,10 @@ export class ImportDataPanel {
         collection,
         insertType,
         execute: (query, args) => this.manager.executeRaw(query, args),
+        // The switch orchestrator closes this panel but can't cancel the
+        // in-flight import; re-check before every batch so the tail of a
+        // slow import doesn't land in the newly-active database.
+        checkActive: () => this.manager.getActiveConfigId(),
         onProgress: (p) => {
           this.post({
             type: 'importData.progress',
@@ -256,7 +273,19 @@ export class ImportDataPanel {
         collection,
         successCount: result.successCount,
         failureCount: result.failureCount,
+        cancelled: result.cancelled === true,
       });
+      if (result.cancelled) {
+        // Partial batches already inserted stay inserted (ON ID CONFLICT
+        // DO UPDATE makes a re-run idempotent) — surface that clearly
+        // rather than reporting a failed import the user might re-run
+        // against the wrong (new) database.
+        this.post({
+          type: 'importData.error',
+          message: `Import cancelled — the database was switched mid-import. ${result.successCount} documents had already been written; this connection is no longer active.`,
+        });
+        return;
+      }
       if (result.failureCount > 0) {
         // Log the first error for debuggability — the full list is on
         // the panel; the channel just needs one breadcrumb.

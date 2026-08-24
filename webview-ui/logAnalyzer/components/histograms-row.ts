@@ -12,7 +12,7 @@ import type { AnalyzerState } from '../../../src/logAnalyzer/types.js';
  *  child component. Pure presentation — no IPC. */
 @customElement('histograms-row')
 export class HistogramsRow extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -40,7 +40,7 @@ export class HistogramsRow extends LitElement {
     connectionDurations: [],
   };
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <div class="panel">
         <div class="title">Log Volume by Level</div>

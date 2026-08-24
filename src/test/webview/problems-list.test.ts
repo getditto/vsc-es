@@ -4,7 +4,10 @@ import './setup.js';
 await import('../../../webview-ui/logAnalyzer/components/problems-list.js');
 
 function mkProblem(over: Partial<any> = {}) {
-  return {
+  // Round-trip through JSON: these objects reach the real webview via
+  // postMessage, so a Date arrives as an ISO string. Constructing a real
+  // Date here once masked a `.toISOString is not a function` render crash.
+  return JSON.parse(JSON.stringify({
     patternKey: 'deadlock_critical',
     severity: 5,
     recommendation: 'Possible deadlock. Investigate.',
@@ -17,7 +20,7 @@ function mkProblem(over: Partial<any> = {}) {
       text: 'Waiting for write transaction has elapsed',
     },
     ...over,
-  };
+  }));
 }
 
 test('ProblemsList: empty groups shows watching placeholder', async () => {
@@ -49,6 +52,18 @@ test('ProblemsList: renders one group per pattern with hit count', async () => {
     (n: any) => n.textContent.replace(/\s+/g, ' ').trim(),
   );
   assert.deepEqual(counts, ['(2 hits)', '(1 hit)']);
+  el.remove();
+});
+
+test('ProblemsList: expanded hits render the timestamp carried as a string', async () => {
+  const el = document.createElement('problems-list') as any;
+  el.groups = [{ key: 'deadlock_critical', items: [mkProblem()] }];
+  document.body.appendChild(el);
+  await el.updateComplete;
+  el.shadowRoot.querySelector('.header').click();
+  await el.updateComplete;
+  // Would throw "toISOString is not a function" when timestamp is a string.
+  assert.equal(el.shadowRoot.querySelector('.hit .ts').textContent, '2026-06-09T14:00:00.000Z');
   el.remove();
 });
 

@@ -27,8 +27,8 @@ test('AnalyzerSink: snapshot returns recent lines bounded by capacity', () => {
   for (let i = 0; i < 5; i++) sink.write('info', `2026-06-09T14:00:0${i}.000Z  INFO   [sdk]  msg${i}`);
   const snap = sink.snapshot();
   assert.equal(snap.length, 3);
-  assert.equal(snap[0].text, 'msg2');
-  assert.equal(snap[2].text, 'msg4');
+  assert.equal(snap[0]?.text, 'msg2');
+  assert.equal(snap[2]?.text, 'msg4');
 });
 
 test('AnalyzerSink: firstLiveId returns the id of the first live line', () => {
@@ -55,4 +55,24 @@ test('AnalyzerSink: throwing listener does not block other listeners', () => {
   sink.onLine(() => { bSaw = true; });
   sink.write('info', '2026-06-09T14:00:00.000Z  INFO   [sdk]  x');
   assert.equal(bSaw, true);
+});
+
+test('AnalyzerSink: text is lazily derived but still survives IPC serialisation', () => {
+  // LineParser keeps `text` as a lazy enumerable getter so the retained
+  // buffer doesn't pay for a second string per line up front. Lines cross to
+  // the webview via postMessage (JSON serialisation), which only picks up own
+  // enumerable properties — a non-enumerable or prototype getter would arrive
+  // as `undefined` there.
+  const sink = new AnalyzerSink({ capacity: 10 });
+  sink.write('info', '2026-06-09T14:00:00.000Z  INFO   [sdk]  lazily derived body');
+  const line = sink.snapshot()[0];
+  assert.ok(line);
+
+  assert.equal(line.raw, '2026-06-09T14:00:00.000Z  INFO   [sdk]  lazily derived body');
+  assert.equal(line.text, 'lazily derived body');
+  assert.equal(line.text, 'lazily derived body', 'memoised — stable across reads');
+
+  const roundTripped = JSON.parse(JSON.stringify(line)) as { text: string; raw: string };
+  assert.equal(roundTripped.text, 'lazily derived body', 'text reachable through JSON serialisation');
+  assert.equal(roundTripped.raw, line.raw);
 });

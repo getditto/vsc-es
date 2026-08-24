@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { Logger as DittoLogger } from '@dittolive/ditto';
+import { Logger as DittoLogger, type LogLevel as DittoSdkLogLevel } from '@dittolive/ditto';
 import { ConfigStore } from './storage/ConfigStore.js';
 import { SecretStore } from './storage/SecretStore.js';
 import { SubscriptionStore } from './storage/SubscriptionStore.js';
@@ -24,8 +24,12 @@ import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 import { CollectionsRepository } from './ditto/CollectionsRepository.js';
+import { isBareIdentifier, quoteIdentifier } from './ditto/dql-identifier.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
-import { performSwitch, type SwitchDeps } from './ditto/switch-orchestrator.js';
+import {
+  confirmSwitch, performSwitch, confirmRollback, rollbackSwitch,
+  type SwitchDeps, type SwitchOutcome,
+} from './ditto/switch-orchestrator.js';
 import { createLogger } from './logging/Logger.js';
 import { attachSdkLogBridge } from './logging/sdk-bridge.js';
 import type { Logger, LogLevel } from './logging/types.js';
@@ -56,6 +60,9 @@ import {
 import { deleteConnectionAtomically } from './panels/save-connection.js';
 
 let logger: Logger;
+/** Held for deactivate(): the context.subscriptions dispose of the manager
+ *  is fire-and-forget, so shutdown awaits disconnect through this instead. */
+let shutdownManager: DittoManager | undefined;
 
 function buildSwitchDeps(
   context: vscode.ExtensionContext,
@@ -81,9 +88,8 @@ function buildSwitchDeps(
       showModalWarn: async ({ message, buttons }) =>
         vscode.window.showWarningMessage(message, { modal: true }, ...buttons),
       showError: (msg) => { vscode.window.showErrorMessage(msg); },
-      showInfo: (msg) => { vscode.window.showInformationMessage(msg); },
-      withProgress: async (title, work) => {
-        await vscode.window.withProgress(
+      withProgress: async <T>(title: string, work: (notif: { report(o: { message: string }): void }) => Promise<T>): Promise<T> => {
+        return vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title, cancellable: false },
           async (notif) => work({ report: (o) => notif.report(o) }),
         );
@@ -98,19 +104,25 @@ function buildSwitchDeps(
       },
     },
     panels: {
-      closeQuery: () => QueryEditorPanel.dispose(),
-      closePeers: () => PeerListingPanel.dispose(),
+      // preserveTabs/preserveState: the switch restore reopens these
+      // panels from the tracker — disposing must not delete the entries
+      // it's about to read.
+      closeQuery: () => QueryEditorPanel.dispose({ preserveTabs: true }),
+      closePeers: () => PeerListingPanel.dispose({ preserveState: true }),
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
       closeQueryMetrics: () => QueryMetricsPanel.dispose(),
       closeDatabaseMetrics: () => DatabaseMetricsPanel.dispose(),
       closeImportData: () => ImportDataPanel.dispose(),
       closeObserver: () => ObserverPanel.disposeAll(),
       closeObserverEditor: () => ObserverEditorPanel.dispose(),
+      closeAddIndex: () => AddIndexPanel.dispose(),
+      closeImportSubscriptions: () => ImportSubscriptionsPanel.dispose(),
       showQuery: (databaseId, queryText) => {
         const panel = QueryEditorPanel.show(
           context, manager, configStore, secretStore, databaseId, tracker, inspector, history, favorites, metrics, loggerArg,
         );
-        if (queryText !== undefined && queryText.length > 0) {
+        // undefined when the tab cap refused — nothing to load into.
+        if (panel && queryText !== undefined && queryText.length > 0) {
           panel.loadQuery(queryText);
         }
       },
@@ -120,17 +132,21 @@ function buildSwitchDeps(
   };
 }
 
-const sdkLevelMap: Record<LogLevel, string> = {
+// Values are the SDK's LogLevel union ('Error' | 'Warning' | …) so the
+// assignment to DittoLogger.minimumLogLevel below needs no cast.
+const sdkLevelMap: Record<LogLevel, DittoSdkLogLevel> = {
   error: 'Error', warn: 'Warning', info: 'Info', debug: 'Debug', trace: 'Verbose',
 };
 
 async function pickLogLevel(current: LogLevel, title: string): Promise<LogLevel | undefined> {
   const items = (['error', 'warn', 'info', 'debug', 'trace'] as LogLevel[]).map(l => ({
     label: l,
-    description: l === current ? '(current)' : undefined,
+    // QuickPickItem.description doesn't admit explicit undefined under
+    // exactOptionalPropertyTypes, so the non-current rows omit the key.
+    ...(l === current ? { description: '(current)' } : {}),
   }));
   const picked = await vscode.window.showQuickPick(items, { title });
-  return picked?.label as LogLevel | undefined;
+  return picked?.label;
 }
 
 export function activate(context: vscode.ExtensionContext): TestApi | undefined {
@@ -149,10 +165,12 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         ? 'development' : 'production',
     extraSinks: [analyzerSink],
   });
-  context.subscriptions.push({ dispose: () => { void logger.dispose(); } });
+  // NOTE: the logger's disposal is registered at the END of activate() —
+  // VS Code disposes subscriptions in registration order, and everything
+  // else (manager.disconnect above all) logs during its own teardown.
 
   // SDK bridge: pipe Ditto SDK logs into our Logger under the 'sdk' tag.
-  attachSdkLogBridge(DittoLogger as unknown as Parameters<typeof attachSdkLogBridge>[0], logger.withTag('sdk'));
+  attachSdkLogBridge(DittoLogger, logger.withTag('sdk'));
 
   const log = logger.withTag('ext');
 
@@ -176,7 +194,33 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   // engine starts empty until the load resolves — that's fine: the
   // analyzer panel is user-initiated and won't open faster than this
   // I/O completes in practice.
-  void patternStore.load().then(() => patternEngine.load());
+  //
+  // The catch matters: `void promise.then(...)` observes nothing, so a missing
+  // or malformed bundled catalog became an unhandled rejection and the engine
+  // stayed permanently empty. The analyzer would then report "no problems
+  // detected" forever with no indication that detection was never running.
+  const loadPatterns = (reason: 'startup' | 'settingChanged'): void => {
+    void patternStore.load()
+      .then(() => {
+        patternEngine.load();
+        const rejected = patternEngine.listRejected();
+        if (rejected.length > 0) {
+          logger.warn('Log analyzer: some patterns were skipped', {
+            reason,
+            skipped: rejected.map(r => `${r.key}: ${r.reason}`).join('; '),
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('Log analyzer: pattern catalog failed to load', { reason, err: message });
+        void vscode.window.showWarningMessage(
+          `Ditto: log analyzer patterns failed to load (${message}). `
+          + 'Problem detection is disabled until this is resolved.',
+        );
+      });
+  };
+  loadPatterns('startup');
   context.subscriptions.push(
     patternStore.onDidChange(() => patternEngine.reload()),
   );
@@ -199,6 +243,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const observerStore = new ObserverStore(context.globalState);
   const tracker = new OpenPanelsTracker(context.globalState);
   const manager = new DittoManager(context, logger, configStore);
+  shutdownManager = manager;
   const collectionsRepo = new CollectionsRepository(manager, logger);
   const inspectorController = new InspectorController(context.globalState);
   const historyStore = new QueryHistoryStore(context.globalState);
@@ -206,13 +251,6 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const queryMetricsStore = new QueryMetricsStore();
   const treeExpansionStore = new TreeExpansionStore(context.globalState);
   const metricsPrefs = new MetricsPreferencesStore(context.globalState);
-
-  // Initialize the context key to a known value so view `when` clauses
-  // evaluate deterministically even before the first lifecycle transition.
-  void vscode.commands.executeCommand(
-    'setContext', 'dittoVsce.hasActiveDatabase',
-    manager.getCurrentLifecycleState().kind === 'active',
-  );
 
   // In-memory cache for inspector attachment bytes. Survives across
   // tab switches so re-opening the JSON viewer doesn't re-download
@@ -260,7 +298,6 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         lastActiveConfigId = null;
       }
     }
-    void vscode.commands.executeCommand('setContext', 'dittoVsce.hasActiveDatabase', state.kind === 'active');
   }));
 
   const inspectorView = new InspectorViewProvider(
@@ -301,6 +338,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   context.subscriptions.push(manager.onLifecycleStateChange(() => treeProvider.refresh()));
   const treeView = vscode.window.createTreeView('dittoDatabases', { treeDataProvider: treeProvider, showCollapseAll: true });
   context.subscriptions.push(treeView);
+  context.subscriptions.push({ dispose: () => treeProvider.dispose() });
 
   // ─── Settings reactivity ─────────────────────────────────────
   // When the user toggles dittoVsce.collectProfiling or
@@ -328,7 +366,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         // analyzer panel, if open, will see the new patterns the next
         // time it processes a line (or via the store's change event,
         // which already triggers engine.reload above).
-        void patternStore.load().then(() => patternEngine.reload());
+        loadPatterns('settingChanged');
       }
     }),
   );
@@ -506,10 +544,17 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
             QueryEditorPanel.dispose();
             PeerListingPanel.dispose();
             SubscriptionEditorPanel.dispose();
+            QueryMetricsPanel.dispose();
+            DatabaseMetricsPanel.dispose();
+            ImportDataPanel.dispose();
             ObserverEditorPanel.dispose();
             ObserverPanel.disposeAll();
+            AddIndexPanel.dispose();
+            ImportSubscriptionsPanel.dispose();
             await manager.disconnect();
           }
+          // In-memory per-DB metrics aren't in the persistent stores below.
+          queryMetricsStore.clear(node.config.id);
           const cleanup = await Promise.allSettled([
             subscriptionStore.deleteAll(node.config.id),
             observerStore.deleteAll(node.config.id),
@@ -553,14 +598,47 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         return;
       }
       const deps = buildSwitchDeps(context, manager, configStore, secretStore, subscriptionStore, tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger);
-      await withConnectionPersistenceLock(async () => {
-        const currentTarget = configStore.get(node.config.id);
-        if (!currentTarget) {
+      const currentTarget = configStore.get(node.config.id);
+      if (!currentTarget) {
+        vscode.window.showErrorMessage('This connection no longer exists. Refresh the database list and try again.');
+        return;
+      }
+      // The confirmation modal runs OUTSIDE the persistence lock: a modal
+      // can stay open indefinitely and deactivate() waits on the lock tail,
+      // so a modal inside the lock can deadlock shutdown.
+      if (!await confirmSwitch(deps, fromActive, currentTarget)) { return; }
+      const outcome = await withConnectionPersistenceLock(async (): Promise<SwitchOutcome | null> => {
+        // Re-check inside the lock — the config could have been deleted
+        // while the modal was open.
+        const stillTarget = configStore.get(node.config.id);
+        if (!stillTarget) {
           vscode.window.showErrorMessage('This connection no longer exists. Refresh the database list and try again.');
-          return;
+          return null;
         }
-        await performSwitch(deps, fromActive, currentTarget);
+        // Recompute fromActive INSIDE the lock: the user may have connected
+        // to a different database (or disconnected) while the confirm modal
+        // was up, and a stale fromActive would close/restore the wrong panels
+        // and name the wrong rollback target.
+        const cur = manager.getCurrentLifecycleState();
+        const lockedFrom = cur.kind === 'active'
+          ? { id: cur.configId, name: configStore.get(cur.configId)?.name ?? 'Unknown' }
+          : null;
+        if (lockedFrom && lockedFrom.id === stillTarget.id) {
+          vscode.window.showInformationMessage(`Already connected to "${stillTarget.name}".`);
+          return null;
+        }
+        return performSwitch(deps, lockedFrom, stillTarget);
       });
+      // Rollback UX runs AFTER the lock has been released — the rollback
+      // modal has the same deadlock-in-lock hazard as the confirm modal.
+      if (outcome?.kind === 'connect-failed' && outcome.rollback) {
+        const rollbackTarget = outcome.rollback;
+        if (await confirmRollback(deps, rollbackTarget, outcome.message)) {
+          // The rollback itself is modal-free; re-acquire the lock so it
+          // serialises against any other connect/disconnect work.
+          await withConnectionPersistenceLock(() => rollbackSwitch(deps, rollbackTarget));
+        }
+      }
     }),
     vscode.commands.registerCommand('dittoVsce.disconnect', async () => {
       if (manager.isApplyingTransports()) {
@@ -581,11 +659,19 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
           statusItem.text = `$(sync~spin) Ditto: disconnecting ${name}`;
           statusItem.show();
           try {
-            QueryEditorPanel.dispose();
-            PeerListingPanel.dispose();
+            // Mirror the switch orchestrator's teardown — every per-DB
+            // panel must close, not just the oldest few. Tabs/peers state
+            // is preserved so a later reconnect restores them.
+            QueryEditorPanel.dispose({ preserveTabs: true });
+            PeerListingPanel.dispose({ preserveState: true });
             SubscriptionEditorPanel.dispose();
+            QueryMetricsPanel.dispose();
+            DatabaseMetricsPanel.dispose();
+            ImportDataPanel.dispose();
             ObserverEditorPanel.dispose();
             ObserverPanel.disposeAll();
+            AddIndexPanel.dispose();
+            ImportSubscriptionsPanel.dispose();
             await manager.disconnect();
           } finally {
             statusItem.dispose();
@@ -771,7 +857,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         openLabel: 'Select parent folder for quickstart',
       });
       if (!picked || picked.length === 0) { return; }
-      const parentDir = picked[0].fsPath;
+      const first = picked[0];
+      if (!first) { return; }
+      const parentDir = first.fsPath;
       const targetDir = path.join(parentDir, QUICKSTART_FOLDER_NAME);
 
       // 4. Inspect target, prompt if needed.
@@ -831,7 +919,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         const writtenCount = result.envResults.filter((r) => r.outcome === 'written').length
           + (result.yamlResult?.outcome === 'written' ? 1 : 0);
         const msg = values
-          ? `Quickstarts ready at ${result.repoRoot}. Configured ${writtenCount} config file(s).`
+          ? `Quickstarts ready at ${result.repoRoot}. Configured ${writtenCount} config file(s). Note: your token is written to .env/config files in plaintext — keep the folder out of version control.`
           : `Quickstarts cloned at ${result.repoRoot}. Open a connection and re-run to configure .env files.`;
         const pick = await vscode.window.showInformationMessage(msg, 'Open Folder', 'Show Log');
         if (pick === 'Open Folder') {
@@ -853,7 +941,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         if (pickErr === 'Show Log') { await showLog(); }
       }
     }),
-    vscode.commands.registerCommand('dittoVsce.openImportData', (databaseIdOrNode: any) => {
+    vscode.commands.registerCommand('dittoVsce.openImportData', (databaseIdOrNode: string | DatabaseTreeNode | undefined) => {
       // Two call sites converge here:
       //   1. The "Import Data" tree leaf — passes a plain string databaseId.
       //   2. Right-click → "Import Data into Collection…" on a collection
@@ -863,9 +951,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       let preselected: string | undefined;
       if (typeof databaseIdOrNode === 'string') {
         dbId = databaseIdOrNode;
-      } else if (databaseIdOrNode && typeof databaseIdOrNode === 'object') {
-        dbId = databaseIdOrNode.databaseId;
-        preselected = databaseIdOrNode.collection?.name;
+      } else if (databaseIdOrNode) {
+        dbId = 'databaseId' in databaseIdOrNode ? databaseIdOrNode.databaseId : undefined;
+        preselected = 'collection' in databaseIdOrNode ? databaseIdOrNode.collection.name : undefined;
       }
       if (!dbId) { return; }
       if (manager.getActiveConfigId() !== dbId) {
@@ -882,7 +970,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       const picked = await pickLogLevel(logger.getSdkLevel(), 'Set Ditto SDK Log Level');
       if (picked) {
         logger.setSdkLevel(picked);
-        (DittoLogger as any).minimumLogLevel = sdkLevelMap[picked];
+        DittoLogger.minimumLogLevel = sdkLevelMap[picked];
       }
     }),
     vscode.commands.registerCommand('dittoVsce.openOutputChannel', () => {
@@ -933,7 +1021,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         databaseId,
         databaseName,
         makeAnalyzerService(),
-        () => logger.readAllLogs(),
+        // Only the newest lines can survive the buffer cap and the connect-time
+        // cutoff, so read the tail rather than the whole retention window.
+        () => logger.readRecentLogLines(LogAnalyzerService.BACKFILL_LINE_LIMIT),
         logger,
         inspectorController,
         minTimestamp,
@@ -952,20 +1042,21 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         context, manager, configStore, secretStore, cur.configId,
         tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger,
       );
-      panel.loadQuery(query);
+      // undefined when the tab cap refused — nothing to load into.
+      panel?.loadQuery(query);
     }),
     vscode.commands.registerCommand('dittoVsce.refreshCollections', async () => {
       try { await collectionsRepo.refresh(); }
       catch (err) { vscode.window.showErrorMessage(`Refresh collections failed: ${err instanceof Error ? err.message : String(err)}`); }
     }),
-    vscode.commands.registerCommand('dittoVsce.addIndex', (node?: any) => {
+    vscode.commands.registerCommand('dittoVsce.addIndex', (node?: DatabaseTreeNode) => {
       // From context menu the node is the tree node — extract collection name.
-      const preselected = typeof node === 'object' && node?.collection?.name
+      const preselected = node && 'collection' in node && node.collection.name
         ? String(node.collection.name)
         : undefined;
       AddIndexPanel.show(context, collectionsRepo, logger, preselected);
     }),
-    vscode.commands.registerCommand('dittoVsce.deleteIndex', async (node?: any) => {
+    vscode.commands.registerCommand('dittoVsce.deleteIndex', async (node?: DatabaseTreeNode) => {
       // Context-menu only — the menu's `when` clause restricts to
       // `viewItem == index`, so a missing node here means the command
       // was invoked from the palette without a tree selection.
@@ -993,20 +1084,32 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         vscode.window.showErrorMessage(`Delete index failed: ${message}`);
       }
     }),
-    vscode.commands.registerCommand('dittoVsce.queryAllInCollection', (databaseIdOrNode: any, collectionName?: string) => {
+    vscode.commands.registerCommand('dittoVsce.queryAllInCollection', (databaseIdOrNode: string | DatabaseTreeNode | undefined, collectionName?: string) => {
       // Tree single-click invocation passes (databaseId, collectionName) via `arguments`.
       // Right-click context menu passes the node itself.
       const dbId = typeof databaseIdOrNode === 'string'
         ? databaseIdOrNode
-        : databaseIdOrNode?.databaseId;
+        : (databaseIdOrNode && 'databaseId' in databaseIdOrNode ? databaseIdOrNode.databaseId : undefined);
       const name = collectionName
-        ?? (typeof databaseIdOrNode === 'object' ? databaseIdOrNode?.collection?.name : undefined);
+        ?? (databaseIdOrNode && typeof databaseIdOrNode !== 'string' && 'collection' in databaseIdOrNode
+          ? databaseIdOrNode.collection.name
+          : undefined);
       if (!dbId || !name) { return; }
-      void vscode.commands.executeCommand('dittoVsce.openQueryEditorWithText', `SELECT * FROM ${name}`);
+      // Quote only when the name needs it: the prefill lands in the editor as
+      // text the user will read and edit, and `SELECT * FROM tasks` is nicer
+      // to look at than the backticked form. Names that need backticks get
+      // them, so the prefilled query runs as-is either way.
+      const from = isBareIdentifier(name) ? name : quoteIdentifier(name, 'collection');
+      void vscode.commands.executeCommand('dittoVsce.openQueryEditorWithText', `SELECT * FROM ${from}`);
     }),
   );
 
   context.subscriptions.push({ dispose: () => manager.disconnect() });
+  // Logger disposal goes LAST: subscriptions dispose in registration order
+  // and manager.disconnect() (plus everything else) still logs during
+  // teardown — disposing the logger first would route those lines into a
+  // disposed channel.
+  context.subscriptions.push({ dispose: () => { void logger.dispose(); } });
   log.info('Ditto Edge Studio extension activated.');
 
   // First-run / blank-slate onboarding. When the user has no database
@@ -1030,14 +1133,35 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     }, 100);
   }
 
-  process.on('uncaughtException', (err) => {
-    log.error('UNCAUGHT EXCEPTION', { stack: err.stack ?? err.message });
-  });
-  process.on('unhandledRejection', (reason) => {
-    log.error('UNHANDLED REJECTION', { reason: reason instanceof Error ? reason.stack : String(reason) });
-  });
+  // DO NOT add process-level 'uncaughtException' / 'unhandledRejection'
+  // handlers here. This ran until it was measured, and it was wrong four ways:
+  //
+  //   1. The extension host is a SHARED Node process. The handler receives
+  //      every installed extension's unhandled errors, not ours. In one real
+  //      log set it captured 1,856 of them — 228 from Copilot, 153 from Vim,
+  //      69 from Ionide, 48 from github-authentication, 44 from VS Code
+  //      itself — and not one from this extension. Every one was tagged
+  //      `[ext]` and counted as our error by our own Log Analyzer.
+  //   2. Registering an 'uncaughtException' listener suppresses Node's default
+  //      behaviour of terminating the process. That changes crash semantics
+  //      for the whole extension host, so another extension's fatal error
+  //      could leave the host running in a corrupted state.
+  //   3. Other extensions' error text — file paths, tokens, whatever they put
+  //      in a message — landed in OUR log file, which the user exports and
+  //      sends to us in a bug report. The export warning covers database
+  //      contents, not third-party extension internals.
+  //   4. `process.on` in activate() with nothing removing it in deactivate()
+  //      leaks a listener per extension reload, so the same rejection gets
+  //      logged once per past activation until Node's listener cap warns.
+  //
+  // Our own unhandled rejections are caught where they originate instead:
+  // `webviewMessageHandler` wraps every webview message handler, async work
+  // kicked off from activate() carries its own .catch(), and
+  // `@typescript-eslint/no-floating-promises` is an error in CI.
 
-  if (process.env.DITTO_CI_MODE === '1') {
+  // Test mode AND the env flag: DITTO_CI_MODE alone must not expose the
+  // TestAPI in a Production/Development install where someone set the var.
+  if (process.env.DITTO_CI_MODE === '1' && context.extensionMode === vscode.ExtensionMode.Test) {
     return makeTestApi({ configStore, secretStore, manager });
   }
   return undefined;
@@ -1045,5 +1169,21 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
 
 export async function deactivate() {
   await waitForConnectionPersistence();
+  // Await the disconnect too — the `context.subscriptions` disposal of the
+  // manager above fires it without awaiting, and an un-awaited teardown was
+  // a dropped promise at shutdown. Idempotent (no-op without a session) and
+  // bounded, consistent with the 10s Ditto.close() bound inside
+  // disconnect() itself.
+  const manager = shutdownManager;
+  if (manager) {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        manager.disconnect(),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, 10_000); }),
+      ]);
+    } catch { /* disconnect() already logged the failure */ }
+    finally { if (timer) { clearTimeout(timer); } }
+  }
   // logger.dispose() runs via context.subscriptions
 }

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ChannelSink } from './ChannelSink.js';
 import { FileSink } from './FileSink.js';
 import { formatLogLine } from './format.js';
-import { containsSecret, SECRET_KEYS } from './secrets.js';
+import { containsKnownSecret, containsSecret, redactKnownSecrets, redactSecrets } from './secrets.js';
 import type { Sink } from './Sink.js';
 import type { Logger, LogLevel, LogContext } from './types.js';
 import { LOG_LEVEL_ORDER, shouldEmit } from './types.js';
@@ -58,6 +58,22 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
   let channelLevel: LogLevel = mapVscodeLevel(channelSink.getLogLevel());
   let sdkLevel: LogLevel = 'info';
 
+  // Exact secret VALUES registered by callers (e.g. a connection's live
+  // token on connect, cleared on disconnect). Held longest-first so a value
+  // that is a prefix of another cannot partially redact it. Shared across
+  // withTag children — they all write through the same emit below.
+  let knownSecretsSorted: string[] = [];
+  const registerKnownSecrets = (values: readonly string[]): void => {
+    const next = new Set(knownSecretsSorted);
+    for (const v of values) {
+      // Short strings are too common as ordinary words — redacting 'to'
+      // everywhere would destroy the logs. Dedupe via the Set.
+      if (typeof v === 'string' && v.length >= 8) next.add(v);
+    }
+    knownSecretsSorted = [...next].sort((a, b) => b.length - a.length);
+  };
+  const clearKnownSecrets = (): void => { knownSecretsSorted = []; };
+
   // Listen for VS Code-driven channel level changes.
   channelSink.onDidChangeLogLevel((vscLevel) => {
     const next = mapVscodeLevel(vscLevel);
@@ -68,36 +84,43 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
   });
 
   function emit(level: LogLevel, message: string, ctx: LogContext | undefined, tag: string | undefined) {
-    let ctxToUse = ctx;
-    let messageToUse = message;
-    const formatted = formatLogLine({ timestamp: new Date(), level, tag, message, ctx });
-    if (containsSecret(formatted)) {
-      if (mode === 'development' || (vscode.env as any)?.appName === undefined) {
-        if (mode === 'development') {
-          throw new Error('Logger: secret pattern detected in formatted message — fix the call site.');
-        }
-      }
-      if (ctx) {
-        const cleaned: LogContext = { ...ctx };
-        for (const k of SECRET_KEYS) {
-          if (k in cleaned) cleaned[k] = '[redacted]';
-        }
-        ctxToUse = cleaned;
-      }
-      messageToUse = message.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
-    }
-    const finalLine = formatLogLine({ timestamp: new Date(), level, tag, message: messageToUse, ctx: ctxToUse });
-
-    if (shouldEmit(level, channelLevel)) {
-      channelSinkAdapter.write(level, finalLine);
-    }
+    // Level gate FIRST: formatting (JSON.stringify of ctx, timestamping) and
+    // the secret scan are the expensive parts of a log call, and none of
+    // them may run when no sink will receive the line.
+    const toChannel = shouldEmit(level, channelLevel);
     const effectiveFile: LogLevel =
       LOG_LEVEL_ORDER.indexOf(channelLevel) > LOG_LEVEL_ORDER.indexOf(fileMin) ? channelLevel : fileMin;
-    if (shouldEmit(level, effectiveFile)) {
-      fileSinkAdapter.write(level, finalLine);
+    const toFile = shouldEmit(level, effectiveFile);
+    if (!toChannel && !toFile && extra.length === 0) return;
+
+    // Format once. The previous implementation formatted a probe line for
+    // the secret scan, then formatted the redacted copy a second time.
+    let line = formatLogLine({ timestamp: new Date(), level, tag, message, ctx });
+    const hasPatternSecret = containsSecret(line);
+    const hasKnownSecret = knownSecretsSorted.length > 0 && containsKnownSecret(line, knownSecretsSorted);
+    if (hasPatternSecret || hasKnownSecret) {
+      // Development tripwire: fail loudly so the call site gets fixed rather
+      // than relying on redaction. Redaction below is the production path —
+      // and still runs in development for anything the tripwire is disabled
+      // for, so the two are not either/or.
+      if (mode === 'development') {
+        throw new Error('Logger: secret pattern detected in formatted message — fix the call site.');
+      }
+      // Scrub the whole formatted line: a `"token":"…"`, `?token=…`, or
+      // registered secret value in either the message or the ctx would
+      // otherwise reach the sinks (and log exports) untouched.
+      if (hasPatternSecret) line = redactSecrets(line);
+      if (hasKnownSecret) line = redactKnownSecrets(line, knownSecretsSorted);
+    }
+
+    if (toChannel) {
+      channelSinkAdapter.write(level, line);
+    }
+    if (toFile) {
+      fileSinkAdapter.write(level, line);
     }
     for (const sink of extra) {
-      try { sink.write(level, finalLine); }
+      try { sink.write(level, line); }
       catch (err) {
         // Extra sinks must never break logging. Report the failure on the
         // channel as 'error', and swallow any failure from that too.
@@ -120,10 +143,16 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
       getSdkLevel: () => sdkLevel,
       onDidChangeSdkLevel: sdkLevelEmitter.event,
       withTag: (childTag) => makeLogger(tag ? `${tag}:${childTag}` : childTag),
+      registerKnownSecrets,
+      clearKnownSecrets,
       flush: () => fileSink.flush(),
       readAllLogs: async () => {
         await fileSink.flush();
         return fileSink.readAllChronological();
+      },
+      readRecentLogLines: async (maxLines: number) => {
+        await fileSink.flush();
+        return fileSink.readTailLines(maxLines);
       },
       dispose: async () => {
         await fileSink.dispose();

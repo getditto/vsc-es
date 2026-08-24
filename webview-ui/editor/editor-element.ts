@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 interface StoredDittoConfig {
   id: string;
@@ -21,8 +21,22 @@ interface StoredDittoConfig {
 
 interface CollectionSyncScopeEntry { collection: string; scope: string; }
 type SystemSettingType = 'boolean' | 'integer' | 'string' | 'json';
+
+/** Render a system-setting value for a text input. A 'json'-typed setting
+ *  holds an object, which `String()` would turn into '[object Object]' in the
+ *  field the user is about to edit. */
+function settingValueText(value: unknown): string {
+  if (value === null || value === undefined) { return ''; }
+  if (typeof value === 'string') { return value; }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  // Objects, arrays, functions and symbols all stringify to something useless
+  // ('[object Object]'), which is what the user would see in the field.
+  try { return JSON.stringify(value) ?? ''; } catch { return ''; }
+}
 interface SystemSetting { parameter: string; type: SystemSettingType; value: unknown; }
-interface SystemSettingOption extends SystemSetting {}
+type SystemSettingOption = SystemSetting;
 const COLLECTION_SYNC_SCOPES = new Set<string>([
   'AllPeers', 'BigPeerOnly', 'SmallPeersOnly', 'LocalPeerOnly',
 ]);
@@ -52,7 +66,7 @@ export class DatabaseEditor extends LitElement {
   @state() private saving = false;
   private initialSystemSettings: SystemSetting[] = [];
 
-  static styles = css`
+  static override styles = css`
     :host { display: block; padding: 24px; max-width: 720px; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
     h2 { margin-top: 32px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vscode-descriptionForeground); }
     label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--vscode-descriptionForeground); }
@@ -103,41 +117,40 @@ export class DatabaseEditor extends LitElement {
     }
   `;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    onHostMessage<In>(msg => {
-      if (msg.type === 'editor.init') {
-        this.config = msg.config;
-        this.secrets = msg.secrets;
-        this.isActiveConnection = msg.isActiveConnection;
-        this.initialSystemSettings = structuredClone(this.systemSettings());
-        this.systemSettingOptions = [];
-        this.systemSettingsLoadError = null;
-        this.jsonDrafts = {};
-        this.integerDrafts = {};
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, msg => {
+    if (msg.type === 'editor.init') {
+      this.config = msg.config;
+      this.secrets = msg.secrets;
+      this.isActiveConnection = msg.isActiveConnection;
+      this.initialSystemSettings = structuredClone(this.systemSettings());
+      this.systemSettingOptions = [];
+      this.systemSettingsLoadError = null;
+      this.jsonDrafts = {};
+      this.integerDrafts = {};
+      this.saving = false;
+      this.initError = null;
+      this.advancedOpen = this.scopeError() !== null || this.systemSettingsError() !== null;
+    }
+    if (msg.type === 'editor.initError') { this.initError = msg.message; }
+    if (msg.type === 'editor.activeConnectionChanged') {
+      this.isActiveConnection = msg.isActiveConnection;
+    }
+    if (msg.type === 'editor.systemSettingsLoaded') {
+      this.systemSettingOptions = msg.options;
+    }
+    if (msg.type === 'editor.systemSettingsLoadError') {
+      this.systemSettingsLoadError = msg.message;
+    }
+      if (msg.type === 'editor.validationError') {
         this.saving = false;
-        this.initError = null;
-        this.advancedOpen = this.scopeError() !== null || this.systemSettingsError() !== null;
-      }
-      if (msg.type === 'editor.initError') { this.initError = msg.message; }
-      if (msg.type === 'editor.activeConnectionChanged') {
-        this.isActiveConnection = msg.isActiveConnection;
-      }
-      if (msg.type === 'editor.systemSettingsLoaded') {
-        this.systemSettingOptions = msg.options;
-      }
-      if (msg.type === 'editor.systemSettingsLoadError') {
-        this.systemSettingsLoadError = msg.message;
-      }
-        if (msg.type === 'editor.validationError') {
-          this.saving = false;
-          this.validationError = msg.message;
-        if (msg.field === 'advancedConfig') { this.advancedOpen = true; }
-      }
-    });
-  }
+        this.validationError = msg.message;
+      if (msg.field === 'advancedConfig') { this.advancedOpen = true; }
+    }
+  });
 
-  private update_(field: keyof StoredDittoConfig, value: any) {
+  private update_<K extends keyof StoredDittoConfig>(field: K, value: StoredDittoConfig[K]) {
     if (!this.config) { return; }
     this.config = { ...this.config, [field]: value };
   }
@@ -480,7 +493,7 @@ export class DatabaseEditor extends LitElement {
 
   private cancel() { postToHost({ type: 'editor.cancel' }); }
 
-  render() {
+  override render() {
     if (!this.config) {
       return this.initError
         ? html`<div class="error-banner" role="alert">${this.initError}</div>
@@ -658,8 +671,8 @@ export class DatabaseEditor extends LitElement {
                       aria-describedby=${this.settingValueInvalid(index) ? 'setting-error' : nothing}
                       step=${entry.type === 'integer' ? '1' : nothing}
                       .value=${entry.type === 'integer'
-                        ? this.integerDrafts[index] ?? String(entry.value ?? '')
-                        : String(entry.value ?? '')}
+                        ? this.integerDrafts[index] ?? settingValueText(entry.value)
+                        : settingValueText(entry.value)}
                       @input=${(e: Event) => entry.type === 'integer'
                         ? this.updateIntegerSetting(index, (e.target as HTMLInputElement).value)
                         : this.updateSystemSetting(index, { value: (e.target as HTMLInputElement).value })} />
@@ -675,7 +688,7 @@ export class DatabaseEditor extends LitElement {
 
           <h2>Developer Options</h2>
           <label for="sdk-log-level">SDK Log Level</label>
-          <select id="sdk-log-level" .value=${c.logLevel} @change=${(e: Event) => this.update_('logLevel', (e.target as HTMLSelectElement).value)}>
+          <select id="sdk-log-level" .value=${c.logLevel} @change=${(e: Event) => this.update_('logLevel', (e.target as HTMLSelectElement).value as StoredDittoConfig['logLevel'])}>
             <option value="error">Error</option>
             <option value="warning">Warning</option>
             <option value="info">Info (Default)</option>

@@ -23,7 +23,7 @@ test('applyCollectionSyncScopes binds every supported scope as query data', asyn
     { collection: 'mesh_data', scope: 'SmallPeersOnly' },
     { collection: 'private_data', scope: 'LocalPeerOnly' },
   ];
-  const calls: Array<{ query: string; args?: Record<string, unknown> }> = [];
+  const calls: Array<{ query: string; args?: Record<string, unknown> | undefined }> = [];
   await applyCollectionSyncScopes({
     async execute(query, args) { calls.push({ query, args }); },
   }, entries);

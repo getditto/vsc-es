@@ -9,14 +9,22 @@
 
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { postToHost } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import { codiconStyles } from './codicon-styles.js';
+import type { InspectorOut } from '../../src/ipc/messages.js';
+
+/** The attachment-lifecycle variants of InspectorOut this element consumes. */
+type AttachmentMsg = Extract<InspectorOut, { type:
+  | 'inspector.attachmentLoaded'
+  | 'inspector.attachmentProgress'
+  | 'inspector.attachmentError'
+}>;
 
 interface AttachmentMetadata {
   id: string;
   length: number;
-  contentType?: string;
-  filename?: string;
+  contentType?: string | undefined;
+  filename?: string | undefined;
 }
 
 /** Real SDK token shape: `{id, len, metadata}` (no `_meta` wrapper).
@@ -74,7 +82,7 @@ function walk(v: unknown, path: string, out: DetectedAttachment[]): void {
     const meta = obj.metadata;
     out.push({
       path,
-      token: { id: obj.id, len: Number(obj.len), metadata: meta as Record<string, string> },
+      token: { id: obj.id, len: Number(obj.len), metadata: meta },
       metadata: {
         id: obj.id,
         length: Number(obj.len),
@@ -96,7 +104,7 @@ export class AttachmentViewerElement extends LitElement {
   @state() private progress: Record<string, number> = {};
   @state() private errors: Record<string, string> = {};
 
-  static styles = [codiconStyles, css`
+  static override styles = [codiconStyles, css`
     :host { display: block; margin-top: 12px; color: var(--vscode-foreground); }
     .att {
       padding: 8px;
@@ -139,19 +147,22 @@ export class AttachmentViewerElement extends LitElement {
     .progress { color: var(--vscode-descriptionForeground); margin-top: 4px; }
   `];
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    window.addEventListener('message', this.onMsg);
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<AttachmentMsg>(this, msg => this.onHostMessage(msg));
+
+  protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('json')) {
+      // Attachment state is keyed by tokenIds derived from the CURRENT
+      // row's JSON. Keeping entries for every row ever selected would grow
+      // these records for the life of the panel.
+      this.loaded = {};
+      this.progress = {};
+      this.errors = {};
+    }
   }
 
-  disconnectedCallback(): void {
-    super.disconnectedCallback();
-    window.removeEventListener('message', this.onMsg);
-  }
-
-  private onMsg = (e: MessageEvent): void => {
-    const m = e.data;
-    if (!m) { return; }
+  private onHostMessage(m: AttachmentMsg): void {
     if (m.type === 'inspector.attachmentLoaded') {
       this.loaded = { ...this.loaded, [m.tokenId]: { uri: m.webviewUri, mime: m.mimeType } };
     } else if (m.type === 'inspector.attachmentProgress') {
@@ -159,9 +170,9 @@ export class AttachmentViewerElement extends LitElement {
     } else if (m.type === 'inspector.attachmentError') {
       this.errors = { ...this.errors, [m.tokenId]: m.message };
     }
-  };
+  }
 
-  render() {
+  override render() {
     if (!this.json) { return html``; }
     let parsed: unknown;
     try {

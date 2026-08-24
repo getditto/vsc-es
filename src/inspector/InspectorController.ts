@@ -41,7 +41,7 @@ export class InspectorController {
       // help tab can render the editor docs.
       this.content = { kind: 'patternEditor' };
     } else {
-      this.content = { kind: feat.kind, databaseId: feat.databaseId } as InspectorContent;
+      this.content = { kind: feat.kind, databaseId: feat.databaseId };
     }
     this._onChange.fire(this.content);
   }

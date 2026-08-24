@@ -4,7 +4,6 @@ import type {
   PeerListSnapshot,
   SystemSettingOption,
 } from '../models/DittoConfig.js';
-import type { LogLevel } from '../logging/types.js';
 import type {
   InspectorContent,
   QueryInspectorTab,
@@ -42,7 +41,7 @@ export type EditorOut =
   | { type: 'editor.activeConnectionChanged'; isActiveConnection: boolean }
   | { type: 'editor.systemSettingsLoaded'; options: SystemSettingOption[] }
   | { type: 'editor.systemSettingsLoadError'; message: string }
-  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' };
+  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' | undefined };
 
 // ─── Subscription editor panel ─────────────────────────────────
 export type SubIn =
@@ -50,7 +49,7 @@ export type SubIn =
   | { type: 'sub.cancel' };
 
 export type SubOut =
-  | { type: 'sub.init'; id?: string; name: string; query: string };
+  | { type: 'sub.init'; id?: string | undefined; name: string; query: string };
 
 // ─── Import Subscriptions from Server panel ────────────────────
 export type ImportSubsIn =
@@ -94,7 +93,7 @@ export type ImportDataOut =
       type: 'importData.init';
       databaseName: string;
       existingCollections: string[];
-      preselectedCollection?: string;
+      preselectedCollection?: string | undefined;
     }
   | { type: 'importData.collectionsRefreshed'; existingCollections: string[] }
   | {
@@ -108,7 +107,7 @@ export type ImportDataOut =
       type: 'importData.progress';
       current: number;
       total: number;
-      currentDocumentId?: string;
+      currentDocumentId?: string | undefined;
     }
   | {
       type: 'importData.done';
@@ -122,11 +121,17 @@ export type ImportDataOut =
 
 // ─── Add Index panel ───────────────────────────────────────────
 export type AddIndexIn =
-  | { type: 'addIndex.create'; collection: string; field: string }
+  | {
+      type: 'addIndex.create';
+      collection: string;
+      /** Ordered keys. More than one creates a composite index; the order is
+       *  significant to the query optimizer, so it is preserved verbatim. */
+      fields: import('../models/DittoCollection.js').IndexField[];
+    }
   | { type: 'addIndex.cancel' };
 
 export type AddIndexOut =
-  | { type: 'addIndex.init'; collections: string[]; preselected?: string }
+  | { type: 'addIndex.init'; collections: string[]; preselected?: string | undefined }
   | { type: 'addIndex.error'; message: string }
   | { type: 'addIndex.created' };
 
@@ -146,7 +151,7 @@ export interface LocalNetworkInterface {
    *  AccessPoint transport. */
   kind: 'lan' | 'loopback' | 'other';
   /** First non-internal MAC we see for this interface. */
-  mac?: string;
+  mac?: string | undefined;
   /** All IPv4 addresses; usually one but VPNs/aliases produce multiples. */
   ipv4: { address: string; cidr: string }[];
   /** All IPv6 addresses (link-local + global). */
@@ -264,7 +269,9 @@ export type ObserverOut =
   // Pushed when the observer is activated or stopped.
   | { type: 'observer.statusChanged'; active: boolean }
   // Coalesced batch of events from the host's 100ms flush window.
-  // The webview appends them to its ring buffer.
+  // The webview appends them to its ring buffer. Each event's `data` is
+  // capped on the host (OBSERVER_ROW_CAP rows); `totalRows` carries the
+  // uncapped count so the webview can show a "first N of M" indicator.
   | { type: 'observer.events'; events: ObserverEvent[] }
   // Pushed when the user clicks Stop or when the observer is
   // cancelled programmatically — clears the webview's event store.
@@ -347,24 +354,36 @@ export type InspectorOut =
   // tab). Pushed on resolve and whenever the user toggles the setting.
   | { type: 'inspector.settings'; collectMetrics: boolean };
 
-// ─── Logging (any panel webview → host, host → any webview) ──────
-/** Webview → host: emit a log line. */
-export type LogIn = { type: 'log'; level: LogLevel; message: string; ctx?: Record<string, unknown> };
-
-/** Host → webview: notify of a channel-level change so the webview can short-circuit. */
-export type LogOut = { type: 'log.levelChanged'; level: LogLevel };
-
 // ─── Log Analyzer panel ────────────────────────────────────────
 /** Host → webview: state diffs from LogAnalyzerService. */
 export type AnalyzerOut =
   | { type: 'analyzer.reset' }
-  | { type: 'analyzer.summary'; counts: import('../logAnalyzer/types.js').SummaryCounts }
+  | {
+      type: 'analyzer.summary';
+      counts: import('../logAnalyzer/types.js').SummaryCounts;
+      /** Distinct log tags seen so far, sorted. */
+      tags: string[];
+      /** Parsed from the SDK's init line; null until one is seen. */
+      sdkVersion: string | null;
+      /** Epoch ms of the first/last timestamped line, for the Range field. */
+      startTimeMs: number | null;
+      endTimeMs: number | null;
+    }
   | { type: 'analyzer.problemsAdded'; items: import('../logAnalyzer/types.js').ProblemInstance[] }
   | { type: 'analyzer.sessionsUpdated'; sessions: import('../logAnalyzer/types.js').Session[] }
   | { type: 'analyzer.histogramsUpdated'; histograms: import('../logAnalyzer/types.js').AnalyzerState['histograms'] }
-  | { type: 'analyzer.live'; lines: import('../logAnalyzer/types.js').LogLine[] }
   | { type: 'analyzer.error'; stage: 'backfill' | 'live'; message: string }
-  | { type: 'analyzer.linesResult'; requestId: string; items: import('../logAnalyzer/types.js').LogLine[]; total: number }
+  | {
+      type: 'analyzer.linesResult';
+      requestId: string;
+      items: import('../logAnalyzer/types.js').LogLine[];
+      /** Absolute index of `items[0]` within the filtered result set. The table
+       *  positions rows by absolute index, so it cannot place a windowed
+       *  response without knowing where the window starts. */
+      offset: number;
+      /** Rows matching the filter, before windowing. */
+      total: number;
+    }
   | {
       type: 'analyzer.lineDetail';
       requestId: string;
@@ -375,11 +394,9 @@ export type AnalyzerOut =
 
 /** Webview → host: user controls + reveal requests. */
 export type AnalyzerIn =
-  | { type: 'analyzer.refresh' }
   | { type: 'analyzer.clear' }
   | { type: 'analyzer.pause' }
   | { type: 'analyzer.resume' }
-  | { type: 'analyzer.revealLine'; lineId: number }
   | { type: 'analyzer.openPatternEditor' }
   | {
       type: 'analyzer.queryLines';

@@ -11,7 +11,7 @@ export class DittoEventsTable extends LitElement {
   @property({ attribute: false }) events: ObserverEvent[] = [];
   @property({ attribute: false }) selectedEventId: string | null = null;
 
-  static styles = css`
+  static override styles = css`
     :host { display: block; height: 100%; overflow: auto; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
     th, td { padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); text-align: left; }
@@ -28,7 +28,7 @@ export class DittoEventsTable extends LitElement {
     .mov { color: var(--vscode-charts-purple, #8e24aa); }
   `;
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     if (this.events.length === 0) {
       return html`<div class="empty">No events yet. Activate the observer to start collecting.</div>`;
     }

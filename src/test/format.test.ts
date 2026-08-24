@@ -21,7 +21,7 @@ test('formatLogLine: with context, JSON-stringified', () => {
     message: 'Connected',
     ctx: { databaseId: 'abc-123', mode: 'server' },
   });
-  assert.match(line, /^2026-05-09T19:42:11.382Z  INFO   \[ext:DittoManager\]  Connected  /);
+  assert.match(line, /^2026-05-09T19:42:11.382Z {2}INFO {3}\[ext:DittoManager\] {2}Connected {2}/);
   assert.match(line, /\{"databaseId":"abc-123","mode":"server"\}$/);
 });
 
@@ -45,6 +45,23 @@ test('formatLogLine: empty ctx object treated as no ctx', () => {
     ctx: {},
   });
   assert.equal(line, '2026-05-09T19:42:11.382Z  DEBUG  [ext]  Hi');
+});
+
+test('formatLogLine: unserializable ctx degrades instead of throwing', () => {
+  // JSON.stringify throws on BigInt values and on circular references. A
+  // logging call must never throw because of its ctx.
+  const circular: Record<string, unknown> = { databaseId: 'abc' };
+  circular.self = circular;
+  for (const ctx of [{ n: 1n as unknown as string }, circular]) {
+    const line = formatLogLine({
+      timestamp: new Date('2026-05-09T19:42:11.382Z'),
+      level: 'info',
+      tag: 'ext',
+      message: 'Hi',
+      ctx,
+    });
+    assert.match(line, /Hi {2}<unserializable ctx>$/);
+  }
 });
 
 test('formatLogLine: multi-line message escapes newlines in display but preserves them in file', () => {

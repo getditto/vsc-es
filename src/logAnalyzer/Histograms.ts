@@ -6,7 +6,7 @@ const NICE_BINS_MS = [1000, 5000, 30_000, 60_000, 300_000, 600_000, 1_800_000];
 export function pickBinWidth(rangeMs: number, target = 40): number {
   const want = rangeMs / target;
   for (const v of NICE_BINS_MS) if (v >= want) return v;
-  return NICE_BINS_MS[NICE_BINS_MS.length - 1];
+  return NICE_BINS_MS.at(-1) ?? 1_800_000;
 }
 
 export function binVolumeByLevel(
@@ -62,7 +62,8 @@ export function binDurations(
   const out = DURATION_BINS.map(b => ({ binLabel: b.label, count: 0 }));
   for (const s of sessions) {
     const i = DURATION_BINS.findIndex(b => s.duration < b.max);
-    if (i >= 0) out[i].count++;
+    const bin = i >= 0 ? out[i] : undefined;
+    if (bin) bin.count++;
   }
   return out;
 }

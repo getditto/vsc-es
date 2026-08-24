@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import '../presence-graph/presence-graph-element.js';
 import type { PresenceGraphInput } from '../presence-graph/scene.js';
 
@@ -193,6 +193,9 @@ export class PeerListing extends LitElement {
    *  (only direct neighbours of local), but we offer the toggle so
    *  multi-hop topology debugging works too. */
   @state() private directConnectedOnly = true;
+  /** Owned here rather than in the graph element so the choice survives the
+   *  graph tab being torn down and rebuilt on every tab switch. */
+  @state() private graphControlsVisible = true;
   /** Local network interfaces pushed by the host. Empty until the
    *  initial post arrives (typically within ~50ms of webview reveal). */
   @state() private localInterfaces: LocalNetworkInterface[] = [];
@@ -211,7 +214,7 @@ export class PeerListing extends LitElement {
   private tickInterval: number | null = null;
   private completeClearTimer: number | null = null;
 
-  static styles = css`
+  static override styles = css`
     /* @font-face for codicon registers at document level via panelHtml's <link>;
        the rules below define .codicon glyphs INSIDE shadow DOM (Lit Constructed
        Stylesheets don't support @import, and class selectors don't cross
@@ -341,36 +344,14 @@ export class PeerListing extends LitElement {
       word-break: break-all;
     }
 
-    /* Graph tab: canvas fills the available area; the small filter
-       toggle floats above it on the top-left mirroring the SwiftUI
-       layout (zoom controls live inside the graph element on the
-       bottom-right). */
+    /* Graph tab: canvas fills the available area. Graph-specific
+       controls live inside the graph component. */
     .graph-host {
       position: relative;
       width: 100%;
       height: calc(100vh - 140px);
       min-height: 400px;
     }
-    .graph-toggle {
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      z-index: 10;
-      padding: 6px 10px;
-      background: rgba(30, 30, 30, 0.85);
-      border: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
-      border-radius: 6px;
-      font-size: 11px;
-      color: var(--vscode-foreground);
-      backdrop-filter: blur(8px);
-    }
-    .graph-toggle label {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      cursor: pointer;
-    }
-    .graph-toggle input { cursor: pointer; }
     ditto-presence-graph { width: 100%; height: 100%; display: block; }
 
     .grid {
@@ -727,49 +708,52 @@ export class PeerListing extends LitElement {
     .popover-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
   `;
 
-  connectedCallback(): void {
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, msg => {
+    if (msg.type === 'peer.state') {
+      this.snapshot = msg.snapshot;
+      this.sync = msg.sync;
+      return;
+    }
+    if (msg.type === 'peer.platformInit') {
+      this.support = msg.support;
+      this.baseline = { ...msg.current };
+      this.form = { ...msg.current };
+      this.platformReceived = true;
+      return;
+    }
+    if (msg.type === 'peer.transportApplyStatus') {
+      this.applyStep = msg.step;
+      this.applyMessage = msg.message;
+      if (msg.step === 'complete') {
+        // Auto-clear back to idle after 1.5s.
+        if (this.completeClearTimer !== null) { window.clearTimeout(this.completeClearTimer); }
+        this.completeClearTimer = window.setTimeout(() => {
+          this.applyStep = 'idle';
+          this.applyMessage = undefined;
+          this.completeClearTimer = null;
+        }, 1500);
+      }
+      return;
+    }
+    if (msg.type === 'peer.transportApplyError') {
+      this.applyStep = 'error';
+      this.applyMessage = msg.message;
+      return;
+    }
+    if (msg.type === 'peer.localNetwork') {
+      this.localInterfaces = msg.interfaces;
+      return;
+    }
+  });
+
+  override connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<In>(msg => {
-      if (msg.type === 'peer.state') {
-        this.snapshot = msg.snapshot;
-        this.sync = msg.sync;
-        return;
-      }
-      if (msg.type === 'peer.platformInit') {
-        this.support = msg.support;
-        this.baseline = { ...msg.current };
-        this.form = { ...msg.current };
-        this.platformReceived = true;
-        return;
-      }
-      if (msg.type === 'peer.transportApplyStatus') {
-        this.applyStep = msg.step;
-        this.applyMessage = msg.message;
-        if (msg.step === 'complete') {
-          // Auto-clear back to idle after 1.5s.
-          if (this.completeClearTimer !== null) { window.clearTimeout(this.completeClearTimer); }
-          this.completeClearTimer = window.setTimeout(() => {
-            this.applyStep = 'idle';
-            this.applyMessage = undefined;
-            this.completeClearTimer = null;
-          }, 1500);
-        }
-        return;
-      }
-      if (msg.type === 'peer.transportApplyError') {
-        this.applyStep = 'error';
-        this.applyMessage = msg.message;
-        return;
-      }
-      if (msg.type === 'peer.localNetwork') {
-        this.localInterfaces = msg.interfaces;
-        return;
-      }
-    });
     this.tickInterval = window.setInterval(() => { this.nowTick++; }, 30_000);
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this.tickInterval !== null) { window.clearInterval(this.tickInterval); }
     if (this.completeClearTimer !== null) {
@@ -836,7 +820,7 @@ export class PeerListing extends LitElement {
     } catch { /* clipboard may be unavailable; silently fail */ }
   }
 
-  render() {
+  override render() {
     return html`
       <h1 class="page-title">Presence</h1>
       <div class="header">
@@ -1136,19 +1120,20 @@ export class PeerListing extends LitElement {
     }
     return html`
       <div class="graph-host">
-        <div class="graph-toggle">
-          <label>
-            <input
-              type="checkbox"
-              .checked=${this.directConnectedOnly}
-              @change=${(e: Event) => this.directConnectedOnly = (e.target as HTMLInputElement).checked}
-            />
-            Direct Connected only
-          </label>
-        </div>
+        <!-- Property bindings, not boolean-attribute ones: switching tabs
+             destroys and rebuilds this element, and a boolean attribute
+             binding cannot deliver false to a fresh one (Lit commits false
+             as removeAttribute, which fires no callback). -->
         <ditto-presence-graph
           .input=${input}
-          ?direct-connected-only=${this.directConnectedOnly}
+          .directConnectedOnly=${this.directConnectedOnly}
+          .controlsVisible=${this.graphControlsVisible}
+          @direct-connected-only-change=${(e: CustomEvent<boolean>) => {
+            this.directConnectedOnly = e.detail;
+          }}
+          @controls-visible-change=${(e: CustomEvent<boolean>) => {
+            this.graphControlsVisible = e.detail;
+          }}
         ></ditto-presence-graph>
       </div>
     `;

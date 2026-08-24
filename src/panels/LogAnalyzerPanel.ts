@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { LogAnalyzerService, AnalyzerDiff } from '../logAnalyzer/LogAnalyzerService.js';
 import type { Logger } from '../logging/types.js';
 import type { AnalyzerIn, AnalyzerOut } from '../ipc/messages.js';
@@ -24,7 +24,7 @@ export class LogAnalyzerPanel {
     databaseId: string,
     databaseName: string,
     svc: LogAnalyzerService,
-    backfillProvider: () => Promise<string>,
+    backfillProvider: () => Promise<string[]>,
     logger: Logger,
     inspector: InspectorController,
     /** Lines older than this are skipped during backfill so the panel
@@ -63,7 +63,7 @@ export class LogAnalyzerPanel {
     private readonly databaseId: string,
     databaseName: string,
     private readonly svc: LogAnalyzerService,
-    private readonly backfillProvider: () => Promise<string>,
+    private readonly backfillProvider: () => Promise<string[]>,
     private readonly logger: Logger,
     private readonly inspector: InspectorController,
     private readonly minTimestamp?: Date,
@@ -93,7 +93,11 @@ export class LogAnalyzerPanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      (m: AnalyzerIn) => { void this.handle(m); }, undefined, this.disposables,
+      webviewMessageHandler<AnalyzerIn>(
+        this.logger, 'ext:logAnalyzer', 'Log analyzer action failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 
@@ -120,8 +124,8 @@ export class LogAnalyzerPanel {
     this.bootstrapped = true;
     const log = this.logger.withTag('ext:LogAnalyzerPanel');
     try {
-      const text = await this.backfillProvider();
-      this.svc.start({ backfillText: text, minTimestamp: this.minTimestamp });
+      const lines = await this.backfillProvider();
+      this.svc.start({ backfillLines: lines, minTimestamp: this.minTimestamp });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.warn('Backfill failed; continuing with live-only ingestion', { err: message });
@@ -133,18 +137,11 @@ export class LogAnalyzerPanel {
 
   private async handle(msg: AnalyzerIn): Promise<void> {
     switch (msg.type) {
-      case 'analyzer.refresh':
-        this.bootstrapped = false;
-        await this.bootstrap();
-        return;
       case 'analyzer.clear':  this.svc.clear(); return;
       case 'analyzer.pause':  this.svc.pause(); return;
       case 'analyzer.resume': this.svc.resume(); return;
       case 'analyzer.openPatternEditor':
         await vscode.commands.executeCommand('dittoVsce.openLogPatternEditor');
-        return;
-      case 'analyzer.revealLine':
-        // Future: open log file at the recorded line. For MVP: no-op.
         return;
       case 'analyzer.queryLines': {
         const result = this.svc.queryLines({
@@ -157,6 +154,7 @@ export class LogAnalyzerPanel {
           type: 'analyzer.linesResult',
           requestId: msg.requestId,
           items: result.items,
+          offset: msg.offset ?? 0,
           total: result.total,
         });
         return;

@@ -12,7 +12,7 @@ function formatDocs(n: number): string {
 export class DittoProfileCardList extends LitElement {
   @property({ attribute: false }) root!: QueryProfileOperator;
 
-  static styles = css`
+  static override styles = css`
     :host { display: block; }
     .card {
       padding: 12px;
@@ -46,7 +46,7 @@ export class DittoProfileCardList extends LitElement {
     .attr-val { color: var(--vscode-foreground); word-break: break-word; user-select: text; }
   `;
 
-  render() {
+  override render() {
     return this.renderNode(this.root);
   }
 

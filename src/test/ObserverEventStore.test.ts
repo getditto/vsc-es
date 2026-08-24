@@ -7,6 +7,7 @@ function ev(id: string): ObserverEvent {
     id,
     eventTimeISO: '2026-05-27T17:55:49Z',
     data: [],
+    totalRows: 0,
     insertions: [],
     updates: [],
     deletions: [],
@@ -41,8 +42,8 @@ test('FIFO eviction at the 500 cap', () => {
   assert.equal(s.get('e100')?.id, 'e100');
   assert.equal(s.get('e599')?.id, 'e599');
   // Order is preserved.
-  assert.equal(s.events[0].id, 'e100');
-  assert.equal(s.events[s.events.length - 1].id, 'e599');
+  assert.equal(s.events[0]?.id, 'e100');
+  assert.equal(s.events[s.events.length - 1]?.id, 'e599');
 });
 
 test('appendBatch evicts older events in one pass', () => {

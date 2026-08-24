@@ -14,7 +14,7 @@ export interface QueryProfileTimes {
   /** Server-side ISO timestamp of when the request started. Preserved
    *  as the raw string for round-trip fidelity. `undefined` when Ditto
    *  doesn't emit it (forward-compatible degrade). */
-  startISO?: string;
+  startISO?: string | undefined;
 }
 
 /** Per-operator throughput and timing from `#stats`. Every field is
@@ -22,14 +22,14 @@ export interface QueryProfileTimes {
  *  operator (a `scan` has no `documentsIn`; a `limit` may have no
  *  `recv` phase time). */
 export interface QueryProfileStats {
-  documentsIn?: number;
-  documentsOut?: number;
+  documentsIn?: number | undefined;
+  documentsOut?: number | undefined;
   /** CPU time inside the operator. */
-  execNs?: number;
+  execNs?: number | undefined;
   /** Time waiting on upstream operators to feed input. */
-  recvNs?: number;
+  recvNs?: number | undefined;
   /** Time pushing output to downstream operators. */
-  sendNs?: number;
+  sendNs?: number | undefined;
 }
 
 /** One node in the execution-plan tree. Profile JSON uses `#operator`
@@ -42,7 +42,7 @@ export interface QueryProfileStats {
 export interface QueryProfileOperator {
   /** Operator type name from `#operator` (e.g. `"scan"`, `"sequence"`). */
   name: string;
-  stats?: QueryProfileStats;
+  stats?: QueryProfileStats | undefined;
   children: QueryProfileOperator[];
   attributes: Array<{ key: string; value: string }>;
 }

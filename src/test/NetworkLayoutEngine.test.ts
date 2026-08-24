@@ -66,7 +66,7 @@ test('layout: star with 4 ring-1 peers, no inter-peer edges → evenly spaced', 
   }).sort((x, y) => x - y);
   // Adjacent angle gaps should each be ~π/2.
   for (let i = 1; i < angles.length; i += 1) {
-    const gap = angles[i] - angles[i - 1];
+    const gap = angles[i]! - angles[i - 1]!;
     assert.ok(Math.abs(gap - Math.PI / 2) < 1e-6,
       `gap[${i}] expected π/2, got ${gap}`);
   }
@@ -211,14 +211,14 @@ test('calculateOptimalAngles: edge cases', () => {
   assert.deepEqual(calculateOptimalAngles(0), []);
   const one = calculateOptimalAngles(1);
   assert.equal(one.length, 1);
-  assert.ok(Math.abs(one[0] - Math.PI / 2) < 1e-6);
+  assert.ok(Math.abs(one[0]! - Math.PI / 2) < 1e-6);
 });
 
 test('calculateOptimalAngles: 4 peers evenly spaced from top', () => {
   const angles = calculateOptimalAngles(4);
   assert.equal(angles.length, 4);
   for (let i = 1; i < angles.length; i += 1) {
-    const gap = angles[i] - angles[i - 1];
+    const gap = angles[i]! - angles[i - 1]!;
     assert.ok(Math.abs(gap - Math.PI / 2) < 1e-6);
   }
 });

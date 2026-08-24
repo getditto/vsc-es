@@ -12,6 +12,8 @@
 // logging. Keeping it pure lets us unit-test the query-builder + batch
 // + fallback logic without an SDK or a webview.
 
+import { quoteIdentifier } from './dql-identifier.js';
+
 export type InsertType = 'regular' | 'initial';
 
 export interface ImportProgress {
@@ -21,7 +23,7 @@ export interface ImportProgress {
   total: number;
   /** _id of the row currently being processed, when surfacable. Undefined
    *  on batch-completion ticks since the batch ran as one unit. */
-  currentDocumentId?: string;
+  currentDocumentId?: string | undefined;
 }
 
 export interface ImportResult {
@@ -30,6 +32,11 @@ export interface ImportResult {
   /** One human-readable string per failed row. Matches the SwiftUI
    *  surface — caller writes the first into the panel's error pane. */
   errors: string[];
+  /** True when the run stopped early because the active database
+   *  switched (see ImportOptions.checkActive). Documents already
+   *  inserted stay inserted — ON ID CONFLICT DO UPDATE makes a re-run
+   *  idempotent. */
+  cancelled?: boolean;
 }
 
 /** Query executor signature. We accept this as a function rather than
@@ -38,15 +45,6 @@ export interface ImportResult {
 export type ExecuteRaw = (query: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 export const DEFAULT_BATCH_SIZE = 50;
-
-/** SQL-injection guard — same character set the SwiftUI service uses
- *  (letters, numbers, underscore). DQL doesn't have a parameterised
- *  way to bind a collection name, so we have to interpolate it; this
- *  regex blocks any payload that could break out of the identifier
- *  position. Surfacing as a custom error keeps the message actionable
- *  ("only letters, numbers, and underscores") instead of a cryptic
- *  DQL parser error. */
-const VALID_COLLECTION_NAME = /^[A-Za-z0-9_]+$/;
 
 export class ImportValidationError extends Error {
   constructor(message: string, readonly kind: 'invalidJson' | 'missingId' | 'invalidCollectionName' | 'encoding') {
@@ -109,17 +107,19 @@ export function buildBatchInsertQuery(
   insertType: InsertType,
 ): string {
   const placeholders = Array.from({ length: batchSize }, (_, i) => `(deserialize_json(:doc${i}))`).join(', ');
+  const target = quoteIdentifier(collection, 'collection');
   if (insertType === 'initial') {
-    return `INSERT INTO ${collection}\nINITIAL DOCUMENTS ${placeholders}`;
+    return `INSERT INTO ${target}\nINITIAL DOCUMENTS ${placeholders}`;
   }
-  return `INSERT INTO ${collection}\nDOCUMENTS ${placeholders}\nON ID CONFLICT DO UPDATE`;
+  return `INSERT INTO ${target}\nDOCUMENTS ${placeholders}\nON ID CONFLICT DO UPDATE`;
 }
 
 export function buildSingleInsertQuery(collection: string, insertType: InsertType): string {
+  const target = quoteIdentifier(collection, 'collection');
   if (insertType === 'initial') {
-    return `INSERT INTO ${collection}\nINITIAL DOCUMENTS (deserialize_json(:jsonDoc))`;
+    return `INSERT INTO ${target}\nINITIAL DOCUMENTS (deserialize_json(:jsonDoc))`;
   }
-  return `INSERT INTO ${collection}\nDOCUMENTS (deserialize_json(:jsonDoc))\nON ID CONFLICT DO UPDATE`;
+  return `INSERT INTO ${target}\nDOCUMENTS (deserialize_json(:jsonDoc))\nON ID CONFLICT DO UPDATE`;
 }
 
 /** Stringify each document for a batch and pack as `{doc0: ..., doc1: ...}`.
@@ -141,10 +141,22 @@ export function buildBatchArguments(batch: readonly Record<string, unknown>[]): 
   return args;
 }
 
+/**
+ * Reject only names that cannot be expressed as a DQL identifier at all.
+ *
+ * The target is backtick-quoted by the query builders (see dql-identifier),
+ * so a hyphen, a space, or a non-ASCII letter is safe and legal — Ditto
+ * genuinely allows those collection names, and refusing them locked the user
+ * out of importing into a collection they already have. What is left to
+ * reject is the empty name and control characters, neither of which is a real
+ * collection name and both of which mangle the statement.
+ */
 export function validateCollectionName(collection: string): void {
-  if (!VALID_COLLECTION_NAME.test(collection)) {
+  try {
+    quoteIdentifier(collection, 'collection');
+  } catch (err) {
     throw new ImportValidationError(
-      'Collection name contains invalid characters. Only letters, numbers, and underscores are allowed.',
+      err instanceof Error ? err.message : 'Collection name is not a valid identifier.',
       'invalidCollectionName',
     );
   }
@@ -172,6 +184,13 @@ export interface ImportOptions {
   onProgress?: (p: ImportProgress) => void;
   /** Override for tests. Defaults to {@link DEFAULT_BATCH_SIZE}. */
   batchSize?: number;
+  /** Defense against mid-import database switches: the switch
+   *  orchestrator closes the panel but cannot cancel an in-flight
+   *  import, and `execute` always resolves against the manager's
+   *  CURRENT session. Pass the active-config-id reader; importDocuments
+   *  snapshots it at entry and re-polls before each batch, aborting
+   *  (with `cancelled: true`) the moment it changes. */
+  checkActive?: () => string | null | undefined;
 }
 
 /**
@@ -199,9 +218,22 @@ export async function importDocuments(opts: ImportOptions): Promise<ImportResult
     try { opts.onProgress(p); } catch { /* progress sink errors don't block import */ }
   };
 
+  // Snapshot the active-config id when a checker was provided. Polled
+  // before every batch execute below.
+  const activeAtStart = opts.checkActive?.();
+
   const batches = chunkArray(opts.documents, batchSize);
-  for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-    const batch = batches[batchIndex];
+  for (const [batchIndex, batch] of batches.entries()) {
+    // The DB-switch orchestrator can close the panel without cancelling
+    // this in-flight import; without this check the remaining batches
+    // would silently land in the NEW database.
+    if (opts.checkActive && opts.checkActive() !== activeAtStart) {
+      const written = successCount + failureCount > 0
+        ? ` ${successCount} of ${total} documents were written before the switch.`
+        : '';
+      errors.push(`Import cancelled — the active database changed mid-import.${written}`);
+      return { successCount, failureCount, errors, cancelled: true };
+    }
     const batchStartIndex = batchIndex * batchSize;
     const firstId = idOf(batch[0]);
 
@@ -223,8 +255,7 @@ export async function importDocuments(opts: ImportOptions): Promise<ImportResult
       // Batch failed — fall back to single inserts to identify rows.
       // Don't surface the batch error itself; the per-row errors are
       // far more actionable.
-      for (let i = 0; i < batch.length; i += 1) {
-        const doc = batch[i];
+      for (const [i, doc] of batch.entries()) {
         const globalIndex = batchStartIndex + i;
         const docId = idOf(doc) ?? 'unknown';
         try {
@@ -253,5 +284,11 @@ function idOf(doc: Record<string, unknown> | undefined): string | undefined {
   const id = doc._id;
   if (typeof id === 'string') { return id; }
   if (id === undefined || id === null) { return undefined; }
-  return String(id);
+  // A document id can legitimately be a number or a composite object. Only
+  // primitives stringify usefully; an object would surface to the user as
+  // '[object Object]', so serialise it instead.
+  if (typeof id === 'number' || typeof id === 'boolean' || typeof id === 'bigint') {
+    return String(id);
+  }
+  try { return JSON.stringify(id); } catch { return undefined; }
 }

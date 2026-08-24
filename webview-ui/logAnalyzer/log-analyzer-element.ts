@@ -1,6 +1,6 @@
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import './components/summary-header.js';
 import './components/problems-list.js';
 import './components/histograms-row.js';
@@ -10,6 +10,25 @@ import './components/log-table.js';
 import './components/line-detail-drawer.js';
 import type { FilterKey } from './components/filter-tabs.js';
 import type { AnalyzerOut } from '../../src/ipc/messages.js';
+
+/** Mirrors the host's PROBLEM_CAP in LogAnalyzerService — the per-pattern
+ *  hit lists must never grow for the life of the panel. */
+const PROBLEM_CAP = 1000;
+
+/** Row-fetch granularity, and the window size in chunks.
+ *
+ *  The table is virtualised to roughly a viewport (~40 rows), so requesting
+ *  1000 rows shipped ~25x more than could ever be painted — and did so on
+ *  every flush, since a summary triggers a re-query. Windows are chunk-aligned
+ *  so a scroll inside the loaded window refetches nothing at all. */
+const ROW_CHUNK = 100;
+const ROW_WINDOW = ROW_CHUNK * 3;
+
+/** Chunk-aligned window start covering `needStart`, with a chunk of slack
+ *  before it so scrolling up does not immediately miss. */
+function windowStartFor(needStart: number): number {
+  return Math.max(0, Math.floor(needStart / ROW_CHUNK) * ROW_CHUNK - ROW_CHUNK);
+}
 import type {
   AnalyzerState,
   LogLine,
@@ -35,7 +54,7 @@ import type {
  *  and the Presence + Peer Listing panels already cover that ground. */
 @customElement('ditto-log-analyzer')
 export class DittoLogAnalyzer extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       /* Fill the webview viewport so the log table can grow into the
          space freed when other accordion sections collapse. */
@@ -109,6 +128,9 @@ export class DittoLogAnalyzer extends LitElement {
   @state() private problems: Map<string, ProblemInstance[]> = new Map();
   @state() private tags: string[] = [];
   @state() private sdkVersion: string | null = null;
+  /** Epoch ms of the first/last timestamped line, for the Range field. */
+  @state() private startTimeMs: number | null = null;
+  @state() private endTimeMs: number | null = null;
   @state() private errorBanner: string | null = null;
   @state() private histograms: AnalyzerState['histograms'] = {
     volumeByLevel: [],
@@ -119,6 +141,11 @@ export class DittoLogAnalyzer extends LitElement {
   @state() private activeFilter: FilterKey = 'all';
   @state() private tableLines: LogLine[] = [];
   @state() private tableTotal = 0;
+  /** Absolute index of `tableLines[0]` in the filtered result set. */
+  @state() private tableOffset = 0;
+  /** Window start of the request in flight, so a scroll burst does not queue
+   *  a fetch per frame for the same window. */
+  private inFlightOffset: number | null = null;
   @state() private search = '';
   @state() private selectedLineId: number | null = null;
 
@@ -136,22 +163,27 @@ export class DittoLogAnalyzer extends LitElement {
   private latestDetailReq: string | null = null;
   private searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  connectedCallback(): void {
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<AnalyzerOut>(this, msg => this.handleMessage(msg));
+
+  override connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<AnalyzerOut>(this.handleMessage);
-    this.addEventListener('reveal-line', this.onRevealLine as EventListener);
-    this.addEventListener('filter-change', this.onFilterChange as EventListener);
-    this.addEventListener('line-clicked', this.onLineClicked as EventListener);
-    this.addEventListener('drawer-close', this.onDrawerClose as EventListener);
+    this.addEventListener('reveal-line', this.onRevealLine);
+    this.addEventListener('filter-change', this.onFilterChange);
+    this.addEventListener('line-clicked', this.onLineClicked);
+    this.addEventListener('drawer-close', this.onDrawerClose);
+    this.addEventListener('visible-range', this.onVisibleRange);
     // Kick off an initial query so the table is populated on first open.
     this.requestLines();
   }
 
-  disconnectedCallback(): void {
-    this.removeEventListener('reveal-line', this.onRevealLine as EventListener);
-    this.removeEventListener('filter-change', this.onFilterChange as EventListener);
-    this.removeEventListener('line-clicked', this.onLineClicked as EventListener);
-    this.removeEventListener('drawer-close', this.onDrawerClose as EventListener);
+  override disconnectedCallback(): void {
+    this.removeEventListener('reveal-line', this.onRevealLine);
+    this.removeEventListener('filter-change', this.onFilterChange);
+    this.removeEventListener('line-clicked', this.onLineClicked);
+    this.removeEventListener('drawer-close', this.onDrawerClose);
+    this.removeEventListener('visible-range', this.onVisibleRange);
     if (this.searchDebounce != null) {
       clearTimeout(this.searchDebounce);
       this.searchDebounce = null;
@@ -159,16 +191,27 @@ export class DittoLogAnalyzer extends LitElement {
     super.disconnectedCallback();
   }
 
+  /** The `↗` on a problem row. It used to post `analyzer.revealLine`, which
+   *  the host handled with an explicit no-op — a visible affordance that did
+   *  nothing. Opening the line's detail drawer is what the arrow implies and
+   *  is already fully wired for row clicks, so reuse that. */
   private onRevealLine = (e: Event): void => {
     const detail = (e as CustomEvent).detail as { id: number };
-    postToHost({ type: 'analyzer.revealLine', lineId: detail.id });
+    this.selectedLineId = detail.id;
+    const requestId = String(++this.requestCursor);
+    this.latestDetailReq = requestId;
+    postToHost({ type: 'analyzer.requestLineDetail', lineId: detail.id, requestId });
   };
 
   private onFilterChange = (e: Event): void => {
     const detail = (e as CustomEvent).detail as { key: FilterKey };
     if (detail.key === this.activeFilter) return;
     this.activeFilter = detail.key;
-    this.requestLines();
+    // A new filter is a new result set — start at the top rather than holding
+    // an offset that means nothing in it.
+    this.tableOffset = 0;
+    this.scrollTableToTop();
+    this.requestLines(0);
   };
 
   private onLineClicked = (e: Event): void => {
@@ -189,45 +232,105 @@ export class DittoLogAnalyzer extends LitElement {
     if (this.searchDebounce != null) clearTimeout(this.searchDebounce);
     this.searchDebounce = setTimeout(() => {
       this.searchDebounce = null;
-      this.requestLines();
+      this.tableOffset = 0;
+      this.scrollTableToTop();
+      this.requestLines(0);
     }, 200);
   };
 
-  private requestLines(): void {
+  /** Reset the table's scroll after the result set changes underneath it, so
+   *  the viewport and the fetched window agree. */
+  private scrollTableToTop(): void {
+    const table = this.renderRoot.querySelector('log-table');
+    if (table) { (table as HTMLElement).scrollTop = 0; }
+  }
+
+  /** Human-readable span of the ingested lines for the Range field. Empty
+   *  when nothing timestamped has been seen, which the header renders as
+   *  'n/a'. */
+  private formatRange(): string {
+    if (this.startTimeMs === null || this.endTimeMs === null) { return ''; }
+    const start = new Date(this.startTimeMs);
+    const end = new Date(this.endTimeMs);
+    const seconds = Math.max(0, Math.round((this.endTimeMs - this.startTimeMs) / 1000));
+    const span = seconds < 60
+      ? `${seconds}s`
+      : seconds < 3600
+        ? `${Math.round(seconds / 60)}m`
+        : `${(seconds / 3600).toFixed(1)}h`;
+    const hhmmss = (d: Date): string => d.toISOString().slice(11, 19);
+    return `${hhmmss(start)} → ${hhmmss(end)} (${span})`;
+  }
+
+  /** Fetch one window of rows.
+   *
+   *  `offset` defaults to the window already on screen so a periodic refresh
+   *  (every summary diff) does not yank the user back to the top. Filter and
+   *  search changes pass 0 explicitly. */
+  private requestLines(offset = this.tableOffset): void {
     const requestId = String(++this.requestCursor);
     this.latestLinesReq = requestId;
+    this.inFlightOffset = offset;
     postToHost({
       type: 'analyzer.queryLines',
       filter: this.activeFilter,
       search: this.search || undefined,
-      limit: 1000,
-      offset: 0,
+      limit: ROW_WINDOW,
+      offset,
       requestId,
     });
   }
+
+  /** The table reports which absolute rows the viewport needs; refetch only
+   *  when they fall outside the window we hold. */
+  private onVisibleRange = (e: Event): void => {
+    const { start, end } = (e as CustomEvent).detail as { start: number; end: number };
+    const loadedFrom = this.tableOffset;
+    const loadedTo = this.tableOffset + this.tableLines.length;
+    if (start >= loadedFrom && end <= loadedTo) { return; }
+    const want = windowStartFor(start);
+    if (want === this.inFlightOffset) { return; }
+    this.requestLines(want);
+  };
 
   private handleMessage = (m: AnalyzerOut): void => {
     if (!m) { return; }
     switch (m.type) {
       case 'analyzer.summary':
         this.counts = m.counts;
+        // The rest of the summary header travels with the counts. It used not
+        // to travel at all, which is why Tags/SDK/Range read "none /
+        // unknown / n/a" for the life of the panel.
+        this.tags = m.tags;
+        this.sdkVersion = m.sdkVersion;
+        this.startTimeMs = m.startTimeMs;
+        this.endTimeMs = m.endTimeMs;
         // Counts changed → table totals + tab badges should refresh.
         this.requestLines();
         break;
       case 'analyzer.problemsAdded': {
         // Append to an existing group or open a new one. We mutate the
         // map in place then call requestUpdate() since @state on a Map
-        // doesn't trigger on internal mutations.
+        // doesn't trigger on internal mutations. Capped per pattern,
+        // mirroring the host's PROBLEM_CAP — the host stops sending past
+        // it, but the cap is enforced here too so this map can never grow
+        // for the life of the panel.
         for (const it of m.items) {
           const arr = this.problems.get(it.patternKey) ?? [];
-          arr.push(it);
+          if (arr.length < PROBLEM_CAP) { arr.push(it); }
           this.problems.set(it.patternKey, arr);
         }
         this.requestUpdate();
         break;
       }
       case 'analyzer.reset':
+        this.tableOffset = 0;
+        this.inFlightOffset = null;
         this.counts = null;
+        this.tags = [];
+        this.sdkVersion = null;
+        this.startTimeMs = null;
+        this.endTimeMs = null;
         this.problems = new Map();
         this.histograms = {
           volumeByLevel: [],
@@ -256,16 +359,13 @@ export class DittoLogAnalyzer extends LitElement {
         // still emits this so the IPC contract stays stable; sessions
         // are derived from the durations histogram which we DO render.
         break;
-      case 'analyzer.live':
-        // Streaming live lines no longer feed a separate tail — the
-        // log table refreshes whenever analyzer.summary fires. Nothing
-        // to do here.
-        break;
       case 'analyzer.linesResult':
         // Drop late responses; only honour the most recent request.
         if (m.requestId !== this.latestLinesReq) break;
         this.tableLines = m.items;
+        this.tableOffset = m.offset;
         this.tableTotal = m.total;
+        this.inFlightOffset = null;
         break;
       case 'analyzer.lineDetail':
         if (m.requestId !== this.latestDetailReq) break;
@@ -288,13 +388,28 @@ export class DittoLogAnalyzer extends LitElement {
       .sort((a, b) => (b.items[0]?.severity ?? 0) - (a.items[0]?.severity ?? 0));
   }
 
+  /** Badge numbers for the filter tabs.
+   *
+   *  Problems/Critical use `problemLines`/`criticalLines`, not `problems`/
+   *  `critical`: the latter count pattern-match *occurrences* — a line matching
+   *  three patterns counts three times, and matches past a pattern's storage
+   *  cap count too — so a badge built from them promised rows the tab could
+   *  not list. The Summary header still shows the occurrence count, which is
+   *  the right number for "how much went wrong". */
   private tabCounts(): { critical: number; errors: number; warnings: number; problems: number; totalLines: number } {
-    return this.counts ?? { critical: 0, errors: 0, warnings: 0, problems: 0, totalLines: 0 };
+    const c = this.counts;
+    if (!c) { return { critical: 0, errors: 0, warnings: 0, problems: 0, totalLines: 0 }; }
+    return {
+      critical: c.criticalLines,
+      errors: c.errors,
+      warnings: c.warnings,
+      problems: c.problemLines,
+      totalLines: c.totalLines,
+    };
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const tc = this.tabCounts();
-    const shown = this.tableLines.length;
     const total = this.tableTotal;
     return html`
       <div class="toolbar">
@@ -310,6 +425,7 @@ export class DittoLogAnalyzer extends LitElement {
             .counts=${this.counts}
             .tags=${this.tags}
             .sdkVersion=${this.sdkVersion}
+            .sessionRange=${this.formatRange()}
           ></summary-header>
           <problems-list .groups=${this.problemGroups()}></problems-list>
         </collapsible-section>
@@ -326,9 +442,17 @@ export class DittoLogAnalyzer extends LitElement {
             .value=${this.search}
             @input=${this.onSearchInput}
           />
-          <span class="result-info">${shown.toLocaleString()} / ${total.toLocaleString()}</span>
+          <!-- The count of matching rows, not "loaded / matching": rows are
+               fetched in windows now, so the loaded count is an implementation
+               detail that would sit at the window size regardless. -->
+          <span class="result-info">${total.toLocaleString()} ${total === 1 ? 'line' : 'lines'}</span>
         </div>
-        <log-table .lines=${this.tableLines} .selectedId=${this.selectedLineId}></log-table>
+        <log-table
+          .lines=${this.tableLines}
+          .windowOffset=${this.tableOffset}
+          .totalRows=${this.tableTotal}
+          .selectedId=${this.selectedLineId}
+        ></log-table>
       </div>
       <line-detail-drawer
         ?hidden=${!this.drawerOpen}

@@ -68,7 +68,7 @@ ditto-vsc-es/
 │   ├── extension.ts            # activate(): wires stores, manager, tree, commands
 │   ├── ditto/
 │   │   ├── DittoManager.ts     # singleton wrapping the Ditto SDK lifecycle
-│   │   └── peer-info.ts        # pure merge logic (presence + sync_status → snapshot)
+│   │   └── peer-info.ts        # pure merge logic (presence + sync metrics → snapshot)
 │   ├── tree/
 │   │   ├── DatabaseTreeProvider.ts
 │   │   └── DatabaseTreeItem.ts # discriminated union of node kinds
@@ -141,8 +141,12 @@ When a database becomes `active`, three SDK read paths spin up in parallel:
 
 1. **Presence push** — `ditto.presence.observe(callback)` with 250 ms
    coalescing. Drives the peer grid.
-2. **Sync status observer** — DQL subscription + observer on
-   `__sync_status`. Drives status dots, "synced to commit", "last update".
+2. **Sync metrics refresh** — a one-shot `SELECT * FROM
+   system:data_sync_info` inside every presence flush
+   (`refreshSyncMetrics`). Drives status dots, "synced to commit", "last
+   update". This is deliberately not a live observer: `system:*`
+   collections don't accept sync subscriptions, and the earlier
+   `__sync_status` observer was silently failing.
 3. **One-shot small-peer info** — `ditto.store.execute('SELECT ... FROM
    __small_peer_info')` once, cached for the session. Fills SDK
    language/platform/version on the local peer card.
@@ -224,7 +228,15 @@ keyed by `viewItem` regex (e.g. `viewItem == database.active`).
 npm install                # one-time
 npm run build              # full build → dist/
 npm run watch              # incremental rebuilds (preferred during dev)
+
+npm run validate           # typecheck + lint + unit tests (what CI runs)
+npm run typecheck          # tsc --noEmit
+npm run lint               # eslint . (add --fix via `npm run lint:fix`)
 ```
+
+**`npm run build` does not typecheck.** esbuild strips types without checking
+them, so a build can succeed on code `tsc` rejects. `npm run typecheck` is a
+separate gate, not a redundant one.
 
 Then in VS Code: press `F5`. A second VS Code window (the Extension
 Development Host) launches with the extension loaded. To pick up code
@@ -251,35 +263,73 @@ Output is visible in the host's `View → Output → Ditto Edge Studio` channel.
 npm test
 ```
 
-This runs `node --test src/test/**/*.test.ts` with two import shims:
+This runs `node --test` over `src/test/*.test.ts` and
+`src/test/webview/*.test.ts` with two import shims:
 
-- `tsx` — TypeScript execution (no compile step).
-- `scripts/register-vscode-stub.mjs` — makes `import 'vscode'` resolve to a
-  hand-rolled stub so storage/tree code can be exercised without an
-  Extension Host. The stub mocks `Memento`, `SecretStorage`, `EventEmitter`,
-  `TreeItem`, etc. Add to it as new APIs are needed.
+- `tsx` — TypeScript execution (no compile step). Note that it does **not**
+  typecheck; `npm run typecheck` is what does.
+- `scripts/register-vscode-stub.mjs` — makes `import 'vscode'` resolve to
+  `scripts/vscode-stub.mjs` so extension-host code can be exercised without an
+  Extension Development Host.
 
-### 6.2 What's tested
+### 6.2 What the stub covers
 
-The existing suite covers the pure / decoupled layers:
+`scripts/vscode-stub.mjs` fakes `Memento`, `SecretStorage`, `EventEmitter`,
+`TreeItem`, `Uri`, `workspace.getConfiguration`, `window.showXMessage`,
+`commands.executeCommand`, and **webview panels**.
 
-- `ConfigStore`, `SecretStore`, `SubscriptionStore` — full CRUD against
-  in-memory stub `Memento`/`SecretStorage`.
+The webview-panel fake is the interesting one. `window.createWebviewPanel`
+returns a recorder, and every panel it creates is pushed onto the exported
+`createdWebviewPanels` array. A test reads the panel its subject created and
+drives it:
+
+```ts
+const panel = createdWebviewPanels[0];
+panel.fireMessage({ type: 'query.run', text: 'SELECT 1' }); // webview → host
+panel.fireViewState(true);                                  // focus change
+panel.dispose();                                            // the user's X button
+assert.deepEqual(panel.webview.posted, [ /* host → webview */ ]);
+```
+
+Those recorders are module-global, mirroring the real editor's panel registry —
+call `__resetStub()` at the top of each test so panels from an earlier test
+don't leak into your assertions.
+
+### 6.3 What's tested
+
+- Stores (`ConfigStore`, `SecretStore`, `SubscriptionStore`, `OpenPanelsTracker`)
+  — full CRUD against the in-memory `Memento`/`SecretStorage`.
 - `DatabaseTreeProvider` — node-tree shapes for idle / active databases.
-- `peer-info` — merge logic between presence + sync_status, order
-  preservation, dominant-connection-type priority.
+- `peer-info` — presence + sync_status merge, order preservation,
+  dominant-connection-type priority.
+- Lifecycle: `switch-orchestrator`, and `QueryEditorPanel`'s dispose/tracker-slot
+  semantics against the webview fake.
+- Safety-critical pure layers extracted for exactly this purpose:
+  `query-projection` (the `MAX_QUERY_ROWS` cap and the dematerialize
+  discipline), `HttpQueryService`'s response cap / status classification /
+  settle-once guard, `dql-identifier`, `secrets`, `PatternEngine`.
+- Lit components under `src/test/webview/` via jsdom, including a recording
+  canvas 2D context (`src/test/webview/setup.ts`) that tracks the affine
+  transform, so the presence graph's paint positions are assertable rather
+  than merely reached.
 
-Webview Lit components and the SDK-touching parts of `DittoManager` are
-exercised manually via the recipes in [`MANUAL_TESTING.md`](MANUAL_TESTING.md).
+The SDK-touching parts of `DittoManager` — anything needing a live `Ditto`
+instance — are still covered by the recipes in
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md) and the integration suites.
 
-### 6.3 Adding a test
+### 6.4 Adding a test
 
-Pure functions and stores: add a `*.test.ts` file under `src/test/`, import
-from the relative source path with the `.js` extension (TS NodeNext
-convention), use `node:test`'s `describe`/`it`.
+Add a `*.test.ts` file under `src/test/` (or `src/test/webview/` for a Lit
+component), import from the relative source path with the `.js` extension (TS
+NodeNext convention), and use `node:test`.
 
 If your code touches `vscode` APIs not yet in the stub, extend
-`scripts/register-vscode-stub.mjs` rather than mocking ad-hoc.
+`scripts/vscode-stub.mjs` rather than mocking ad-hoc.
+
+When SDK-dependent logic needs coverage, prefer extracting the decision into a
+pure module over mocking the SDK — `src/ditto/query-projection.ts` is the
+worked example: the row cap and the profile-envelope handling moved out of
+`DittoManager` specifically so they could be tested without a store.
 
 ---
 
@@ -316,8 +366,9 @@ The cookbook below covers the most common extension points.
 
 ### 7.4 A new SDK read path
 
-The current three (presence, `__sync_status`, `__small_peer_info`) all live
-in `DittoManager`. To add a fourth:
+The current three (presence push, the `system:data_sync_info` refresh inside
+the presence flush, and `__small_peer_info`) all live in `DittoManager`. To
+add a fourth:
 
 1. Add a new private observer/handle field. Initialize in `connect()` after
    `sync.start()`. Cancel and null-out in `disconnect()`'s `finally` block —
@@ -328,8 +379,12 @@ in `DittoManager`. To add a fourth:
    uses. `firePresence(buildSnapshot())` for peer listing.
 4. Guard against late callbacks after `disconnect()` — the SDK can deliver
    one more emission while teardown is in flight. The pattern in
-   `DittoManager` is `if (this.activeDitto !== ditto) return;` at the top
-   of every callback.
+   `DittoManager` is an identity check against the session, not a
+   truthiness check: `if (this.session?.ditto !== ditto) return;` both at
+   callback entry AND after every `await`. During disconnect→reconnect a
+   callback in flight resumes with `this.session` being the NEW session,
+   so `if (!this.session) return;` alone would write the old DB's data
+   into it.
 
 ---
 
@@ -352,7 +407,48 @@ in `DittoManager`. To add a fourth:
   to log a config, log a config ID instead of a token; the runtime guard
   in `src/logging/Logger.ts` throws in `Development`/`Test` mode and
   replaces with `[redacted]` in `Production`. Don't rely on the guard —
-  fix the call site.
+  fix the call site. Detection (`containsSecret`) and redaction
+  (`redactSecrets`) live in `src/logging/secrets.ts` and must cover the same
+  patterns: a detected-but-unredacted secret still reaches the sinks and the
+  log export.
+- **Indexes are composite.** SDK 5.1 supports `CREATE INDEX … ON c (a ASC, b
+  DESC)`. `DittoIndex.fields` is an ordered `IndexField[]` (`{ name, ascending }`),
+  and the order is what decides which queries the optimizer can serve it with —
+  it only uses a composite index from its leading key onwards. Never reorder or
+  deduplicate it. All statement construction and `system:indexes` parsing lives
+  in `src/ditto/index-builder.ts`; the generated name matches the SwiftUI Edge
+  Studio app (`idx_<collection>_<field…>`, with `.`/space/`-` mapped to `_`) so
+  an index made in one client is recognisable in the other. Note that
+  `IF NOT EXISTS` compares names only, so creating an index whose name collides
+  with a different definition would silently do nothing — `createIndex` queries
+  `system:indexes` first and raises instead.
+- **Quote identifiers going into DQL.** DQL has bind parameters for values but
+  not for identifiers, so collection/field/index names get concatenated into
+  the statement. Route them through `quoteIdentifier` / `quoteFieldPath` in
+  `src/ditto/dql-identifier.ts`, which backtick-quotes and doubles embedded
+  backticks. Do not write a character whitelist: Ditto permits any name once
+  quoted, so a whitelist locks users out of collections they legitimately have
+  (`order-items`) while still admitting names that are invalid *unquoted*
+  (a leading digit).
+- **Never `throw` from a `finally` block.** It replaces whatever exception was
+  already propagating instead of deferring to it. Record the error, run the
+  cleanup, then decide what to rethrow — see
+  `DittoManager.applyTransportConfigLocked`, which had exactly this bug: a
+  failing recovery `sync.start()` discarded the real cause.
+- **Async webview handlers go through `webviewMessageHandler`**
+  (`src/panels/webview-utils.ts`). `onDidReceiveMessage` discards the
+  listener's return value, so both `(msg) => this.handle(msg)` and
+  `(msg) => { void this.handle(msg); }` drop the rejection — the user sees the
+  action silently do nothing and nothing reaches the log.
+- **Webview host subscriptions use the `HostMessages` controller**
+  (`webview-ui/shared/messaging.ts`). Lit owns its connect/disconnect hooks, so
+  there is no way to write the subscribe half and forget the dispose half. VS
+  Code re-parents webview panels between editor groups, which makes that
+  omission a real leak rather than a theoretical one.
+- **CSP nonces come from a CSPRNG.** `nonce()` in
+  `src/panels/webview-utils.ts` uses `crypto.randomBytes`. `script-src
+  'nonce-…'` is the only thing standing between injected markup and script
+  execution, and `Math.random()` is guessable.
 
 ### Attachments
 
@@ -381,6 +477,15 @@ in `DittoManager`. To add a fourth:
   `webview-ui/inspector/attachment-viewer-element.ts`: detects
   `_meta`-shaped tokens in the selected row's JSON, renders inline
   for known image MIME types, otherwise offers a Save action.
+- **Download streams natively.** The Inspector's save-to-disk action
+  goes through `DittoManager.saveAttachmentToPath`
+  (`Attachment.copyToPath` under the hood), a native store-to-disk
+  copy — the blob never becomes a JS `Uint8Array` in the extension
+  host. Download is intentionally uncapped, so the old `att.data()` +
+  `fs.writeFile` route (full blob in heap for the duration of the
+  write) was a real memory spike for big attachments. The inline
+  preview path keeps `att.data()` + the byte cache, bounded by
+  `ATTACHMENT_PREVIEW_LIMIT` — see `src/inspector/InspectorViewProvider.ts`.
 
 ### Logging
 
@@ -403,22 +508,36 @@ in `DittoManager`. To add a fourth:
 
 ## 9. Known gaps & future work
 
-These are tracked as future work in the original design specs (now
-gitignored under `docs/superpowers/`):
-
-- **Presence Graph tab** — currently a "Coming soon" placeholder. SwiftUI
-  uses SpriteKit; web equivalent would likely be vis-network or a D3 force
-  layout in a webview.
 - **Connection address & approximate distance** — SwiftUI shows these; the
   Node SDK's `Connection` type doesn't currently expose them. Revisit when
   the SDK does.
 - **Live-observe Query Editor mode** — currently one-shot `execute` only.
   Adding `registerObserver` would be ~10 host lines + a Lit toggle.
-- **Query history** — not persisted today. Would live in `globalState`
-  with bounded length.
 - **Identity webhook config from the IDE** — not implemented; SwiftUI app
   doesn't have it either.
 - **Marketplace publication pipeline** — manual `vsce package` only.
+- **No marketplace icon.** `package.json` has no top-level `icon`, so `vsce`
+  warns and the listing renders without one. It needs a 128×128 PNG;
+  `resources/ditto-icon.svg` is `fill="currentColor"` and themed by the
+  activity bar, so rasterising it gives a mark that is invisible on one
+  background or the other. This is a design task, not a build one.
+- **`retainContextWhenHidden: true` on every panel.** The VS Code docs call
+  this expensive and recommend serialising state instead. It is deliberate
+  here: no `WebviewPanelSerializer` is registered, and panel state is instead
+  persisted per-database through `OpenPanelsTracker` and replayed by the switch
+  orchestrator's restore path. That covers reconnect but not a window reload,
+  and the memory cost is real and paid per open panel — bounded for the Query
+  Editor by `MAX_OPEN_QUERY_TABS` (20 live tabs; the next `show()` refuses
+  with a toast instead of growing memory without limit). Revisiting means moving
+  each panel to `getState`/`setState` (the API is already declared in
+  `webview-ui/shared/messaging.ts` and unused) — a per-panel migration with no
+  current test coverage of panel state, so it wants doing deliberately.
+- **ReDoS on user-supplied log patterns is mitigated heuristically.**
+  `PatternEngine` rejects over-long patterns and nested quantifiers from *user*
+  pattern files, because `scan()` runs on the extension host's only thread
+  against every log line and a RegExp cannot be time-bounded there. A
+  determined pathological pattern that dodges the heuristic would still stall
+  the host. A worker thread is the real fix.
 
 ---
 
@@ -499,5 +618,6 @@ The Observers feature lets users register a DQL query and watch it fire in real 
 - **SDK integration:** `DittoManager.registerObserver(query, callback)` wraps `ditto.store.registerObserver` and the SDK's `Differ` to produce `{rows, insertions, updates, deletions, moves}` per firing.
 - **Panel:** `ObserverPanel` owns the SDK observer's lifetime — disposing the panel cancels the observer. Each panel maintains an `ObserverEventStore` ring buffer (500 events, FIFO eviction).
 - **Coalescing:** events are batched on the host with a 100ms flush window before being posted to the webview. Matches the SwiftUI app's `observedEventFlushInterval`.
+- **Payload cap:** the host ships at most `OBSERVER_ROW_CAP` (1000) rows per event (`data`), with the uncapped count in `totalRows`; the webview shows a "showing first N of M" banner when capped. The DQL subscription and the `Differ` still see the full result set — only the shipped payload is capped.
 - **UI reuse:** the bottom-pane detail view uses the existing `<json-viewer>` and the new shared `<ditto-result-table>` (also consumed by the Query Editor). No bespoke detail-view code.
 - **Help:** `resources/help/observe.md` → rendered to `dist/webview-ui/help/observe.html` → loaded into the Inspector via `inspector.helpHtml`.

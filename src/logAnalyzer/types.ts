@@ -36,7 +36,17 @@ export interface SummaryCounts {
   critical: number;
   errors: number;
   warnings: number;
+  /** Total pattern matches, counting a line once per pattern it matched and
+   *  counting matches past the per-pattern storage cap. This is the honest
+   *  "how much went wrong" number. */
   problems: number;
+  /** Distinct lines the Problems tab can actually list. Diverges from
+   *  `problems` once a pattern hits its storage cap, or when one line matches
+   *  several patterns — the tab badge must use this or it promises rows that
+   *  are not there. */
+  problemLines: number;
+  /** Distinct lines the Critical tab can list. Same reasoning. */
+  criticalLines: number;
   totalLines: number;
   unparseableLines: number;
 }

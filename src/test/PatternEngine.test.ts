@@ -57,7 +57,7 @@ test('PatternEngine: user overrides bundled by key', () => {
   engine.load();
   const hits = engine.scan(line({ text: 'user-wins' }));
   assert.equal(hits.length, 1);
-  assert.equal(hits[0].severity, 4);
+  assert.equal(hits[0]?.severity, 4);
 });
 
 test('PatternEngine: invalid regex skips entry, other patterns still load', () => {
@@ -72,7 +72,7 @@ test('PatternEngine: invalid regex skips entry, other patterns still load', () =
 test('PatternEngine: invalid severity skips entry', () => {
   const engine = new PatternEngine(fakeStore({
     good: { pattern: 'ok', severity: 3, recommendation: 'r' },
-    bad:  { pattern: 'x', severity: 9 as any, recommendation: 'r' },
+    bad:  { pattern: 'x', severity: 9, recommendation: 'r' },
   }));
   engine.load();
   assert.deepEqual(engine.listKeys().sort(), ['good']);
@@ -104,4 +104,57 @@ test('PatternEngine: reload() re-reads from store', () => {
   bundled = { v2: { pattern: 'v2', severity: 3, recommendation: 'r' } } as any;
   engine.reload();
   assert.deepEqual(engine.listKeys(), ['v2']);
+});
+
+test('PatternEngine: rejects a user pattern that nests a quantifier', () => {
+  // `(\w+\s*)+` backtracks exponentially. scan() runs on the extension
+  // host's only thread against lines up to 16 KB, so compiling this would
+  // hand a workspace-supplied pattern file a way to wedge the host.
+  const engine = new PatternEngine(fakeStore({}, {
+    evil: { pattern: '(\\w+\\s*)+$', severity: 3, recommendation: 'boom' },
+  }));
+  engine.load();
+  assert.deepEqual(engine.listKeys(), []);
+  assert.deepEqual(engine.listRejected().map(r => r.key), ['evil']);
+  assert.match(engine.listRejected()[0]?.reason ?? '', /backtrack/);
+});
+
+test('PatternEngine: bundled patterns skip the nested-quantifier check', () => {
+  // Ours, and covered by the fixture tests — the heuristic is for untrusted
+  // input, and must not be able to silently disable a shipped pattern.
+  const engine = new PatternEngine(fakeStore({
+    ours: { pattern: '(\\w+\\s*)+$', severity: 3, recommendation: 'fine' },
+  }));
+  engine.load();
+  assert.deepEqual(engine.listKeys(), ['ours']);
+  assert.deepEqual(engine.listRejected(), []);
+});
+
+test('PatternEngine: rejects an over-long user pattern', () => {
+  const engine = new PatternEngine(fakeStore({}, {
+    huge: { pattern: 'a'.repeat(513), severity: 3, recommendation: 'x' },
+  }));
+  engine.load();
+  assert.deepEqual(engine.listKeys(), []);
+  assert.match(engine.listRejected()[0]?.reason ?? '', /512 characters/);
+});
+
+test('PatternEngine: rejects a missing or empty pattern rather than matching everything', () => {
+  // `new RegExp(undefined)` is `/(?:)/`, which matches every line — a
+  // malformed entry would otherwise turn every log line into a problem.
+  const engine = new PatternEngine(fakeStore({}, {
+    empty: { pattern: '', severity: 3, recommendation: 'x' },
+    missing: { severity: 3, recommendation: 'x' } as unknown as RawPattern,
+  }));
+  engine.load();
+  assert.deepEqual(engine.listKeys(), []);
+  assert.equal(engine.listRejected().length, 2);
+});
+
+test('PatternEngine: a legitimate alternation group is not mistaken for a nested quantifier', () => {
+  const engine = new PatternEngine(fakeStore({}, {
+    ok: { pattern: '(error|warning)+ code=\\d+', severity: 3, recommendation: 'x' },
+  }));
+  engine.load();
+  assert.deepEqual(engine.listKeys(), ['ok']);
 });

@@ -4,6 +4,8 @@ import { LogAnalyzerService } from '../logAnalyzer/LogAnalyzerService.js';
 import { AnalyzerSink } from '../logAnalyzer/AnalyzerSink.js';
 import { PatternEngine } from '../logAnalyzer/PatternEngine.js';
 import { ConnectionTracker } from '../logAnalyzer/ConnectionTracker.js';
+import { binVolumeByLevel, pickBinWidth } from '../logAnalyzer/Histograms.js';
+import type { LogLine } from '../logAnalyzer/types.js';
 
 function makeSvc(opts: { throttleMs?: number } = {}) {
   const sink = new AnalyzerSink({ capacity: 1000 });
@@ -46,7 +48,7 @@ test('Service: user_tag from matched pattern propagates to line.userTags', () =>
   const lines = svc.queryLines({ filter: 'all' }).items;
   assert.equal(lines.length, 1);
   // Sorted + deduped; the no-user_tag pattern contributes nothing.
-  assert.deepEqual(lines[0].userTags, ['auth', 'query']);
+  assert.deepEqual(lines[0]?.userTags, ['auth', 'query']);
 });
 
 test('Service: queryLines search matches against user tags', () => {
@@ -68,16 +70,16 @@ test('Service: queryLines search matches against user tags', () => {
   // 'query' substring matches via line.userTags (the user-applied label)
   // on line 1, and does NOT match line 2 (no foo → no pattern hit → no tag).
   assert.equal(r.items.length, 1);
-  assert.match(r.items[0].text, /foo/);
+  assert.match(r.items[0]?.text ?? '', /foo/);
 });
 
 test('Service: backfill text is processed before live', () => {
   const { svc } = makeSvc();
   svc.start({
-    backfillText: [
+    backfillLines: [
       '2026-06-09T14:00:00.000Z  INFO   [sdk]  msg one',
       '2026-06-09T14:00:01.000Z  INFO   [sdk]  msg two',
-    ].join('\n'),
+    ],
   });
   const state = svc.getStateForTesting();
   assert.equal(state.counts.totalLines, 2);
@@ -89,11 +91,11 @@ test('Service: backfill skips lines older than minTimestamp', () => {
   // be admitted. The older 14:00:00 line is dropped silently.
   svc.start({
     minTimestamp: new Date('2026-06-09T14:00:30.000Z'),
-    backfillText: [
+    backfillLines: [
       '2026-06-09T14:00:00.000Z  INFO   [sdk]  old',
       '2026-06-09T14:00:30.000Z  INFO   [sdk]  at-cutoff',
       '2026-06-09T14:00:45.000Z  INFO   [sdk]  newer',
-    ].join('\n'),
+    ],
   });
   const state = svc.getStateForTesting();
   assert.equal(state.counts.totalLines, 2);
@@ -103,10 +105,10 @@ test('Service: backfill drops lines with no parsed timestamp when a cutoff is se
   const { svc } = makeSvc();
   svc.start({
     minTimestamp: new Date('2026-06-09T14:00:00.000Z'),
-    backfillText: [
+    backfillLines: [
       '2026-06-09T14:00:30.000Z  INFO   [sdk]  ok',
       'not a real log line at all',  // line.timestamp === null
-    ].join('\n'),
+    ],
   });
   // Only the well-formed line passes; we refuse to admit lines we can't
   // prove belong to the connection.
@@ -116,10 +118,10 @@ test('Service: backfill drops lines with no parsed timestamp when a cutoff is se
 test('Service: backfill without minTimestamp admits every parseable line (legacy behavior)', () => {
   const { svc } = makeSvc();
   svc.start({
-    backfillText: [
+    backfillLines: [
       '2020-01-01T00:00:00.000Z  INFO   [sdk]  ancient',
       '2026-06-09T14:00:00.000Z  INFO   [sdk]  recent',
-    ].join('\n'),
+    ],
   });
   assert.equal(svc.getStateForTesting().counts.totalLines, 2);
 });
@@ -154,14 +156,14 @@ test('Service: dispose unsubscribes', () => {
 
 test('Service: backfill IDs are negative, live IDs non-negative', () => {
   const { svc, sink } = makeSvc();
-  svc.start({ backfillText: '2026-06-09T14:00:00.000Z  ERROR  [sdk]  deadlock' });
+  svc.start({ backfillLines: ['2026-06-09T14:00:00.000Z  ERROR  [sdk]  deadlock'] });
   sink.write('error', '2026-06-09T14:00:01.000Z  ERROR  [sdk]  deadlock');
   const state = svc.getStateForTesting();
   const problems = state.problems.get('deadlock_critical') ?? [];
   assert.equal(problems.length, 2);
   // First problem is from backfill (negative id); second from live (>=0)
-  assert.ok(problems[0].line.id < 0, `backfill id should be negative, got ${problems[0].line.id}`);
-  assert.ok(problems[1].line.id >= 0, `live id should be non-negative, got ${problems[1].line.id}`);
+  assert.ok((problems[0]?.line.id ?? 0) < 0, `backfill id should be negative, got ${problems[0]?.line.id}`);
+  assert.ok((problems[1]?.line.id ?? -1) >= 0, `live id should be non-negative, got ${problems[1]?.line.id}`);
 });
 
 test('Service: pause stops emitting diffs but state still accumulates', () => {
@@ -174,8 +176,9 @@ test('Service: pause stops emitting diffs but state still accumulates', () => {
   sink.write('error', '2026-06-09T14:00:00.000Z  ERROR  [sdk]  deadlock');
   // state still accumulates
   assert.equal(svc.getStateForTesting().counts.errors, 1);
-  // but no throttled diffs emitted (problemsAdded is immediate, but summary/histograms are throttled)
-  const throttled = diffs.filter(d => d.type === 'summary' || d.type === 'histogramsUpdated');
+  // but no throttled diffs emitted (summary/histograms/problemsAdded all
+  // flow through the throttled flush)
+  const throttled = diffs.filter(d => d.type === 'summary' || d.type === 'histogramsUpdated' || d.type === 'problemsAdded');
   assert.equal(throttled.length, 0);
 });
 
@@ -227,7 +230,7 @@ test('Service: queryLines filters by level=error', () => {
   const r = svc.queryLines({ filter: 'error' });
   assert.equal(r.items.length, 1);
   assert.equal(r.total, 1);
-  assert.equal(r.items[0].level, 'error');
+  assert.equal(r.items[0]?.level, 'error');
 });
 
 test('Service: queryLines applies case-insensitive search', () => {
@@ -246,8 +249,8 @@ test('Service: queryLines returns newest first', () => {
   sink.write('info', '2026-06-09T14:00:01.000Z  INFO   [sdk]  two');
   sink.write('info', '2026-06-09T14:00:02.000Z  INFO   [sdk]  three');
   const r = svc.queryLines({ filter: 'all' });
-  assert.equal(r.items[0].text, 'three');
-  assert.equal(r.items[2].text, 'one');
+  assert.equal(r.items[0]?.text, 'three');
+  assert.equal(r.items[2]?.text, 'one');
 });
 
 test('Service: queryLines respects limit and offset for pagination', () => {
@@ -259,7 +262,7 @@ test('Service: queryLines respects limit and offset for pagination', () => {
   assert.equal(page1.total, 10);
   const page2 = svc.queryLines({ filter: 'all', limit: 3, offset: 3 });
   assert.equal(page2.items.length, 3);
-  assert.notEqual(page1.items[0].id, page2.items[0].id);
+  assert.notEqual(page1.items[0]?.id, page2.items[0]?.id);
 });
 
 test('Service: queryLines problem filter returns lines that matched any pattern', () => {
@@ -269,7 +272,7 @@ test('Service: queryLines problem filter returns lines that matched any pattern'
   sink.write('info',  '2026-06-09T14:00:01.000Z  INFO   [sdk]  ok');
   const r = svc.queryLines({ filter: 'problem' });
   assert.equal(r.items.length, 1);
-  assert.match(r.items[0].text, /deadlock/);
+  assert.match(r.items[0]?.text ?? '', /deadlock/);
 });
 
 test('Service: getLineDetail returns target line + before/after context', () => {
@@ -281,4 +284,413 @@ test('Service: getLineDetail returns target line + before/after context', () => 
   assert.equal(d.line?.text, 'msg 2');
   assert.equal(d.before.length, 2);
   assert.equal(d.after.length, 2);
+});
+
+test('Service: clear() empties the sessions view and keeps it empty', () => {
+  // Regression: state.sessions is refreshed only when the tracker's version
+  // changes. clear() empties state.sessions, so leaving the version gate
+  // (and the tracker itself) untouched stranded the Sessions view at empty
+  // until the next connection event — which then resurrected the whole
+  // pre-Clear history.
+  const { svc, sink } = makeSvc();
+  svc.start();
+  sink.write('info', '2026-06-09T14:00:00.000Z  INFO   [sdk]  physical connection started remote=abc transport_type=LAN role=Client');
+  sink.write('info', '2026-06-09T14:00:01.000Z  INFO   [sdk]  physical connection ended remote=abc role=Client');
+  assert.equal(svc.getStateForTesting().sessions.length, 1);
+
+  svc.clear();
+  assert.equal(svc.getStateForTesting().sessions.length, 0, 'cleared');
+
+  // An unrelated line must not resurrect the cleared history…
+  sink.write('info', '2026-06-09T14:00:02.000Z  INFO   [sdk]  an unrelated line');
+  assert.equal(svc.getStateForTesting().sessions.length, 0, 'stays cleared');
+
+  // …and a genuinely new session must still land.
+  sink.write('info', '2026-06-09T14:00:03.000Z  INFO   [sdk]  physical connection started remote=def transport_type=LAN role=Client');
+  const after = svc.getStateForTesting().sessions;
+  assert.equal(after.length, 1);
+  assert.equal(after[0]?.remotePeer, 'def');
+});
+
+// ─── Summary/table agreement ───────────────────────────────────
+//
+// The bug these cover, as reported from manual testing: the header read
+// "Errors: 0 · Lines: 1" while the Errors tab listed four ERROR rows. The
+// header comes from the throttled `summary` diff; the tabs come from a live
+// `queryLines`. maybeFlush only fired on the leading edge, so a backfill of N
+// lines emitted exactly one summary — the one after the FIRST line — and when
+// the log went quiet afterwards nothing ever corrected it.
+
+const BACKFILL = [
+  '2026-08-23T18:55:30.000Z  INFO   [ext]  starting up',
+  '2026-08-23T18:55:31.000Z  INFO   [ext]  ditto_init sdk.version=5.1.0 sdk.platform=macOS',
+  '2026-08-23T18:55:32.480Z  ERROR  [ext]  UNCAUGHT EXCEPTION {"a":1}',
+  '2026-08-23T18:55:40.000Z  WARN   [ext]  slow query',
+  '2026-08-23T18:55:48.327Z  ERROR  [ext]  UNCAUGHT EXCEPTION {"a":2}',
+  '2026-08-23T18:55:48.332Z  ERROR  [ext]  UNCAUGHT EXCEPTION {"a":3}',
+  '2026-08-23T18:55:48.346Z  ERROR  [ext]  UNCAUGHT EXCEPTION {"a":4}',
+];
+
+/** A service with the production throttle, so the throttling path is the one
+ *  under test rather than being disabled by throttleMs: 0. */
+function makeThrottledSvc() {
+  const sink = new AnalyzerSink({ capacity: 1000 });
+  const engine = new PatternEngine({ listAll: () => ({ bundled: [], user: [] }) });
+  engine.load();
+  const tracker = new ConnectionTracker();
+  const svc = new LogAnalyzerService({ sink, engine, tracker });
+  const summaries: { counts: any; tags: string[]; sdkVersion: string | null }[] = [];
+  svc.onDiff(d => { if (d.type === 'summary') { summaries.push(d); } });
+  return { svc, sink, summaries };
+}
+
+test('Service: the summary after a backfill agrees with what the tabs query', () => {
+  const { svc, summaries } = makeThrottledSvc();
+  svc.start({ backfillLines: BACKFILL });
+
+  const last = summaries[summaries.length - 1];
+  assert.ok(last);
+  assert.equal(last.counts.totalLines, svc.queryLines({ filter: 'all' }).total, 'Lines vs All tab');
+  assert.equal(last.counts.errors, svc.queryLines({ filter: 'error' }).total, 'Errors vs Errors tab');
+  assert.equal(last.counts.warnings, svc.queryLines({ filter: 'warn' }).total, 'Warnings vs Warnings tab');
+  // The specific numbers from the report, so a regression is recognisable.
+  assert.equal(last.counts.errors, 4);
+  assert.equal(last.counts.totalLines, 7);
+});
+
+test('Service: the volume histogram counts this analyzer\'s lines, not the shared sink', () => {
+  // The sink is shared by every database's analyzer and only ever holds lines
+  // the extension logged *live* — it excludes backfill read from the rotated
+  // log file, and includes other connections' lines. Binning it produced a
+  // histogram over a different population than every other number on screen.
+  const { svc, sink, summaries } = makeThrottledSvc();
+  for (let i = 0; i < 20; i++) {
+    sink.write('error', `2026-08-01T00:00:0${i % 10}.000Z  ERROR  [other]  unrelated ${i}`);
+  }
+  const histos: any[] = [];
+  svc.onDiff(d => { if (d.type === 'histogramsUpdated') { histos.push(d.histograms); } });
+
+  svc.start({ backfillLines: BACKFILL });
+
+  const bins = histos[histos.length - 1].volumeByLevel;
+  const total = bins.reduce((n: number, b: any) =>
+    n + b.counts.error + b.counts.warn + b.counts.info + b.counts.debug + b.counts.trace, 0);
+  assert.equal(total, svc.queryLines({ filter: 'all' }).total);
+  assert.equal(summaries[summaries.length - 1]?.counts.totalLines, total, 'histogram vs Lines');
+});
+
+test('Service: clear() empties the volume histogram too', () => {
+  const { svc } = makeThrottledSvc();
+  const histos: any[] = [];
+  svc.onDiff(d => { if (d.type === 'histogramsUpdated') { histos.push(d.histograms); } });
+  svc.start({ backfillLines: BACKFILL });
+  assert.ok(histos[histos.length - 1].volumeByLevel.length > 0, 'populated before clear');
+
+  svc.clear();
+  svc.resume(); // forces a flush without needing another line
+
+  const bins = histos[histos.length - 1].volumeByLevel;
+  const total = bins.reduce((n: number, b: any) =>
+    n + b.counts.error + b.counts.warn + b.counts.info + b.counts.debug + b.counts.trace, 0);
+  assert.equal(total, 0);
+});
+
+test('Service: the trailing edge of a live burst is flushed', () => {
+  // Leading-edge-only throttling swallowed everything after the first line of
+  // a burst. Emulated here with an injected clock so the burst lands inside
+  // one throttle window, then asserted via resume()'s forced flush — the same
+  // guarantee the trailing-edge timer provides in real time.
+  const sink = new AnalyzerSink({ capacity: 1000 });
+  const engine = new PatternEngine({ listAll: () => ({ bundled: [], user: [] }) });
+  engine.load();
+  let clock = 10_000;
+  const svc = new LogAnalyzerService({
+    sink, engine, tracker: new ConnectionTracker(), now: () => clock,
+  });
+  const summaries: any[] = [];
+  svc.onDiff(d => { if (d.type === 'summary') { summaries.push(d.counts); } });
+  svc.start();
+
+  for (let i = 0; i < 5; i++) {
+    sink.write('error', `2026-08-23T18:55:5${i}.000Z  ERROR  [ext]  boom ${i}`);
+  }
+  // Still inside the throttle window: the leading-edge flush has happened and
+  // the rest are pending.
+  assert.ok(summaries[summaries.length - 1].errors < 5, 'throttled, as designed');
+
+  clock += 1000;
+  sink.write('info', '2026-08-23T18:56:00.000Z  INFO   [ext]  next window');
+  assert.equal(
+    summaries[summaries.length - 1].errors, 5,
+    'the pending lines land on the next flush rather than being lost',
+  );
+});
+
+test('Service: start() does not leak the sink subscription', () => {
+  // A second start() must not stack subscriptions. Overwriting liveSub left
+  // the old subscription attached, so every later line was processed once per start().
+  const { svc, sink } = makeThrottledSvc();
+  svc.start();
+  svc.start();
+  svc.start();
+  sink.write('info', '2026-08-23T18:56:00.000Z  INFO   [ext]  one line');
+  assert.equal(svc.queryLines({ filter: 'all' }).total, 1, 'processed once, not three times');
+});
+
+test('Service: the clear-then-restart sequence does not duplicate the backfill', () => {
+  // clear() is the user-facing reset; a later start() re-ingests without doubling.
+  const { svc } = makeThrottledSvc();
+  svc.start({ backfillLines: BACKFILL });
+  const first = svc.queryLines({ filter: 'all' }).total;
+
+  svc.clear();
+  svc.start({ backfillLines: BACKFILL });
+
+  assert.equal(svc.queryLines({ filter: 'all' }).total, first, 'same lines, not doubled');
+  assert.equal(svc.queryLines({ filter: 'error' }).total, 4);
+});
+
+test('Service: the summary carries the tags, SDK version and time range', () => {
+  // None of these were ever transmitted, so the header showed
+  // "SDK: unknown · Tags: none · Range: n/a" for the life of the panel.
+  const { svc, summaries } = makeThrottledSvc();
+  svc.start({ backfillLines: BACKFILL });
+  const last = summaries[summaries.length - 1] as any;
+
+  assert.deepEqual(last.tags, ['ext']);
+  assert.equal(last.sdkVersion, '5.1.0', 'parsed from the SDK init line');
+  assert.equal(last.startTimeMs, Date.parse('2026-08-23T18:55:30.000Z'));
+  assert.equal(last.endTimeMs, Date.parse('2026-08-23T18:55:48.346Z'));
+});
+
+test('Service: clear() resets the transmitted metadata as well as the counts', () => {
+  const { svc, summaries } = makeThrottledSvc();
+  svc.start({ backfillLines: BACKFILL });
+  svc.clear();
+  svc.resume();
+  const last = summaries[summaries.length - 1] as any;
+  assert.deepEqual(last.tags, []);
+  assert.equal(last.sdkVersion, null);
+  assert.equal(last.startTimeMs, null);
+  assert.equal(last.counts.totalLines, 0);
+});
+
+test('Service: problem badges count listable lines, not match occurrences', () => {
+  // Two patterns both match the same line. `problems` counts occurrences (2),
+  // but the Problems tab can only ever list that one line — a badge built from
+  // `problems` promises a row that is not there.
+  const sink = new AnalyzerSink({ capacity: 100 });
+  const engine = new PatternEngine({
+    listAll: () => ({
+      bundled: [
+        { key: 'a', pattern: 'boom', severity: 5, recommendation: 'x' },
+        { key: 'b', pattern: 'BOOM', severity: 5, recommendation: 'y' },
+      ],
+      user: [],
+    }),
+  });
+  engine.load();
+  const svc = new LogAnalyzerService({
+    sink, engine, tracker: new ConnectionTracker(), throttleMs: 0,
+  });
+  const summaries: any[] = [];
+  svc.onDiff(d => { if (d.type === 'summary') { summaries.push(d.counts); } });
+  svc.start();
+
+  sink.write('error', '2026-08-23T18:55:32.000Z  ERROR  [ext]  boom happened');
+
+  const c = summaries[summaries.length - 1];
+  assert.equal(c.problems, 2, 'two pattern matches occurred');
+  assert.equal(c.problemLines, 1, 'but only one line is listable');
+  assert.equal(c.critical, 2);
+  assert.equal(c.criticalLines, 1);
+  // And the tab actually lists exactly problemLines rows.
+  assert.equal(svc.queryLines({ filter: 'problem' }).total, c.problemLines);
+  assert.equal(svc.queryLines({ filter: 'critical' }).total, c.criticalLines);
+});
+
+test('Service: problem line ids do not survive a clear', () => {
+  const sink = new AnalyzerSink({ capacity: 100 });
+  const engine = new PatternEngine({
+    listAll: () => ({ bundled: [{ key: 'a', pattern: 'boom', severity: 5, recommendation: 'x' }], user: [] }),
+  });
+  engine.load();
+  const svc = new LogAnalyzerService({
+    sink, engine, tracker: new ConnectionTracker(), throttleMs: 0,
+  });
+  svc.start();
+  sink.write('error', '2026-08-23T18:55:32.000Z  ERROR  [ext]  boom');
+  assert.equal(svc.queryLines({ filter: 'problem' }).total, 1);
+
+  svc.clear();
+  // A line reusing an old id must not be matched by a stale id set.
+  assert.equal(svc.queryLines({ filter: 'problem' }).total, 0);
+  assert.equal(svc.queryLines({ filter: 'critical' }).total, 0);
+});
+
+// ─── Incremental totals/bins vs naive scans ──────────────────────
+//
+// queryLines and the volume histogram used to re-scan the whole line buffer
+// on every call; both are now maintained incrementally at ingest (buffer-
+// scoped counters, per-second volume bins merged at flush). These tests pin
+// the incrementally-produced answers against the naive walks they replaced.
+
+/** The pre-optimisation queryLines: full newest-first scan, materialise all
+ *  matches, then slice the window. */
+function naiveQuery(
+  lines: LogLine[],
+  filter: 'critical' | 'error' | 'warn' | 'problem' | 'all',
+  problemIds: Set<number>,
+  criticalIds: Set<number>,
+  search = '',
+): LogLine[] {
+  const needle = search.trim().toLowerCase();
+  const matched: LogLine[] = [];
+  // `lines` comes from a filter:'all' query, which walks the buffer
+  // newest-first — the same order the old scan used.
+  for (const line of lines) {
+    let pass = false;
+    switch (filter) {
+      case 'all':      pass = true; break;
+      case 'error':    pass = line.level === 'error'; break;
+      case 'warn':     pass = line.level === 'warn'; break;
+      case 'problem':  pass = problemIds.has(line.id); break;
+      case 'critical': pass = criticalIds.has(line.id); break;
+    }
+    if (!pass) continue;
+    if (needle.length > 0) {
+      const userTagsHay = line.userTags ? ' ' + line.userTags.join(' ') : '';
+      const hay = (line.text + ' ' + (line.tag ?? '') + userTagsHay).toLowerCase();
+      if (!hay.includes(needle)) continue;
+    }
+    matched.push(line);
+  }
+  return matched;
+}
+
+function idSetFromProblems(svc: LogAnalyzerService, severity?: number): Set<number> {
+  const ids = new Set<number>();
+  for (const list of svc.getStateForTesting().problems.values()) {
+    for (const p of list) {
+      if (severity === undefined || p.severity === severity) { ids.add(p.line.id); }
+    }
+  }
+  return ids;
+}
+
+test('Service: queryLines results match the naive full-scan implementation', () => {
+  const { svc, sink } = makeSvc();
+  svc.start({ backfillLines: BACKFILL });
+  sink.write('error', '2026-08-23T18:56:02.000Z  ERROR  [ext]  deadlock again');
+  for (let i = 0; i < 40; i++) {
+    const level = i % 7 === 0 ? 'WARN' : i % 3 === 0 ? 'ERROR' : 'INFO';
+    sink.write('info', `2026-08-23T18:57:${String(i).padStart(2, '0')}.000Z  ${level.padEnd(5)}  [ext]  filler ${i}`);
+  }
+
+  const all = svc.queryLines({ filter: 'all', limit: 100_000 }).items;
+  const problemIds = idSetFromProblems(svc);
+  const criticalIds = idSetFromProblems(svc, 5);
+
+  const filters = ['all', 'error', 'warn', 'problem', 'critical'] as const;
+  for (const filter of filters) {
+    for (const search of [undefined, 'exception', 'ext', 'no-such-needle']) {
+      for (const [offset, limit] of [[0, 300], [2, 3], [500, 10]] as const) {
+        const naive = naiveQuery(all, filter, problemIds, criticalIds, search ?? '');
+        const got = svc.queryLines({ filter, search, limit, offset });
+        assert.deepEqual(
+          got.items.map(l => l.id),
+          naive.slice(offset, offset + limit).map(l => l.id),
+          `${filter}/search=${search}/offset=${offset}/limit=${limit} items`,
+        );
+        assert.equal(got.total, naive.length, `${filter}/search=${search} total`);
+      }
+    }
+  }
+});
+
+test('Service: the volume histogram equals a naive re-bin of the buffer', () => {
+  const { svc, sink } = makeThrottledSvc();
+  const histos: { volumeByLevel: unknown[]; }[] = [];
+  svc.onDiff(d => { if (d.type === 'histogramsUpdated') { histos.push(d.histograms); } });
+  svc.start({ backfillLines: BACKFILL });
+  sink.write('warn', '2026-08-23T18:56:10.000Z  WARN   [ext]  late warning');
+
+  svc.resume(); // force a flush so the trailing live line is reflected
+
+  const state = svc.getStateForTesting();
+  const range = state.startTime && state.endTime
+    ? state.endTime.getTime() - state.startTime.getTime()
+    : 0;
+  const binMs = pickBinWidth(Math.max(range, 1000));
+  const buffer = svc.queryLines({ filter: 'all', limit: 100_000 }).items;
+  const naive = binVolumeByLevel(buffer, binMs);
+  assert.deepEqual(histos[histos.length - 1]?.volumeByLevel, naive);
+});
+
+test('Service: counters stay exact across a buffer trim', () => {
+  // Push past the 2× cap so the chunked trim drops the oldest lines, then
+  // assert the incrementally-maintained totals still equal a naive count of
+  // what actually remains in the buffer.
+  const { svc, sink } = makeSvc();
+  svc.start();
+  const TOTAL = 100_001; // LINE_BUFFER_CAP * 2 + 1 → one chunked trim, leaving exactly the cap
+  for (let i = 0; i < TOTAL; i++) {
+    const level = i % 10 === 0 ? 'ERROR' : 'INFO ';
+    sink.write('info', `2026-08-23T18:59:${String(i % 60).padStart(2, '0')}.000Z  ${level}  [ext]  line ${i}`);
+  }
+  const remaining = svc.queryLines({ filter: 'all', limit: 200_000 }).items;
+  assert.equal(remaining.length, 50_000, 'buffer trimmed to the cap');
+  const wantErrors = remaining.filter(l => l.level === 'error').length;
+  assert.equal(svc.queryLines({ filter: 'error' }).total, wantErrors, 'error total');
+  assert.equal(svc.queryLines({ filter: 'warn' }).total, 0, 'warn total');
+  // And the incrementally-merged histogram covers exactly the remaining lines.
+  const state = svc.getStateForTesting();
+  const range = state.startTime && state.endTime
+    ? state.endTime.getTime() - state.startTime.getTime()
+    : 0;
+  const binMs = pickBinWidth(Math.max(range, 1000));
+  assert.deepEqual(state.histograms.volumeByLevel, binVolumeByLevel(remaining, binMs));
+});
+
+test('Service: the session snapshot is taken per flush, not per line', () => {
+  // Regression guard for a quadratic ingest path. tracker.snapshot() copies
+  // the session arrays; calling it from processLine made ingestion O(n²)
+  // whenever sessions accumulated — measured at 28k lines/s degrading to
+  // 9.6k by 40k lines, against 870k/s for lines the tracker ignores.
+  //
+  // Asserted by counting calls rather than by timing, so it cannot flake.
+  const sink = new AnalyzerSink({ capacity: 10_000 });
+  const engine = new PatternEngine({ listAll: () => ({ bundled: [], user: [] }) });
+  engine.load();
+
+  const real = new ConnectionTracker();
+  let snapshots = 0;
+  const tracker = Object.assign(Object.create(Object.getPrototypeOf(real)), real, {
+    consume: (l: any) => real.consume(l),
+    snapshot: () => { snapshots++; return real.snapshot(); },
+    reinits: () => real.reinits(),
+    getVersion: () => real.getVersion(),
+    reset: () => real.reset(),
+  }) as ConnectionTracker;
+
+  // Throttle high enough that only the explicit flushes below happen.
+  const svc = new LogAnalyzerService({ sink, engine, tracker, throttleMs: 1_000_000 });
+  svc.start(); // start() force-flushes once
+
+  const N = 500;
+  for (let i = 0; i < N; i++) {
+    // Every line opens a session, so the tracker's version changes every time
+    // — the worst case for a per-line snapshot.
+    sink.write('info',
+      `2026-08-23T18:55:00.000Z  INFO   [sdk]  physical connection started remote=peer${i} transport_type=LAN role=Client`);
+  }
+
+  assert.ok(
+    snapshots <= 2,
+    `snapshot() ran ${snapshots} times for ${N} lines; it must be per-flush, not per-line`,
+  );
+
+  // And it still produces the right answer when a flush does happen.
+  svc.resume();
+  assert.equal(svc.getStateForTesting().sessions.length, N);
 });

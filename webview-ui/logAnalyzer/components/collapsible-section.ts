@@ -6,7 +6,7 @@ import { customElement, property, state } from 'lit/decorators.js';
  *  the log table more vertical real estate. */
 @customElement('collapsible-section')
 export class CollapsibleSection extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       margin: 8px 0;
@@ -37,7 +37,7 @@ export class CollapsibleSection extends LitElement {
   @property({ type: Boolean, attribute: 'open' }) isOpen = true;
   @state() private _open = true;
 
-  protected willUpdate(changed: Map<string, unknown>): void {
+  protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has('isOpen')) this._open = this.isOpen;
   }
 
@@ -45,7 +45,7 @@ export class CollapsibleSection extends LitElement {
     this._open = !this._open;
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <div class="header" @click=${this.toggle}>
         <span class="chevron ${this._open ? 'open' : ''}">▶</span>

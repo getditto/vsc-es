@@ -36,7 +36,7 @@ test('Logger: writes to channel and file at default info level', async () => {
   logger.info('hello');
   await logger.flush();
   assert.equal(ch.lines.length, 1);
-  assert.match(ch.lines[0].line, /INFO/);
+  assert.match(ch.lines[0]!.line, /INFO/);
   const file = await fs.readFile(path.join(dir, 'ditto-edge-studio.log'), 'utf8');
   assert.match(file, /INFO.*hello/);
   await logger.dispose();
@@ -86,7 +86,7 @@ test('Logger: withTag prepends tag to messages', async () => {
   const sub = logger.withTag('ext:DittoManager');
   sub.info('Connected');
   await logger.flush();
-  assert.match(ch.lines[0].line, /\[ext:DittoManager\]/);
+  assert.match(ch.lines[0]!.line, /\[ext:DittoManager\]/);
   await logger.dispose();
 });
 
@@ -119,8 +119,91 @@ test('Logger: redacts secrets in production mode', async () => {
   const logger = createLogger({ channel: ch.api, fileDir: dir, mode: 'production' });
   logger.info('Login OK', { token: 'sk_live_xxx' });
   await logger.flush();
-  assert.doesNotMatch(ch.lines[0].line, /sk_live_xxx/);
-  assert.match(ch.lines[0].line, /\[redacted\]/);
+  assert.doesNotMatch(ch.lines[0]!.line, /sk_live_xxx/);
+  assert.match(ch.lines[0]!.line, /\[redacted\]/);
+  await logger.dispose();
+});
+
+test('Logger: development tripwire throws when an emitted line carries a secret', async () => {
+  const ch = fakeChannel();
+  const dir = await tmpdir();
+  const logger = createLogger({ channel: ch.api, fileDir: dir, mode: 'development' });
+  assert.throws(
+    () => logger.info('Login OK', { token: 'sk_live_xxx' }),
+    /secret pattern detected/,
+  );
+  await logger.dispose();
+});
+
+test('Logger: suppressed level does no formatting or secret work', async () => {
+  // channel=error + fileMin=error suppresses this debug line entirely. The
+  // line carries a secret pattern AND a circular ctx: in development mode
+  // the secret scan would throw the tripwire, and formatting the circular
+  // ctx would have been the old code's first step — so a clean no-op proves
+  // the level gate ran before any of that work.
+  const ch = fakeChannel();
+  const dir = await tmpdir();
+  const logger = createLogger({ channel: ch.api, fileDir: dir, fileMin: 'error', mode: 'development' });
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  assert.doesNotThrow(() => logger.debug('dbg {"token":"sk_live_xxx"}', circular));
+  await logger.flush();
+  assert.equal(ch.lines.length, 0, 'no sink received the suppressed line');
+  await logger.dispose();
+});
+
+test('Logger: line still reaches the file when only the channel is filtered', async () => {
+  // The early gate must not skip formatting when ANY sink takes the line:
+  // here only the file sink is eligible, and the tripwire must still apply.
+  const ch = fakeChannel();
+  const dir = await tmpdir();
+  const logger = createLogger({ channel: ch.api, fileDir: dir, mode: 'development' });
+  logger.setChannelLevel('error');
+  assert.throws(() => logger.info('file-only {"token":"abc"}'), /secret pattern detected/);
+  await logger.dispose();
+});
+
+test('Logger: registered known secrets are redacted in production', async () => {
+  const ch = fakeChannel();
+  const dir = await tmpdir();
+  const logger = createLogger({ channel: ch.api, fileDir: dir, mode: 'production' });
+  logger.registerKnownSecrets(['live-secret-value-9f8e7d']);
+  logger.info('attaching live-secret-value-9f8e7d to request');
+  await logger.flush();
+  assert.doesNotMatch(ch.lines[0]!.line, /live-secret-value-9f8e7d/);
+  assert.match(ch.lines[0]!.line, /\[redacted\]/);
+  await logger.dispose();
+});
+
+test('Logger: known secrets under 8 chars are ignored', async () => {
+  const ch = fakeChannel();
+  const dir = await tmpdir();
+  const logger = createLogger({ channel: ch.api, fileDir: dir, mode: 'production' });
+  logger.registerKnownSecrets(['short']);
+  logger.info('this line mentions short plainly');
+  await logger.flush();
+  assert.match(ch.lines[0]!.line, /short/);
+  await logger.dispose();
+});
+
+test('Logger: clearKnownSecrets stops redacting previously registered values', async () => {
+  const ch = fakeChannel();
+  const dir = await tmpdir();
+  const logger = createLogger({ channel: ch.api, fileDir: dir, mode: 'production' });
+  logger.registerKnownSecrets(['stale-secret-0001']);
+  logger.clearKnownSecrets();
+  logger.info('mentions stale-secret-0001 after clear');
+  await logger.flush();
+  assert.match(ch.lines[0]!.line, /stale-secret-0001/);
+  await logger.dispose();
+});
+
+test('Logger: a known secret value trips the development tripwire too', async () => {
+  const ch = fakeChannel();
+  const dir = await tmpdir();
+  const logger = createLogger({ channel: ch.api, fileDir: dir, mode: 'development' });
+  logger.registerKnownSecrets(['dev-trip-secret-123']);
+  assert.throws(() => logger.info('leaks dev-trip-secret-123 here'), /secret pattern detected/);
   await logger.dispose();
 });
 
@@ -136,8 +219,8 @@ test('Logger: writes to extraSinks alongside channel and file', async () => {
   logger.info('via-extra-sink');
   await logger.flush();
   assert.equal(captured.length, 1);
-  assert.equal(captured[0].level, 'info');
-  assert.match(captured[0].line, /via-extra-sink/);
+  assert.equal(captured[0]?.level, 'info');
+  assert.match(captured[0]?.line ?? '', /via-extra-sink/);
   await logger.dispose();
 });
 

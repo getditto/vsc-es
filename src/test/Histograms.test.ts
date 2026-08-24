@@ -31,10 +31,10 @@ test('binVolumeByLevel: stacks by level into time bins', () => {
   ];
   const bins = binVolumeByLevel(lines, 10_000);
   assert.equal(bins.length, 4);
-  assert.equal(bins[0].counts.error, 1);
-  assert.equal(bins[0].counts.warn, 1);
-  assert.equal(bins[1].counts.warn, 1);
-  assert.equal(bins[3].counts.info, 1);
+  assert.equal(bins[0]?.counts.error, 1);
+  assert.equal(bins[0]?.counts.warn, 1);
+  assert.equal(bins[1]?.counts.warn, 1);
+  assert.equal(bins[3]?.counts.info, 1);
 });
 
 test('binVolumeByLevel: empty input → empty bins', () => {
@@ -49,8 +49,8 @@ test('binProblemsOverTime: bin colored by max severity', () => {
   ];
   const bins = binProblemsOverTime(problems, 1000);
   assert.equal(bins.length, 1);
-  assert.equal(bins[0].count, 2);
-  assert.equal(bins[0].maxSeverity, 5);
+  assert.equal(bins[0]?.count, 2);
+  assert.equal(bins[0]?.maxSeverity, 5);
 });
 
 test('binDurations: log-bins 0-1, 1-5, 5-30, 30-300, 300+', () => {

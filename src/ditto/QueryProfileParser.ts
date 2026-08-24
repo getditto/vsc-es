@@ -143,7 +143,7 @@ function renderAttribute(raw: unknown): string {
 
 function parseStats(dict: Record<string, unknown>): QueryProfileStats {
   const phase = isObject(dict.phaseTimes)
-    ? (dict.phaseTimes as Record<string, unknown>)
+    ? (dict.phaseTimes)
     : undefined;
   return {
     documentsIn: intValue(dict.documentsIn),

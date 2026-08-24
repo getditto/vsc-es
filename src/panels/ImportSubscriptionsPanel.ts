@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { Logger } from '../logging/types.js';
-import type { ImportSubsIn, ImportSubsOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { ImportSubsIn, ImportSubsOut } from '../ipc/messages.js';
 import type { StoredSubscription } from '../models/DittoConfig.js';
 import { executeRemoteQuery } from '../ditto/HttpQueryService.js';
 import {
@@ -13,6 +13,7 @@ import {
   extractCollectionName,
   type SmallPeerInfo,
 } from '../ditto/import-subscription-parser.js';
+import { randomId } from '../util/id.js';
 
 /**
  * Webview panel that fetches subscriptions known to the Ditto Server
@@ -48,6 +49,14 @@ export class ImportSubscriptionsPanel {
     ImportSubscriptionsPanel.current = new ImportSubscriptionsPanel(
       context, configStore, secretStore, subs, manager, databaseId, logger,
     );
+  }
+
+  /** Dispose the open panel, if any. Called on database
+   *  switch/disconnect/delete — the panel's server-side subscription list
+   *  and target databaseId belong to the connection it was opened against,
+   *  so leaving it open would write subscriptions into the wrong store. */
+  static dispose(): void {
+    ImportSubscriptionsPanel.current?.dispose();
   }
 
   private readonly panel: vscode.WebviewPanel;
@@ -86,21 +95,13 @@ export class ImportSubscriptionsPanel {
       cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (msg: ImportSubsIn | LogIn) => { void this.handle(msg); },
+      webviewMessageHandler<ImportSubsIn>(
+        this.logger, 'ext:importSubs', 'Import subscriptions failed', (msg) => this.handle(msg),
+      ),
       undefined,
       this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
-
-    // Mirror channel level for webview-side log filtering, same pattern
-    // as the other panels.
-    this.panel.webview.postMessage({
-      type: 'log.levelChanged', level: logger.getChannelLevel(),
-    } satisfies LogOut);
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     // Kick off the fetch once the webview has had a tick to register
     // its `message` listener — same defensive delay the other panels
@@ -166,12 +167,7 @@ export class ImportSubscriptionsPanel {
     }
   }
 
-  private async handle(msg: ImportSubsIn | LogIn): Promise<void> {
-    if (msg.type === 'log') {
-      const wlog = this.logger.withTag('webview:dittoImportSubscriptions');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: ImportSubsIn): Promise<void> {
     if (msg.type === 'importSubs.cancel') { this.panel.dispose(); return; }
     if (msg.type === 'importSubs.importSelected') {
       await this.importSelected(msg.queries);
@@ -189,7 +185,7 @@ export class ImportSubscriptionsPanel {
       });
 
       const sub: StoredSubscription = {
-        id: cryptoRandomId(),
+        id: randomId(16),
         name: `Imported: ${collection}`,
         query,
       };
@@ -236,10 +232,4 @@ function isSmallPeerInfo(value: unknown): value is SmallPeerInfo {
   return typeof value === 'object'
     && value !== null
     && typeof (value as { _id?: unknown })._id === 'string';
-}
-
-function cryptoRandomId(): string {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }

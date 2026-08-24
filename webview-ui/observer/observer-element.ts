@@ -1,12 +1,16 @@
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import { assertNever } from '../shared/assert-never.js';
 import '../shared/json-viewer.js';
 import '../shared/result-table-element.js';
 import './events-table-element.js';
 import type { ObserverEvent } from '../../src/ditto/ObserverEventStore.js';
 import type { ObserverOut } from '../../src/ipc/messages.js';
+
+/** Cap on rows rendered in the detail pane — matches the Query panel's
+ *  page size. The event's full result set can be arbitrarily large. */
+const DETAIL_ROW_CAP = 1000;
 
 type DetailView = 'json' | 'table';
 type EventFilter = 'items' | 'inserted' | 'updated';
@@ -35,7 +39,7 @@ export class DittoObserverPanel extends LitElement {
 
   static readonly eventBufferCap = 500;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: flex;
       flex-direction: column;
@@ -77,31 +81,31 @@ export class DittoObserverPanel extends LitElement {
     .empty { padding: 48px; text-align: center; color: var(--vscode-descriptionForeground); }
   `;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    onHostMessage<ObserverOut>(msg => {
-      switch (msg.type) {
-        case 'observer.init':
-          this.observer = msg.observer;
-          break;
-        case 'observer.statusChanged':
-          this.active = msg.active;
-          break;
-        case 'observer.events':
-          this.appendEvents(msg.events);
-          break;
-        case 'observer.cleared':
-          this.events = [];
-          this.selectedEventId = null;
-          this.selectedRowIndex = null;
-          break;
-        default:
-          assertNever(msg);
-      }
-    });
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<ObserverOut>(this, msg => {
+    switch (msg.type) {
+      case 'observer.init':
+        this.observer = msg.observer;
+        break;
+      case 'observer.statusChanged':
+        this.active = msg.active;
+        break;
+      case 'observer.events':
+        this.appendEvents(msg.events);
+        break;
+      case 'observer.cleared':
+        this.events = [];
+        this.selectedEventId = null;
+        this.selectedRowIndex = null;
+        this.detailCache = null;
+        break;
+      default:
+        assertNever(msg);
+    }
+  });
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const selectedEvent = this.selectedEventId
       ? this.events.find(e => e.id === this.selectedEventId) ?? null
       : null;
@@ -135,8 +139,50 @@ export class DittoObserverPanel extends LitElement {
     `;
   }
 
+  /** Memoized detail-pane payload. Events are immutable once appended, so
+   *  (eventId × filter) fully determines both the filtered rows and their
+   *  JSON rendering. Without this cache every incoming event batch —
+   *  arriving per 100ms flush during high-frequency sync — re-stringified
+   *  the selected event even when the selection never changed. Same
+   *  discipline as jsonDocCache in the Query panel. */
+  private detailCache: {
+    eventId: string;
+    filter: EventFilter;
+    data: Record<string, unknown>[];
+    truncated: boolean;
+    fullLength: number;
+    json: string;
+  } | null = null;
+
+  private detailPayload(event: ObserverEvent) {
+    const cache = this.detailCache;
+    if (cache && cache.eventId === event.id && cache.filter === this.eventFilter) {
+      return cache;
+    }
+    // Cap the rows rendered in the detail pane. The event's result set can
+    // be arbitrarily large, and every incoming event batch re-renders this
+    // pane — an uncapped JSON.stringify or table mount per batch is a
+    // render firehose.
+    const full = this.filterData(event);
+    const truncated = full.length > DETAIL_ROW_CAP;
+    const data = truncated ? full.slice(0, DETAIL_ROW_CAP) : full;
+    const next = {
+      eventId: event.id,
+      filter: this.eventFilter,
+      data,
+      truncated,
+      fullLength: full.length,
+      json: JSON.stringify(data, null, 2),
+    };
+    this.detailCache = next;
+    return next;
+  }
+
   private renderDetail(event: ObserverEvent): TemplateResult {
-    const data = this.filterData(event);
+    const { data, truncated, fullLength, json } = this.detailPayload(event);
+    // The host ships at most OBSERVER_ROW_CAP rows per event (see
+    // DittoManager.registerObserver); flag it when this event exceeded the cap.
+    const hostCapped = event.totalRows > event.data.length;
     const columns = this.computeColumns(data);
     return html`
       <div class="detail-toolbar">
@@ -162,9 +208,19 @@ export class DittoObserverPanel extends LitElement {
         </label>
       </div>
       <div class="detail-body">
+        ${hostCapped ? html`
+          <div style="padding:4px 8px; font-size:11px; color: var(--vscode-editorWarning-foreground, #cca700);">
+            ⚠ showing first ${event.data.length.toLocaleString()} of ${event.totalRows.toLocaleString()} rows
+          </div>
+        ` : ''}
+        ${truncated ? html`
+          <div style="padding:4px 8px; font-size:11px; color: var(--vscode-editorWarning-foreground, #cca700);">
+            ⚠ showing first ${DETAIL_ROW_CAP.toLocaleString()} of ${fullLength.toLocaleString()} rows
+          </div>
+        ` : ''}
         ${this.detailView === 'json'
           ? html`<json-viewer
-              .value=${JSON.stringify(data, null, 2)}
+              .value=${json}
               wrap
             ></json-viewer>`
           : html`<ditto-result-table

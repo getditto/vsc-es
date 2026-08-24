@@ -7,7 +7,7 @@
 
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 interface CollectionStats {
   name: string;
@@ -81,7 +81,7 @@ export class DatabaseMetricsElement extends LitElement {
   @state() private sortKey: SortKey = 'cborPayloadBytes';
   @state() private sortDir: SortDir = 'desc';
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 16px;
@@ -216,19 +216,11 @@ export class DatabaseMetricsElement extends LitElement {
     }
   `;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    window.addEventListener('message', this.onMessage);
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, msg => this.onHostMessage(msg));
 
-  disconnectedCallback(): void {
-    window.removeEventListener('message', this.onMessage);
-    super.disconnectedCallback();
-  }
-
-  private onMessage = (e: MessageEvent): void => {
-    const m = e.data as In | undefined;
-    if (!m) { return; }
+  private onHostMessage(m: In): void {
     if (m.type === 'dbMetrics.loading') {
       this.view = { kind: 'loading' };
     } else if (m.type === 'dbMetrics.snapshot') {
@@ -236,7 +228,7 @@ export class DatabaseMetricsElement extends LitElement {
     } else if (m.type === 'dbMetrics.error') {
       this.view = { kind: 'error', message: m.message };
     }
-  };
+  }
 
   private refresh(): void {
     postToHost({ type: 'dbMetrics.refresh' });
@@ -251,7 +243,7 @@ export class DatabaseMetricsElement extends LitElement {
     }
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const loading = this.view.kind === 'loading';
     const snap = this.view.kind === 'loaded' ? this.view.snapshot : undefined;
     const stamp = snap ? new Date(snap.computedAt).toLocaleTimeString() : null;

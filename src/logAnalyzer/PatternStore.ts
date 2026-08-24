@@ -6,7 +6,7 @@ import type { KeyedRawPattern } from './PatternEngine.js';
 interface PatternStoreOptions {
   bundledPath: string;
   resolveUserPath: () => string;
-  logger: { warn(m: string, ctx?: any): void; error(m: string, ctx?: any): void };
+  logger: { warn(m: string, ctx?: unknown): void; error(m: string, ctx?: unknown): void };
 }
 
 export class PatternStore {
@@ -60,20 +60,43 @@ export class PatternStore {
     return { dispose: () => this.emitter.off('change', listener) };
   }
 
+  /** Parse a patterns file into key→pattern pairs, validating the store
+   *  boundary: the document must be an object and each entry must be an
+   *  object — otherwise `{key, ...p}` would silently spread garbage (a
+   *  string entry, say, becomes `{key, 0: 's', 1: 't', …}`). Malformed
+   *  entries are skipped with a warn; syntactically invalid JSON still
+   *  throws, which readUser catches and readBundled propagates, exactly as
+   *  before. */
+  private parsePatternFile(raw: string, source: string): [string, KeyedRawPattern][] {
+    const obj: unknown = JSON.parse(raw);
+    if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+      this.opts.logger.warn(`PatternStore: ${source} file is not an object; ignoring`);
+      return [];
+    }
+    const out: [string, KeyedRawPattern][] = [];
+    for (const [key, p] of Object.entries(obj)) {
+      if (typeof p !== 'object' || p === null || Array.isArray(p)) {
+        this.opts.logger.warn(`PatternStore: skipping malformed entry '${key}' in ${source} file`);
+        continue;
+      }
+      out.push([key, { key, ...(p as Omit<KeyedRawPattern, 'key'>) }]);
+    }
+    return out;
+  }
+
   private async readBundled(): Promise<KeyedRawPattern[]> {
     const raw = await fs.readFile(this.opts.bundledPath, 'utf8');
-    const obj = JSON.parse(raw) as Record<string, Omit<KeyedRawPattern, 'key'>>;
-    return Object.entries(obj).map(([key, p]) => ({ key, ...p }));
+    return this.parsePatternFile(raw, 'bundled').map(([, p]) => p);
   }
 
   private async readUser(): Promise<Map<string, KeyedRawPattern>> {
     const userPath = this.opts.resolveUserPath();
     try {
       const raw = await fs.readFile(userPath, 'utf8');
-      const obj = JSON.parse(raw) as Record<string, Omit<KeyedRawPattern, 'key'>>;
-      return new Map(Object.entries(obj).map(([key, p]) => [key, { key, ...p }]));
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
+      return new Map(this.parsePatternFile(raw, 'user'));
+    } catch (err: unknown) {
+      const code = (err as { code?: unknown } | null)?.code;
+      if (code !== 'ENOENT') {
         this.opts.logger.warn('PatternStore: user file invalid; using empty', { err: String(err) });
       }
       return new Map();

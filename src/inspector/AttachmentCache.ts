@@ -27,7 +27,7 @@
 export interface CachedAttachment {
   bytes: Buffer;
   mimeType: string;
-  filename?: string;
+  filename?: string | undefined;
   /** `bytes.length` snapshotted at insert time so eviction accounting
    *  stays cheap (no `.length` calls during LRU walks). */
   sizeBytes: number;

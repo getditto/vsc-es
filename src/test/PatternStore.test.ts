@@ -11,7 +11,7 @@ function makeStore(opts: { dir: string; pathSetting?: string }) {
   return new PatternStore({
     bundledPath: path.resolve(import.meta.dirname, '../logAnalyzer/patterns/problem_patterns.json'),
     resolveUserPath: () => opts.pathSetting ?? path.join(opts.dir, 'user_patterns.json'),
-    logger: { warn: () => {}, error: () => {} } as any,
+    logger: { warn: () => {}, error: () => {} },
   });
 }
 
@@ -68,6 +68,68 @@ test('PatternStore: invalid disk JSON falls back to empty user list, bundled OK'
   await store.load();
   assert.equal(store.listAll().user.length, 0);
   assert.ok(store.listAll().bundled.length > 0);
+});
+
+test('PatternStore: non-object entries in the user file are skipped with a warn', async () => {
+  // Without validation `{key, ...p}` spreads garbage into the store: a string
+  // entry becomes `{key, 0: 's', 1: 't', …}` and a null entry throws on
+  // spread-of-null paths downstream. Valid entries must survive.
+  const dir = await tmpdir();
+  await fs.writeFile(path.join(dir, 'user_patterns.json'), JSON.stringify({
+    good: { pattern: 'boom', severity: 4, recommendation: 'r' },
+    a_string: 'not an object',
+    a_number: 42,
+    a_null: null,
+    an_array: ['x'],
+  }));
+  const warnings: string[] = [];
+  const store = new PatternStore({
+    bundledPath: path.resolve(import.meta.dirname, '../logAnalyzer/patterns/problem_patterns.json'),
+    resolveUserPath: () => path.join(dir, 'user_patterns.json'),
+    logger: { warn: (m: string) => { warnings.push(m); }, error: () => {} },
+  });
+  await store.load();
+
+  const user = store.listAll().user;
+  assert.deepEqual(user.map(p => p.key), ['good'], 'only the object-valued entry is loaded');
+  assert.equal(user[0]?.pattern, 'boom');
+  assert.equal(warnings.length, 4, 'each malformed entry warned');
+  assert.ok(warnings.every(w => w.includes('skipping malformed entry')));
+});
+
+test('PatternStore: a non-object user document is ignored with a warn, bundled OK', async () => {
+  const dir = await tmpdir();
+  await fs.writeFile(path.join(dir, 'user_patterns.json'), '["not", "an", "object"]');
+  const warnings: string[] = [];
+  const store = new PatternStore({
+    bundledPath: path.resolve(import.meta.dirname, '../logAnalyzer/patterns/problem_patterns.json'),
+    resolveUserPath: () => path.join(dir, 'user_patterns.json'),
+    logger: { warn: (m: string) => { warnings.push(m); }, error: () => {} },
+  });
+  await store.load();
+  assert.equal(store.listAll().user.length, 0);
+  assert.ok(warnings.some(w => w.includes('not an object')));
+  assert.ok(store.listAll().bundled.length > 0);
+});
+
+test('PatternStore: malformed entries in the bundled file are skipped with a warn', async () => {
+  // Same boundary validation guards the bundled file, which is read with the
+  // identical parse path.
+  const dir = await tmpdir();
+  const bundledPath = path.join(dir, 'bundled.json');
+  await fs.writeFile(bundledPath, JSON.stringify({
+    real: { pattern: 'boom', severity: 4, recommendation: 'r' },
+    bogus: 'definitely not a pattern',
+  }));
+  const warnings: string[] = [];
+  const store = new PatternStore({
+    bundledPath,
+    resolveUserPath: () => path.join(dir, 'user_patterns.json'),
+    logger: { warn: (m: string) => { warnings.push(m); }, error: () => {} },
+  });
+  await store.load();
+  assert.deepEqual(store.listAll().bundled.map(p => p.key), ['real']);
+  assert.ok(warnings.some(w => w.includes('skipping malformed entry')));
 });
 
 test('PatternStore: update replaces an existing user pattern', async () => {

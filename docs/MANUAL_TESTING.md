@@ -185,7 +185,8 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 4. Click "Start Sync". Sync resumes; cards repopulate.
 
 **Presence Graph tab:**
-5. Click `Presence Graph` segment. See the "Coming soon" placeholder.
+5. Click the `Presence Graph` segment. The graph renders (recipe 12 below
+   covers it in detail) — this step is only checking the tab switch.
 
 ### T7 · Add, edit, and delete subscriptions
 
@@ -248,6 +249,65 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 5. Restart it → card animates back in. Position is preserved across re-renders for already-known peers.
 6. Click Stop Sync → sync session status transitions through `Disconnected`. Cards stay visible (presence still observed). Click Start Sync → resumes.
 7. Double-click any peer ID → it briefly flashes green (copied to clipboard).
+8. Open the **Presence Graph** tab with at least two reachable peers:
+   - The connection legend, Direct switch, zoom controls, center button, and eye button are visible.
+   - Tab through the controls. Each interactive control has a visible focus indicator and an understandable accessible label/tooltip in both light and dark themes.
+9. Click the eye button:
+   - The legend, Direct switch, and zoom controls disappear, leaving more room for the graph.
+   - The center and eye buttons remain available.
+   - Click the eye button again → every hidden control returns.
+10. Zoom and pan the graph, then click the center button:
+    - Zoom returns to 100%.
+    - The local **Me** peer is centered, including after manually dragging it away from its original position.
+11. With **Direct** enabled, click a remote peer without dragging it:
+    - That peer, the local peer, and every connection between them stay at full opacity.
+    - Unrelated peers and connections become semi-transparent.
+    - Clicking the selected peer again or clicking open canvas space restores normal opacity everywhere.
+12. Verify interaction and live-update edge cases:
+    - Dragging a peer moves it without being mistaken for a selection click.
+    - Turning **Direct** off clears any selection and shows the full graph normally.
+    - Removing a selected peer clears focus without leaving other peers dimmed.
+    - Resize the panel narrow and wide; controls remain usable and do not obscure recovery actions.
+    - Close the panel during or after a drag and reopen it; the cursor and graph interaction are not stuck.
+    - Clicking the local **Me** peer selects nothing — no peer dims and no connection thickens.
+      With **Direct** enabled, hovering **Me** likewise dims nothing and thickens no
+      connections; only its own pill shows the hover fill. (With Direct off, hovering
+      **Me** emphasizes its connections like any other peer.)
+13. Verify state survives the tab round-trip (each of these was a real defect):
+    - Uncheck **Direct**, switch to *Connected Peers*, switch back. The box is
+      still unchecked **and** multi-hop peers are still shown — the two must agree.
+    - Hide the controls with the eye, round-trip the tabs, and confirm they are
+      still hidden.
+14. Verify the graph never gets stuck dimmed:
+    - Hover a peer (unrelated peers dim), then move the pointer onto the Direct
+      switch, the zoom controls, and off the panel entirely. Full opacity returns
+      each time; the graph never stays dimmed once the pointer is away.
+    - Start dragging a peer, release the mouse button outside the VS Code window,
+      then move back over the canvas. The peer stops following the cursor, and a
+      peer joining afterwards animates to its ring position instead of being
+      stranded on top of **Me**.
+    - Start dragging a peer, then press and release the right mouse button while
+      still holding the left. The drag continues and no peer becomes selected.
+    - After releasing outside the window, move back over the canvas: no peer
+      becomes selected, and an existing selection is not silently cleared.
+    - Drag a peer off the canvas edge and release there. Full opacity returns —
+      the peer you were dragging must not stay latched as hovered.
+
+> The following can only be checked by eye — jsdom performs no layout, cascade,
+> or hit-testing, so the automated suite cannot cover CSS behaviour at all.
+
+15. Verify cursors and pointer targets:
+    - Hovering a peer shows a pointer cursor; pressing and dragging shows
+      `grabbing` (not `pointer`) for the whole drag.
+    - Hover a peer, then move the pointer through the *gaps between* the control
+      groups in the bottom-right. The graph returns to full opacity rather than
+      staying dimmed — the overlay container must not swallow those events.
+    - Every control in that cluster is still clickable: Direct, both zoom
+      buttons, center, and eye.
+16. Switch VS Code to a **light** theme and reopen the Presence Graph:
+    - The legend, Direct/zoom groups, and the center/eye buttons are all legible
+      against their own backgrounds — check especially with the controls hidden,
+      when the two icon buttons are the only thing on screen.
 
 ### T10 · DQL Query Editor
 
@@ -428,6 +488,59 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 8. In **Help** panel: click each link, verify it opens the right URL in the system browser.
 9. Disconnect, then reconnect. Verify the SDK level reverts to the per-DB config default (not the live `verbose` we set).
 10. Lower channel level back to `info` via Logging panel; subsequent `debug`/`trace` lines stop appearing in the channel but **still appear in the file**.
+
+## What is covered automatically
+
+Before adding a recipe here, check whether it belongs in `npm test` instead —
+most things do. The suite already covers, without a human:
+
+- **Emitted DQL, against a real store.** `src/test/dql-live.test.ts` opens a
+  real Ditto in `smallPeersOnly` mode against a temp directory — no
+  credentials, no license, and `sync.start()` is never called, so nothing
+  leaves the machine. It asserts insert/select round-trips, `createIndex` /
+  `dropIndex`, nested field paths, `importDocuments`, the query-editor prefill,
+  and `COUNT(*)` hydration for collection names like `order-items`, `two
+  words`, `Ünïcödé` and `9lives`. If you are about to hand-verify a DQL change,
+  add a case there instead.
+- **Panel error surfacing.** `src/test/panel-error-surfacing.test.ts` proves a
+  rejected or throwing webview handler is both logged and shown to the user,
+  and that every panel routes through `webviewMessageHandler` — so a new panel
+  copied from an old one cannot reintroduce the silent-failure bug.
+- **Panel lifecycle.** `src/test/QueryEditorPanel.dispose.test.ts` drives the
+  webview-panel fake in `scripts/vscode-stub.mjs` (`createdWebviewPanels`,
+  `__resetStub()`), covering tracker-slot release on user close versus
+  orchestrated teardown. Any panel is testable this way.
+- **Manifest invariants.** `src/test/manifest.test.ts` asserts the
+  `engines.vscode` floor required by the `secondarySidebar` container, that
+  every menu entry names a declared command, that every `views` key resolves to
+  a real container, the machine scope on `logAnalyzer.customPatternsFile`, and
+  the workspace-trust declarations.
+- **Log Analyzer state transitions**, including that Clear empties the Sessions
+  view and does not resurrect pre-Clear history
+  (`src/test/LogAnalyzerService.test.ts`).
+
+What genuinely needs a human is below: anything requiring layout, the cascade,
+hit-testing, real peer-to-peer transports, or a judgement about how something
+looks. jsdom performs no layout, so CSS behaviour in particular cannot be
+covered by the automated suite at all.
+
+## Composite index editor (visual only)
+
+The behaviour is covered automatically — `index-builder.test.ts` for the
+statement text, `dql-live.test.ts` for the real round-trip including an EXPLAIN
+that names the composite index, and `webview/add-index-element.test.ts` for the
+editor's rows, reordering and emitted payload. What is left needs eyes, because
+jsdom performs no layout:
+
+1. Open **Add Index…** on a collection. Add three fields. The rows stay legible
+   at a narrow panel width: the name input flexes, ASC/DESC stays readable, and
+   the ↑/↓/✕ buttons stay square and reachable.
+2. The ↑ on the first row and ↓ on the last are visibly disabled, not just
+   inert.
+3. In a **light** theme, the row buttons and the ASC/DESC dropdown are legible
+   against their own backgrounds.
+4. Tab through one row: name → direction → up → down → remove, each with a
+   visible focus ring.
 
 ## Troubleshooting
 

@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 type In = { type: 'sub.init'; id?: string; name: string; query: string };
 
@@ -10,7 +10,7 @@ export class SubscriptionEditor extends LitElement {
   @state() private name = '';
   @state() private query = '';
 
-  static styles = css`
+  static override styles = css`
     :host { display: block; padding: 24px; max-width: 640px; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
     h2 { margin-top: 24px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vscode-descriptionForeground); }
     label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--vscode-descriptionForeground); }
@@ -29,18 +29,17 @@ export class SubscriptionEditor extends LitElement {
     .footer .cancel { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
   `;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    onHostMessage<In>(msg => {
-      if (msg.type === 'sub.init') { this.subId = msg.id; this.name = msg.name; this.query = msg.query; }
-    });
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, msg => {
+    if (msg.type === 'sub.init') { this.subId = msg.id; this.name = msg.name; this.query = msg.query; }
+  });
 
   private isValid() { return this.name.trim().length > 0 && this.query.trim().length > 0; }
   private save() { postToHost({ type: 'sub.save', id: this.subId, name: this.name, query: this.query }); }
   private cancel() { postToHost({ type: 'sub.cancel' }); }
 
-  render() {
+  override render() {
     return html`
       <h2>Basic Information</h2>
       <label>Name</label>

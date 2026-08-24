@@ -14,7 +14,7 @@
 
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 type InsertType = 'regular' | 'initial';
 
@@ -46,7 +46,7 @@ export class ImportDataElement extends LitElement {
   @state() private errorMessage: string | undefined;
   @state() private done: { successCount: number; failureCount: number; errors: string[]; collection: string } | undefined;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 24px;
@@ -233,10 +233,9 @@ export class ImportDataElement extends LitElement {
     }
   `;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    onHostMessage<Msg>((msg) => this.onHost(msg));
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<Msg>(this, (msg) => this.onHost(msg));
 
   private onHost(msg: Msg): void {
     switch (msg.type) {
@@ -250,13 +249,15 @@ export class ImportDataElement extends LitElement {
           this.useExistingCollection = true;
           this.selectedExistingCollection = msg.preselectedCollection;
         } else if (msg.existingCollections.length > 0 && !this.selectedExistingCollection) {
-          this.selectedExistingCollection = msg.existingCollections[0];
+          const first = msg.existingCollections[0];
+          if (first) { this.selectedExistingCollection = first; }
         }
         break;
       case 'importData.collectionsRefreshed':
         this.existingCollections = msg.existingCollections;
         if (!this.selectedExistingCollection && msg.existingCollections.length > 0) {
-          this.selectedExistingCollection = msg.existingCollections[0];
+          const first = msg.existingCollections[0];
+          if (first) { this.selectedExistingCollection = first; }
         }
         break;
       case 'importData.fileSelected':
@@ -344,7 +345,7 @@ export class ImportDataElement extends LitElement {
 
   // ─── Render ────────────────────────────────────────────────
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <h2>Import JSON Data</h2>
       <div class="subtitle">

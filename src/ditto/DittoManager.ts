@@ -9,7 +9,11 @@ import {
   Differ,
   type Diff,
   Logger as DittoLogger,
+  type LogLevel as DittoSdkLogLevel,
+  type DQLQueryArguments,
+  type TransportConfig,
   type PresenceGraph,
+  type Attachment,
   type AttachmentFetcher,
   type AttachmentFetchEvent,
 } from '@dittolive/ditto';
@@ -33,8 +37,8 @@ import {
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
-import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, parseProfileItem } from './QueryProfileParser.js';
-import type { QueryProfile } from './QueryProfile.js';
+import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect } from './QueryProfileParser.js';
+import { projectQueryRows } from './query-projection.js';
 import { startSyncWithCollectionScopes } from './sync-scopes.js';
 import { applySystemSettings, parseShowAllOptions } from './system-settings.js';
 import { withConnectionPersistenceLock } from '../storage/connection-persistence-lock.js';
@@ -53,17 +57,24 @@ export type SyncState = 'active' | 'idle';
 interface ActiveSession {
   configId: string;
   ditto: Ditto;
-  presenceObserver?: { stop?: () => void };
-  syncStatusObserver?: { cancel?: () => void };
+  presenceObserver?: { stop?: () => void } | undefined;
   subscriptionHandles: Map<string, { cancel: () => void }>;
-  presenceCoalesceTimer?: NodeJS.Timeout;
+  presenceCoalesceTimer?: NodeJS.Timeout | undefined;
 }
 
-const SYNC_STATUS_HANDLE_ID = '__sync_status';
+/** Cap on rows shipped to an observer webview per firing. The Differ still
+ *  sees the full result set (diff semantics are unchanged) — only the payload
+ *  pushed over postMessage is capped, mirroring the MAX_QUERY_ROWS /
+ *  DETAIL_ROW_CAP conventions used by the query paths. */
+const OBSERVER_ROW_CAP = 1000;
+
 
 export class DittoManager {
   private session: ActiveSession | null = null;
   private status: DatabaseStatus = 'idle';
+  /** Which config `status` describes. Needed because a failed connect leaves
+   *  no session to infer it from. */
+  private statusConfigId: string | null = null;
   private syncState: SyncState = 'idle';
   private statusListeners = new Set<StatusListener>();
   private presenceListeners = new Set<PresenceListener>();
@@ -91,8 +102,13 @@ export class DittoManager {
   }
 
   getStatus(configId: string): DatabaseStatus {
-    if (!this.session) { return 'idle'; }
-    if (this.session.configId === configId) { return this.status; }
+    if (this.session?.configId === configId) { return this.status; }
+    // A failed connect holds no session — the catch tears the partial one down
+    // — so short-circuiting on `!this.session` made 'error' unreachable. The
+    // tree derives its red icon and the `database.error` context value from
+    // this, so the row fell back to the plain idle circle and the user got no
+    // lasting sign that the last attempt failed.
+    if (this.status === 'error' && this.statusConfigId === configId) { return 'error'; }
     return 'idle';
   }
 
@@ -173,11 +189,11 @@ export class DittoManager {
       // Apply per-DB SDK log level before opening the SDK. `config.logLevel`
       // is `SdkLogLevel` (lowercase 'warning'/'verbose'); the SDK runtime
       // expects capitalized names.
-      const sdkLevelMap: Record<SdkLogLevel, string> = {
+      const sdkLevelMap: Record<SdkLogLevel, DittoSdkLogLevel> = {
         error: 'Error', warning: 'Warning',
         info: 'Info', debug: 'Debug', verbose: 'Verbose',
       };
-      (DittoLogger as any).minimumLogLevel = sdkLevelMap[config.logLevel] ?? 'Info';
+      DittoLogger.minimumLogLevel = sdkLevelMap[config.logLevel] ?? 'Info';
       this.log.info('Applied per-DB SDK log level', { configId: config.id, level: config.logLevel });
 
       let ditto: Ditto;
@@ -235,7 +251,7 @@ export class DittoManager {
           }
         });
         const result = await ditto.auth.login(secrets.token, Authenticator.DEVELOPMENT_PROVIDER);
-        if ((result as any).error) { throw new Error(`Login failed: ${(result as any).error}`); }
+        if (result.error) { throw new Error(`Login failed: ${result.error}`); }
       }
 
       // Small-peers-only mode is internally an OfflinePlayground identity and
@@ -278,7 +294,6 @@ export class DittoManager {
       openedDitto = null;
 
       this.attachPresenceObserver(ditto);
-      this.attachSyncStatusObserver(ditto);
       await this.loadLocalPeerInfo(ditto);
 
       // Re-register persisted subscriptions
@@ -295,9 +310,35 @@ export class DittoManager {
       this.dispatch({ type: 'connectOk' });
       this.setStatus('active', config.id);
       this.firePresence();
+      // Register the active connection's secrets with the logger so its
+      // redaction recognises them even where a call site logs a value
+      // verbatim. Defensive: empty/undefined entries are dropped.
+      this.log.registerKnownSecrets(
+        [secrets.token, secrets.secretKey, secrets.httpApiKey]
+          .filter((s): s is string => typeof s === 'string' && s.length > 0),
+      );
       this.log.info('Connected', { name: config.name, configId: config.id, mode: config.mode });
     } catch (err) {
       this.log.error('Connect failed', { configId: config.id, err: err instanceof Error ? err.stack : String(err) });
+      // If the failure happened AFTER the session was assigned (e.g. the
+      // presence-observer attach threw), the session is a zombie holding a
+      // live Ditto instance — tear it down so getActiveConfigId() doesn't
+      // report a config whose lifecycle is 'error'.
+      const partial = this.session;
+      if (partial) {
+        this.session = null;
+        if (partial.presenceCoalesceTimer) { clearTimeout(partial.presenceCoalesceTimer); }
+        for (const h of partial.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
+        try { partial.presenceObserver?.stop?.(); } catch { /* ignore */ }
+        try {
+          await Promise.race([
+            partial.ditto.close(),
+            new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error('Ditto.close() timed out after 10s')), 10_000),
+            ),
+          ]);
+        } catch { /* discard */ }
+      }
       // Release the working-directory file lock left by a partially-opened
       // Ditto instance. Bounded at 10s like disconnect() — the SDK can hang
       // here when network teardown blocks, and we'd rather discard than wait.
@@ -316,6 +357,9 @@ export class DittoManager {
         }
       }
       this.setStatus('error', config.id);
+      // Never keep a failed connection's secrets registered for redaction —
+      // the session they belonged to is gone.
+      this.log.clearKnownSecrets();
       this.dispatch({ type: 'connectFail', message: err instanceof Error ? err.message : String(err) });
       throw err;
     }
@@ -329,7 +373,6 @@ export class DittoManager {
     if (s.presenceCoalesceTimer) { clearTimeout(s.presenceCoalesceTimer); }
     try {
       for (const h of s.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
-      try { s.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
       try { s.presenceObserver?.stop?.(); } catch { /* ignore */ }
       try { s.ditto.sync.stop(); } catch { /* ignore */ }
       // Bound Ditto.close() at 10s; on timeout, force-discard the instance.
@@ -355,6 +398,9 @@ export class DittoManager {
       this.firePresence();
       this.setSyncState('idle', null);
       this.setStatus('idle', null);
+      // Drop the previous connection's redaction set before any new one is
+      // registered by the next connect.
+      this.log.clearKnownSecrets();
       this.dispatch({ type: 'disconnectOk' });
       this.log.info('Disconnected');
     }
@@ -362,10 +408,21 @@ export class DittoManager {
 
   async toggleSync(): Promise<SyncState> {
     if (!this.session) { return 'idle'; }
-    const ditto = this.session.ditto;
+    const session = this.session;
+    const ditto = session.ditto;
     if (this.syncState === 'active') {
-      ditto.sync.stop();
-      this.setSyncState('idle', this.session.configId);
+      // Guard like disconnect()/applyTransportConfigLocked do: sync.stop can
+      // throw (e.g. SDK teardown in flight), and flipping state anyway would
+      // lie to the UI.
+      try {
+        ditto.sync.stop();
+      } catch (err) {
+        this.log.warn('sync.stop() failed; sync state left as active', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+        return 'active';
+      }
+      this.setSyncState('idle', session.configId);
       // Force an immediate snapshot rebuild — mergePeerList's syncActive=false
       // gate will drop the cloud row this turn, instead of waiting for the
       // next presence emission (which may not arrive for a while after
@@ -374,8 +431,15 @@ export class DittoManager {
       this.firePresence();
       return 'idle';
     }
-    ditto.sync.start();
-    this.setSyncState('active', this.session.configId);
+    try {
+      ditto.sync.start();
+    } catch (err) {
+      this.log.warn('sync.start() failed; sync state left as idle', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return 'idle';
+    }
+    this.setSyncState('active', session.configId);
     this.firePresence();
     return 'active';
   }
@@ -412,6 +476,24 @@ export class DittoManager {
     return this.session.ditto.store.fetchAttachment(token, onEvent);
   }
 
+  /**
+   * Save a fetched attachment to `destPath` WITHOUT materializing its bytes
+   * in the extension-host heap: the SDK's `Attachment.copyToPath` performs a
+   * native store-to-disk copy, so the whole blob never becomes a JS
+   * `Uint8Array` (which `attachment.data()` + `fs.writeFile` would give you,
+   * doubling peak memory for the duration of the write).
+   *
+   * Used by the Inspector's uncapped Download action — the user explicitly
+   * asked for the file, so large attachments must be writable without heap
+   * pressure on the shared extension host.
+   *
+   * Throws whatever the SDK throws (e.g. permission errors surface as a
+   * `DittoError` whose message the caller reports).
+   */
+  async saveAttachmentToPath(attachment: Attachment, destPath: string): Promise<void> {
+    await attachment.copyToPath(destPath);
+  }
+
   /** Run a raw DQL query and return its rows. No EXPLAIN side-trip, no
    *  history — meant for system queries (CollectionsRepository, etc.).
    *  Optional `args` map binds `:name` placeholders for parameterised
@@ -421,8 +503,23 @@ export class DittoManager {
     if (!this.session) { throw new Error('No active database.'); }
     const result = args === undefined
       ? await this.session.ditto.store.execute(query)
-      : await this.session.ditto.store.execute(query, args as any);
-    return result.items.map(i => i.value as Record<string, unknown>);
+      // Callers build args as Record<string, unknown> (attachment tokens,
+      // arbitrary row values); the SDK's DQLQueryArguments is a recursive
+      // value union `unknown` isn't assignable to. The runtime accepts any
+      // JSON-shaped value, so a one-way narrowing cast is correct here.
+      : await this.session.ditto.store.execute(query, args as unknown as DQLQueryArguments);
+    // Dematerialize each item right after reading its value — otherwise
+    // items pin themselves in native memory for the life of the result
+    // (same discipline as registerStoreObserver).
+    const rows: Record<string, unknown>[] = [];
+    for (const item of result.items) {
+      try {
+        rows.push(item.value as Record<string, unknown>);
+      } finally {
+        try { item.dematerialize(); } catch { /* ignore */ }
+      }
+    }
+    return rows;
   }
 
   /**
@@ -462,7 +559,7 @@ export class DittoManager {
     metadata: Record<string, string>,
   ): Promise<unknown> {
     if (!this.session) { throw new Error('No active database.'); }
-    return this.session.ditto.store.newAttachment(filePath, metadata as any);
+    return this.session.ditto.store.newAttachment(filePath, metadata);
   }
 
   /**
@@ -513,11 +610,19 @@ export class DittoManager {
    *  insertion (that's the SDK's documented `Differ` contract).
    *
    *  Returns a cancel handle the caller is responsible for invoking
-   *  on teardown. Returns `null` if there is no active session. */
+   *  on teardown. Returns `null` if there is no active session.
+   *
+   *  `rows` is capped at OBSERVER_ROW_CAP per firing so a huge result set
+   *  doesn't get structured-cloned to the webview on every emission;
+   *  `totalRows` carries the uncapped count so the UI can say "first N of
+   *  M". The Differ still runs against the FULL result set (subscription
+   *  and diff semantics are unchanged) — diff indexes past the cap simply
+   *  have no corresponding row in the shipped payload. */
   registerObserver(
     query: string,
     callback: (event: {
       rows: Record<string, unknown>[];
+      totalRows: number;
       insertions: number[];
       updates: number[];
       deletions: number[];
@@ -539,17 +644,24 @@ export class DittoManager {
         this.log.warn('Differ.diff threw — resetting differ and emitting empty diff', {
           query, err: err instanceof Error ? err.message : String(err),
         });
-        diff = { insertions: [], deletions: [], updates: [], moves: [] } as Diff;
+        diff = { insertions: [], deletions: [], updates: [], moves: [] };
         differ = new Differ();
       }
       const rows: Record<string, unknown>[] = [];
+      let totalRows = 0;
       for (const item of queryResult.items) {
-        rows.push(item.value as Record<string, unknown>);
+        totalRows += 1;
+        if (rows.length < OBSERVER_ROW_CAP) {
+          rows.push(item.value as Record<string, unknown>);
+        }
+        // Dematerialize EVERY item, capped or not — otherwise items pin
+        // themselves in native memory for the life of the result.
         try { item.dematerialize(); } catch { /* ignore */ }
       }
       try {
         callback({
           rows,
+          totalRows,
           insertions: diff.insertions,
           updates: diff.updates,
           deletions: diff.deletions,
@@ -613,18 +725,10 @@ export class DittoManager {
     const result = await this.session.ditto.store.execute(effectiveQuery);
     const durationMs = Math.round(performance.now() - start);
 
-    // Pop the trailing ~request_profile item before we project the user's
-    // rows, so the result table never shows the profile envelope as a row.
-    let rows = result.items.map(i => i.value as Record<string, unknown>);
-    let profile: QueryProfile | undefined;
-    if (expectsEnvelope && rows.length > 0) {
-      const last = rows[rows.length - 1];
-      const parsed = parseProfileItem(last);
-      if (parsed) {
-        profile = parsed;
-        rows = rows.slice(0, rows.length - 1);
-      }
-    }
+    // Bounded projection + profile-envelope handling live in
+    // query-projection so the row cap is unit-testable without an SDK.
+    const { rows, profile, totalRowCount, truncated } =
+      projectQueryRows(result.items, { expectsEnvelope });
 
     // Capture the EXPLAIN plan as a non-fatal side-trip, gated on the
     // metrics setting. We pass the ORIGINAL (non-PROFILE-prefixed)
@@ -638,6 +742,7 @@ export class DittoManager {
       explain,
       timestamp: Date.now(),
       profile,
+      ...(truncated ? { truncated: true, totalResultCount: totalRowCount } : {}),
     };
     return { rows, durationMs, metadata };
   }
@@ -670,7 +775,7 @@ export class DittoManager {
    * Soft-cycle transport configuration without closing the Ditto instance.
    *
    * Mirrors the SwiftUI `applyTransportConfig` flow: stop sync → tear down
-   * presence + sync_status observers (Ditto stays open) → updateTransportConfig
+   * the presence observer (Ditto stays open) → updateTransportConfig
    * with the OS-gated user prefs → readback log → persist back to ConfigStore
    * → restart sync → re-attach observers + refresh local peer info.
    *
@@ -700,6 +805,9 @@ export class DittoManager {
 
     this.applyingTransports = true;
     let phase: 'stoppingSync' | 'tearingDownObservers' | 'applyingConfig' | 'persisting' | 'restartingSync' | 'reattachingObservers' = 'stoppingSync';
+    /** The apply failure, if any. Held rather than rethrown so recovery can
+     *  run first without a `finally` throw clobbering it. */
+    let primaryError: unknown;
     try {
       this.log.info('Transport apply: stopping sync', { configId });
       try { ditto.sync.stop(); } catch { /* ignore — best-effort */ }
@@ -708,8 +816,6 @@ export class DittoManager {
       // Tear down observers + clear derived state, but KEEP the Ditto instance.
       try { session.presenceObserver?.stop?.(); } catch { /* ignore */ }
       session.presenceObserver = undefined;
-      try { session.syncStatusObserver?.cancel?.(); } catch { /* ignore */ }
-      session.syncStatusObserver = undefined;
       if (session.presenceCoalesceTimer) {
         clearTimeout(session.presenceCoalesceTimer);
         session.presenceCoalesceTimer = undefined;
@@ -754,36 +860,54 @@ export class DittoManager {
       this.log.error('Transport apply: failed', {
         phase, configId, err: err instanceof Error ? err.stack : String(err),
       });
-      // Still attempt to restart sync + re-attach observers inside finally
-      // so the user isn't left with a stranded session.
-      throw err;
-    } finally {
-      // Restart + reattach are best-effort recovery; if they throw we log and
-      // surface the original error (or the new restart error if no original).
-      try {
-        this.log.info('Transport apply: restarting sync', { configId });
-        ditto.sync.start();
-      } catch (err) {
-        this.log.error('Transport apply: sync.start() failed', {
-          configId, err: err instanceof Error ? err.stack : String(err),
-        });
-        this.applyingTransports = false;
-        throw err;
-      }
+      // Recorded rather than rethrown here. Recovery below still has to run so
+      // the user isn't left with a stranded session, and a `throw` from a
+      // `finally` block REPLACES this error instead of deferring to it — which
+      // is precisely the bug this shape used to have: a failing sync.start()
+      // during recovery discarded the real cause and reported itself instead.
+      primaryError = err;
+    }
+
+    // ── Recovery: restart sync and re-attach observers ──────────
+    // Deliberately outside `finally` so the ordering above is explicit and
+    // the original error always wins.
+    let recoveryError: unknown;
+    try {
+      this.log.info('Transport apply: restarting sync', { configId });
+      ditto.sync.start();
+    } catch (err) {
+      this.log.error('Transport apply: sync.start() failed', {
+        configId, err: err instanceof Error ? err.stack : String(err),
+      });
+      recoveryError = err;
+    }
+
+    if (recoveryError === undefined) {
       try {
         this.attachPresenceObserver(ditto);
-        this.attachSyncStatusObserver(ditto);
         await this.loadLocalPeerInfo(ditto);
         this.setSyncState('active', configId);
         this.firePresence();
         this.log.info('Transport apply: complete', { configId });
       } catch (err) {
+        // Best-effort: observers can be re-attached on the next presence tick,
+        // so this never masks the apply result.
         this.log.error('Transport apply: re-attach observers failed', {
           configId, err: err instanceof Error ? err.stack : String(err),
         });
       }
-      this.applyingTransports = false;
     }
+
+    this.applyingTransports = false;
+    // The apply failure is the cause the user needs; a recovery failure is
+    // only interesting when the apply itself succeeded.
+    // Rethrown verbatim rather than wrapped: callers up the stack test for
+    // DittoError codes, and re-wrapping would erase both the type and the
+    // SDK's stack.
+    /* eslint-disable @typescript-eslint/only-throw-error */
+    if (primaryError !== undefined) { throw primaryError; }
+    if (recoveryError !== undefined) { throw recoveryError; }
+    /* eslint-enable @typescript-eslint/only-throw-error */
   }
 
   /** Read each transport's `isEnabled` back from `ditto.transportConfig` and
@@ -791,15 +915,15 @@ export class DittoManager {
    *  SDK no-ops where update silently drops a flag. */
   private logTransportReadback(ditto: Ditto, context: string): void {
     try {
-      const tc: any = (ditto as any).transportConfig;
-      const p2p = tc?.peerToPeer ?? {};
+      const tc: TransportConfig = ditto.transportConfig;
+      const p2p = tc.peerToPeer;
       this.log.info('Transport readback', {
         context,
-        lan: !!p2p.lan?.isEnabled,
-        lanMdns: !!p2p.lan?.isMdnsEnabled,
-        lanMulticast: !!p2p.lan?.isMulticastEnabled,
-        bluetoothLE: !!p2p.bluetoothLE?.isEnabled,
-        awdl: !!p2p.awdl?.isEnabled,
+        lan: p2p.lan.isEnabled,
+        lanMdns: p2p.lan.isMdnsEnabled,
+        lanMulticast: p2p.lan.isMulticastEnabled,
+        bluetoothLE: p2p.bluetoothLE.isEnabled,
+        awdl: p2p.awdl.isEnabled,
       });
     } catch (err) {
       this.log.warn('Transport readback failed', {
@@ -813,7 +937,11 @@ export class DittoManager {
   private attachPresenceObserver(ditto: Ditto) {
     let pending: PresenceGraph | null = null;
     const flush = async () => {
-      if (!this.session) { return; }
+      // Identity check, not mere presence: during disconnect→reconnect a
+      // flush in flight resumes with `this.session` being the NEW session,
+      // and a truthiness guard alone would write the old DB's presence graph
+      // into it.
+      if (this.session?.ditto !== ditto) { return; }
       this.session.presenceCoalesceTimer = undefined;
       if (!pending) { return; }
       const graph = pending;
@@ -823,18 +951,20 @@ export class DittoManager {
       // inside the presence callback. Cheap — the 250ms coalesce caps the
       // rate, and a failure here just degrades to presence-only data.
       await this.refreshSyncMetrics(ditto);
-      // Bail if the session was torn down during the await.
-      if (!this.session) { return; }
+      // Re-check identity after the await: a disconnect could have torn the
+      // session down (or replaced it) while refreshSyncMetrics was in flight.
+      if (this.session?.ditto !== ditto) { return; }
       this.latestPresence = graph;
       this.firePresence();
     };
     const observer = ditto.presence.observe((graph: PresenceGraph) => {
+      if (this.session?.ditto !== ditto) { return; }
       pending = graph;
-      if (this.session && !this.session.presenceCoalesceTimer) {
+      if (!this.session.presenceCoalesceTimer) {
         this.session.presenceCoalesceTimer = setTimeout(() => { void flush(); }, 250);
       }
     });
-    if (this.session) { this.session.presenceObserver = observer as any; }
+    if (this.session?.ditto === ditto) { this.session.presenceObserver = observer; }
   }
 
   /**
@@ -852,7 +982,7 @@ export class DittoManager {
     try {
       const result = await ditto.store.execute('SELECT * FROM system:data_sync_info');
       const next = new Map<string, SyncStatusRow>();
-      for (const item of (result as any).items) {
+      for (const item of result.items) {
         const row = parseSyncStatusRow(item.value);
         if (row) { next.set(row._id, row); }
       }
@@ -865,22 +995,13 @@ export class DittoManager {
     }
   }
 
-  /** Deprecated: pre-fix code attached an observer on `__sync_status`. The
-   *  metrics now refresh inside the presence-flush path via refreshSyncMetrics.
-   *  Kept as a noop placeholder for the connect() call site so the diff stays
-   *  small; can be deleted in a follow-up. */
-  private attachSyncStatusObserver(_ditto: Ditto): void {
-    // Intentionally empty — see refreshSyncMetrics().
-    void SYNC_STATUS_HANDLE_ID;   // retain export for compatibility
-  }
-
   private async loadLocalPeerInfo(ditto: Ditto) {
     try {
       const result = await ditto.store.execute(
         'SELECT ditto_sdk_language, ditto_sdk_platform, ditto_sdk_version FROM __small_peer_info'
       );
-      const items: any[] = (result as any).items ?? [];
-      const first = items[0]?.value ?? {};
+      const items = result.items ?? [];
+      const first: Record<string, unknown> = (items[0]?.value ?? {}) as Record<string, unknown>;
       this.localPeerInfo = {
         // peerKey is stamped by firePresence when the first presence
         // graph arrives — at construction time we don't have it yet.
@@ -901,14 +1022,18 @@ export class DittoManager {
     // presence graph — we don't know it at loadLocalPeerInfo time.
     // The graph webview needs this as the BFS root.
     if (this.localPeerInfo && this.latestPresence) {
-      const presenceLocalKey = (this.latestPresence as any)?.localPeer?.peerKey;
+      const presenceLocalKey = this.latestPresence.localPeer?.peerKey;
       if (typeof presenceLocalKey === 'string' && presenceLocalKey) {
         this.localPeerInfo.peerKey = presenceLocalKey;
       }
     }
     if (this.latestPresence) {
       const snap = mergePeerList(
-        this.latestPresence as any,
+        // PresenceGraphLike (peer-info.ts) keys connections on the app's
+        // models/DittoConfig ConnectionType, which lacks the SDK's newer
+        // 'Multicast' variant — a one-variant widening mismatch in the type
+        // defs, not a shape mismatch, so a narrow cast is appropriate here.
+        this.latestPresence as unknown as Parameters<typeof mergePeerList>[0],
         this.syncStatusByPeerKey,
         this.localPeerInfo,
         this.previousOrder,
@@ -919,17 +1044,38 @@ export class DittoManager {
     } else {
       this.latestSnapshot = { local: this.localPeerInfo, remote: [] };
     }
-    for (const l of this.presenceListeners) { l(this.latestSnapshot); }
+    for (const l of this.presenceListeners) { this.notify(l, this.latestSnapshot); }
+  }
+
+  /**
+   * Invoke one listener, isolating its failure.
+   *
+   * Listeners are observers — a tree provider, a panel that may be mid-
+   * disposal — and their exceptions used to propagate out of setStatus and
+   * therefore out of connect(), turning an unrelated UI bug into a connection
+   * failure. `setStatus('activating', …)` runs before connect's try block, so a
+   * throw there escaped with no teardown at all. Matches the isolation
+   * AnalyzerSink.write already applies to its own listeners.
+   */
+  private notify<A extends unknown[]>(listener: (...args: A) => void, ...args: A): void {
+    try {
+      listener(...args);
+    } catch (err) {
+      this.log.warn('Listener threw; continuing', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private setStatus(s: DatabaseStatus, configId: string | null) {
     this.status = s;
-    for (const l of this.statusListeners) { l(s, configId); }
+    this.statusConfigId = configId;
+    for (const l of this.statusListeners) { this.notify(l, s, configId); }
   }
 
   private setSyncState(s: SyncState, configId: string | null) {
     if (this.syncState === s) { return; }
     this.syncState = s;
-    for (const l of this.syncListeners) { l(s, configId); }
+    for (const l of this.syncListeners) { this.notify(l, s, configId); }
   }
 }

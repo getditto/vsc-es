@@ -2,7 +2,7 @@ import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import './components/pattern-list.js';
 import './components/pattern-form.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import type { PatternEditorIn, PatternEditorOut } from '../../src/ipc/messages.js';
 import type { KeyedRawPattern } from '../../src/logAnalyzer/PatternEngine.js';
 
@@ -19,7 +19,7 @@ import type { KeyedRawPattern } from '../../src/logAnalyzer/PatternEngine.js';
  *  the user can correct their input. */
 @customElement('ditto-pattern-editor')
 export class DittoPatternEditor extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 12px;
@@ -58,19 +58,22 @@ export class DittoPatternEditor extends LitElement {
   @state() private showForm = false;
   @state() private errMessage: string | null = null;
 
-  connectedCallback(): void {
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<PatternEditorOut>(this, msg => this.handleMessage(msg));
+
+  override connectedCallback(): void {
     super.connectedCallback();
-    onHostMessage<PatternEditorOut>(this.handleMessage);
-    this.addEventListener('edit', this.onEdit as EventListener);
-    this.addEventListener('delete', this.onDelete as EventListener);
-    this.addEventListener('save', this.onSave as EventListener);
+    this.addEventListener('edit', this.onEdit);
+    this.addEventListener('delete', this.onDelete);
+    this.addEventListener('save', this.onSave);
     this.addEventListener('cancel', this.onCancel as EventListener);
   }
 
-  disconnectedCallback(): void {
-    this.removeEventListener('edit', this.onEdit as EventListener);
-    this.removeEventListener('delete', this.onDelete as EventListener);
-    this.removeEventListener('save', this.onSave as EventListener);
+  override disconnectedCallback(): void {
+    this.removeEventListener('edit', this.onEdit);
+    this.removeEventListener('delete', this.onDelete);
+    this.removeEventListener('save', this.onSave);
     this.removeEventListener('cancel', this.onCancel as EventListener);
     super.disconnectedCallback();
   }
@@ -130,7 +133,7 @@ export class DittoPatternEditor extends LitElement {
     this.errMessage = null;
   }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <div class="toolbar">
         <button @click=${() => this.startAdd()}>+ Add Pattern</button>

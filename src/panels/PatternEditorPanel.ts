@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { PatternStore } from '../logAnalyzer/PatternStore.js';
 import type { Logger } from '../logging/types.js';
 import type { PatternEditorIn, PatternEditorOut } from '../ipc/messages.js';
@@ -67,7 +67,11 @@ export class PatternEditorPanel {
       title: 'Log Patterns', scriptUri, styleUri, cspSource: this.panel.webview.cspSource,
     });
     this.panel.webview.onDidReceiveMessage(
-      (m: PatternEditorIn) => { void this.handle(m); }, undefined, this.disposables,
+      webviewMessageHandler<PatternEditorIn>(
+        this.logger, 'ext:patternEditor', 'Log pattern action failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
     this.storeSub = this.store.onDidChange(() => this.sendSnapshot());
@@ -84,7 +88,10 @@ export class PatternEditorPanel {
     // Set immediately so the help shows on first open too.
     this.inspector.setActiveFeature({ kind: 'patternEditor' });
 
-    void this.sendSnapshot();
+    // Defensive setTimeout, same as every other panel — the webview script
+    // needs a tick to register its message listener before the first
+    // snapshot is posted.
+    setTimeout(() => { this.sendSnapshot(); }, 50);
   }
 
   private sendSnapshot(): void {

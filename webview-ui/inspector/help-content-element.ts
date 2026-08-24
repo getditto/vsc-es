@@ -15,7 +15,7 @@ export class HelpContentElement extends LitElement {
   @state() private htmlContent = '';
   @state() private failed = false;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       height: 100%;
@@ -75,7 +75,7 @@ export class HelpContentElement extends LitElement {
     }
   `;
 
-  updated(changed: Map<string, unknown>): void {
+  override updated(changed: Map<string, unknown>): void {
     if (changed.has('uri')) {
       if (this.uri) {
         void this.load();
@@ -86,21 +86,29 @@ export class HelpContentElement extends LitElement {
     }
   }
 
+  /** Monotonic load counter — a slow fetch for a superseded `uri` must not
+   *  overwrite the content of a newer one. */
+  private loadSeq = 0;
+
   private async load(): Promise<void> {
+    const seq = ++this.loadSeq;
     this.failed = false;
     try {
       const r = await fetch(this.uri);
       if (!r.ok) {
         throw new Error(`HTTP ${r.status}`);
       }
-      this.htmlContent = await r.text();
+      const text = await r.text();
+      if (seq !== this.loadSeq) { return; }
+      this.htmlContent = text;
     } catch {
+      if (seq !== this.loadSeq) { return; }
       this.failed = true;
       this.htmlContent = '';
     }
   }
 
-  render() {
+  override render() {
     if (!this.uri) {
       return html`<div class="placeholder">Loading help…</div>`;
     }

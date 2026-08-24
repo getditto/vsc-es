@@ -7,7 +7,7 @@ suite('Log Analyzer integration', function () {
   suiteSetup(async () => {
     const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
     assert.ok(ext, 'ditto.ditto-vsce extension must be installed');
-    if (!ext!.isActive) { await ext!.activate(); }
+    if (!ext.isActive) { await ext.activate(); }
   });
 
   test('analyzer + pattern editor commands are registered', async () => {
@@ -53,7 +53,7 @@ suite('Log Analyzer integration', function () {
     const views = ext!.packageJSON?.contributes?.views?.dittoVsce as { id: string }[] | undefined;
     assert.ok(Array.isArray(views), 'dittoVsce views must be an array');
     assert.ok(
-      views!.some(v => v.id === 'dittoLogging'),
+      views.some(v => v.id === 'dittoLogging'),
       'expected a view with id "dittoLogging"',
     );
   });

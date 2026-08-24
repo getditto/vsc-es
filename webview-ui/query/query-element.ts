@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 import { assertNever } from '../shared/assert-never.js';
 import '../shared/json-viewer.js';
 import '../shared/result-table-element.js';
@@ -46,6 +46,10 @@ export class QueryEditor extends LitElement {
   // Profile envelope from the last `query.result` (null when the host
   // didn't include one, e.g. non-SELECT or profiling disabled).
   @state() private profile: QueryProfile | null = null;
+  // Set when the host capped the result set (MAX_QUERY_ROWS): the query
+  // produced more rows than were shipped. Shown as a warning so the user
+  // knows to add a LIMIT rather than trusting a partial picture.
+  @state() private truncated: number | null = null;
   // Snapshot of the query text at the moment `run()` was invoked.
   // The Profile viewer's empty-state branches use this to show the
   // statement that was actually executed (which may differ from the
@@ -63,7 +67,7 @@ export class QueryEditor extends LitElement {
   // outside the popover close it (handled at document level).
   @state() private settingsMenuOpen = false;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: flex;
       flex-direction: column;
@@ -208,6 +212,10 @@ export class QueryEditor extends LitElement {
     .running-indicator {
       color: var(--vscode-charts-orange);
       font-style: italic;
+    }
+    .truncation-warning {
+      margin-left: 8px;
+      color: var(--vscode-editorWarning-foreground, #cca700);
     }
     .view-toggle {
       display: flex;
@@ -391,7 +399,81 @@ export class QueryEditor extends LitElement {
     return this.rows.slice(this.pageOffset, this.pageOffset + this.pageSize);
   }
 
-  connectedCallback(): void {
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<QueryOut>(this, msg => {
+    switch (msg.type) {
+      case 'query.result':
+        this.rows = msg.rows;
+        this.columns = msg.columns;
+        this.durationMs = msg.durationMs;
+        this.profile = msg.metadata.profile ?? null;
+        this.truncated = msg.metadata.truncated
+          ? (msg.metadata.totalResultCount ?? null)
+          : null;
+        this.errorMessage = null;
+        this.state = 'success';
+        this.selectedRowIndex = null;
+        // New result → snap pagination to page 1, and clamp pageSize
+        // to a value that's valid for this size.
+        this.currentPage = 1;
+        {
+          const sizes = this.pageSizes;
+          const first = sizes[0];
+          if (!sizes.includes(this.pageSize) && first !== undefined) { this.pageSize = first; }
+        }
+        break;
+      case 'query.error':
+        this.errorMessage = msg.message;
+        this.rows = [];
+        this.columns = [];
+        this.state = 'error';
+        this.selectedRowIndex = null;
+        break;
+      case 'query.setText':
+        this.query = msg.text;
+        // Sync the host immediately so the tab title matches the loaded query
+        // (no debounce needed — this is a deliberate user action).
+        postToHost({ type: 'query.textChanged', text: this.query });
+        break;
+      case 'query.modeInit':
+        this.availableModes = msg.availableModes.length > 0 ? msg.availableModes : ['local'];
+        // Pin the current selection to a still-valid mode (e.g. host
+        // re-pushes after a config change that removed HTTP creds).
+        if (!this.availableModes.includes(this.mode)) {
+          const fallback = this.availableModes[0];
+          if (fallback) { this.mode = fallback; }
+        }
+        break;
+      case 'query.settings':
+        this.settings = {
+          collectProfiling: !!msg.collectProfiling,
+          collectMetrics: !!msg.collectMetrics,
+        };
+        // If profiling just turned off while the user was on the
+        // Profile view, fall back to JSON so they're not stuck on a
+        // toggle button that's about to disappear.
+        if (!this.settings.collectProfiling && this.view === 'profile') {
+          this.view = 'json';
+        }
+        break;
+      case 'query.exportDone':
+      case 'query.exportCancelled':
+      case 'query.exportError':
+        // Three flavours of "export over" — clear the busy flag in all
+        // three. The success/error toasts are owned by the host so the
+        // webview doesn't render its own banner.
+        this.isExporting = false;
+        break;
+      default:
+        // Compile-time exhaustiveness check — if QueryOut grows a
+        // new variant and we forget to handle it here, the
+        // assertNever call will fail typechecking.
+        assertNever(msg);
+    }
+  });
+
+  override connectedCallback(): void {
     super.connectedCallback();
     // Click-away closes the context menu — register at the document
     // level so a click anywhere outside the menu (including outside
@@ -402,78 +484,18 @@ export class QueryEditor extends LitElement {
     document.addEventListener('contextmenu', this.closeContextMenu);
     // Same click-away pattern for the settings cog popover.
     document.addEventListener('click', this.onDocumentClick);
-    onHostMessage<QueryOut>(msg => {
-      switch (msg.type) {
-        case 'query.result':
-          this.rows = msg.rows;
-          this.columns = msg.columns;
-          this.durationMs = msg.durationMs;
-          this.profile = msg.metadata.profile ?? null;
-          this.errorMessage = null;
-          this.state = 'success';
-          this.selectedRowIndex = null;
-          // New result → snap pagination to page 1, and clamp pageSize
-          // to a value that's valid for this size.
-          this.currentPage = 1;
-          {
-            const sizes = this.pageSizes;
-            if (!sizes.includes(this.pageSize)) { this.pageSize = sizes[0]; }
-          }
-          break;
-        case 'query.error':
-          this.errorMessage = msg.message;
-          this.rows = [];
-          this.columns = [];
-          this.state = 'error';
-          this.selectedRowIndex = null;
-          break;
-        case 'query.setText':
-          this.query = msg.text;
-          // Sync the host immediately so the tab title matches the loaded query
-          // (no debounce needed — this is a deliberate user action).
-          postToHost({ type: 'query.textChanged', text: this.query });
-          break;
-        case 'query.modeInit':
-          this.availableModes = msg.availableModes.length > 0 ? msg.availableModes : ['local'];
-          // Pin the current selection to a still-valid mode (e.g. host
-          // re-pushes after a config change that removed HTTP creds).
-          if (!this.availableModes.includes(this.mode)) {
-            this.mode = this.availableModes[0];
-          }
-          break;
-        case 'query.settings':
-          this.settings = {
-            collectProfiling: !!msg.collectProfiling,
-            collectMetrics: !!msg.collectMetrics,
-          };
-          // If profiling just turned off while the user was on the
-          // Profile view, fall back to JSON so they're not stuck on a
-          // toggle button that's about to disappear.
-          if (!this.settings.collectProfiling && this.view === 'profile') {
-            this.view = 'json';
-          }
-          break;
-        case 'query.exportDone':
-        case 'query.exportCancelled':
-        case 'query.exportError':
-          // Three flavours of "export over" — clear the busy flag in all
-          // three. The success/error toasts are owned by the host so the
-          // webview doesn't render its own banner.
-          this.isExporting = false;
-          break;
-        default:
-          // Compile-time exhaustiveness check — if QueryOut grows a
-          // new variant and we forget to handle it here, the
-          // assertNever call will fail typechecking.
-          assertNever(msg);
-      }
-    });
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     document.removeEventListener('click', this.closeContextMenu);
     document.removeEventListener('contextmenu', this.closeContextMenu);
     document.removeEventListener('click', this.onDocumentClick);
+    // Clear the pending title-debounce so a detached element can't fire a
+    // stale query.textChanged after the panel moves or closes.
+    if (this.titleDebounceHandle !== undefined) {
+      window.clearTimeout(this.titleDebounceHandle);
+      this.titleDebounceHandle = undefined;
+    }
     super.disconnectedCallback();
   }
 
@@ -721,7 +743,7 @@ export class QueryEditor extends LitElement {
     }
   }
 
-  render() {
+  override render() {
     const showModePicker = this.availableModes.length > 1;
     return html`
       <div class="editor-pane">
@@ -768,6 +790,11 @@ export class QueryEditor extends LitElement {
             ${this.state === 'running'
               ? html`<span class="running-indicator">Running…</span>`
               : html`${this.rows.length} ${this.rows.length === 1 ? 'row' : 'rows'} · ${this.durationMs} ms`}
+            ${this.state === 'success' && this.truncated !== null ? html`
+              <span class="truncation-warning" title="The host caps results to keep the extension responsive">
+                ⚠ showing first ${this.rows.length.toLocaleString()} of ${this.truncated.toLocaleString()} rows — add a LIMIT clause
+              </span>
+            ` : nothing}
           </div>
           <div class="view-toggle">
             <button class=${this.view === 'json' ? 'active' : ''} @click=${() => this.view = 'json'}>JSON</button>
@@ -818,8 +845,24 @@ export class QueryEditor extends LitElement {
 
   /** Stringifies the CURRENT PAGE's rows (not the full result set) so
    *  CodeMirror only tokenizes pageSize rows of JSON. The `ranges` are
-   *  page-local — `setSelected` translates to absolute on click. */
+   *  page-local — `setSelected` translates to absolute on click.
+   *
+   *  Memoized on the exact dependency set (rows identity, page, pageSize):
+   *  this runs on EVERY render, and renders happen per keystroke while the
+   *  user edits the query text — re-stringifying a 1000-row page per
+   *  keystroke is visible typing jank. */
+  private jsonDocCache: {
+    rows: Record<string, unknown>[];
+    page: number;
+    size: number;
+    result: { doc: string; ranges: { from: number; to: number }[] };
+  } | null = null;
+
   private buildJsonDoc(): { doc: string; ranges: { from: number; to: number }[] } {
+    const cache = this.jsonDocCache;
+    if (cache && cache.rows === this.rows && cache.page === this.currentPage && cache.size === this.pageSize) {
+      return cache.result;
+    }
     const paged = this.pagedRows;
     if (paged.length === 0) { return { doc: '[]', ranges: [] }; }
     const ranges: { from: number; to: number }[] = [];
@@ -834,7 +877,9 @@ export class QueryEditor extends LitElement {
       doc += i < paged.length - 1 ? ',\n' : '\n';
     }
     doc += ']';
-    return { doc, ranges };
+    const result = { doc, ranges };
+    this.jsonDocCache = { rows: this.rows, page: this.currentPage, size: this.pageSize, result };
+    return result;
   }
 
   private renderJson() {

@@ -1,6 +1,6 @@
 // src/inspector/InspectorViewProvider.ts
 import * as vscode from 'vscode';
-import * as fs from 'node:fs/promises';
+import type { Attachment } from '@dittolive/ditto';
 import type { Logger } from '../logging/types.js';
 import type { InspectorController } from './InspectorController.js';
 import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
@@ -8,8 +8,22 @@ import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { InspectorIn, InspectorOut } from '../ipc/messages.js';
 import { attachmentContentType, attachmentFilename } from './inspector-state.js';
+import { webviewMessageHandler } from '../panels/webview-utils.js';
 import type { MetricsPreferencesStore } from '../storage/MetricsPreferencesStore.js';
 import type { AttachmentCache } from './AttachmentCache.js';
+
+/** Inline previews base64 the whole attachment into a `data:` URI (~1.33×
+ *  the bytes on top of the fetched buffer), so they get a hard cap at the
+ *  same 20 MB the Query Editor hard-refuses on upload. Anything bigger
+ *  still works via the Download/save-to-disk action — it writes straight
+ *  to a file the user picked and never round-trips through the webview. */
+export const ATTACHMENT_PREVIEW_LIMIT = 20 * 1024 * 1024;
+
+function previewTooLargeMessage(sizeBytes: number): string {
+  const mib = sizeBytes / (1024 * 1024);
+  return `Attachment is ${mib.toFixed(1)} MB — too large to preview inline `
+    + `(limit ${ATTACHMENT_PREVIEW_LIMIT / (1024 * 1024)} MB). Use the Download action to save it to disk.`;
+}
 
 /**
  * `WebviewViewProvider` for the auxiliary-bar Ditto Inspector.
@@ -59,7 +73,6 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [
         vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview-ui'),
-        vscode.Uri.joinPath(this.context.globalStorageUri, 'inspector-attachments'),
       ],
     };
     view.webview.html = this.html(view.webview);
@@ -90,7 +103,9 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     };
 
     this.disposables.push(
-      view.webview.onDidReceiveMessage((m: InspectorIn) => { void this.handle(m); }),
+      view.webview.onDidReceiveMessage(webviewMessageHandler<InspectorIn>(
+        this.logger, 'ext:inspector', 'Inspector action failed', (m) => this.handle(m),
+      )),
     );
     this.disposables.push(
       this.controller.onContentChange((c) => {
@@ -204,18 +219,34 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     // The webview sends the raw `_meta`-shaped object. Cast to the SDK's expected shape.
     const tokenAny = token as { id: string; len: number | bigint; metadata: { [k: string]: string } };
 
-    // Cache lookup. Key is (activeDatabaseId, attachmentId) — the same
-    // attachment referenced from two different query rows shares an
-    // entry. On hit we skip the SDK round-trip entirely; the user gets
-    // the preview/save back immediately instead of waiting for another
-    // download when they switch tabs and come back. Cache is cleared on
-    // disconnect (see extension.ts), so a stale entry can't outlive
-    // its database.
+    // Pre-fetch cap on the DECLARED size: a token that claims > 20 MB is
+    // never going to yield an inline preview, so refuse before spending a
+    // byte on the SDK fetch. The download/save path is unaffected — it
+    // writes to disk, not into the webview.
+    const declared = Number(tokenAny.len);
+    if (!save && Number.isFinite(declared) && declared > ATTACHMENT_PREVIEW_LIMIT) {
+      log.info('Refusing inline preview of oversized attachment', {
+        id: tokenAny.id, declaredBytes: declared,
+      });
+      this.post({ type: 'inspector.attachmentError', tokenId, message: previewTooLargeMessage(declared) });
+      return;
+    }
+
+    // Cache lookup (preview only). Key is (activeDatabaseId, attachmentId)
+    // — the same attachment referenced from two different query rows shares
+    // an entry. On hit we skip the SDK round-trip entirely; the user gets
+    // the preview back immediately instead of waiting for another download
+    // when they switch tabs and come back. Cache is cleared on disconnect
+    // (see extension.ts), so a stale entry can't outlive its database.
+    //
+    // The save path deliberately skips the byte cache: saving streams
+    // natively via `Attachment.copyToPath` (see saveAttachment below) and
+    // never touches a JS-side buffer, so cached bytes are irrelevant to it.
     const activeDbId = this.manager.getActiveConfigId();
-    if (activeDbId) {
+    if (!save && activeDbId) {
       const cached = this.attachmentCache.get(activeDbId, tokenAny.id);
       if (cached) {
-        await this.deliverAttachment(tokenId, save, cached.bytes, cached.mimeType, cached.filename);
+        await this.deliverAttachment(tokenId, cached.bytes, cached.mimeType);
         return;
       }
     }
@@ -240,7 +271,6 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'inspector.attachmentError', tokenId, message: 'Fetch returned null' });
         return;
       }
-      const buf = await att.data();
       const meta = (att.metadata ?? {}) as Record<string, unknown>;
       // Real-world tokens come from a few different writers — SwiftUI
       // uses `mimeType`/`name`, the Node SDK examples use `contentType`/
@@ -248,6 +278,13 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       // viewer doesn't fall back to "application/octet-stream" for a
       // perfectly-valid image.
       const filename = attachmentFilename(meta);
+
+      if (save) {
+        await this.saveAttachment(tokenId, att, filename);
+        return;
+      }
+
+      const buf = await att.data();
       const contentType = attachmentContentType(meta) ?? 'application/octet-stream';
 
       // Populate cache before delivery — a later switch-back will hit.
@@ -263,7 +300,7 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         });
       }
 
-      await this.deliverAttachment(tokenId, save, buf, contentType, filename);
+      await this.deliverAttachment(tokenId, buf, contentType);
     } catch (err) {
       log.error('Attachment fetch failed', {
         tokenId,
@@ -278,30 +315,55 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Shared "we have the bytes, now hand them to the user" path. Split
-   * out so cache hits and fresh fetches converge on identical delivery
-   * semantics — the webview can't tell which one happened.
+   * The Download path. Opens the OS save dialog (cancelling is a silent
+   * no-op, unchanged from the literal-write behaviour) and copies the
+   * attachment STRAIGHT to the picked file via `Attachment.copyToPath`
+   * through the manager — the blob never becomes a JS `Uint8Array` here.
    *
-   * `save = true` opens the OS save dialog; cancelling is a silent
-   * no-op (matches the prior behaviour). `save = false` posts a
-   * `data:` URI to the inline viewer; see the comment block below for
-   * why we use data URIs instead of webview resource URIs.
+   * Download is intentionally uncapped (the user explicitly asked for the
+   * file), so the old `att.data()` + `fs.writeFile` route transiently held
+   * the full attachment in the shared extension host's heap; for a big
+   * blob that is a real heap spike. The SDK's native copy avoids it
+   * entirely. Errors surface through fetchAttachment's single catch, which
+   * posts `inspector.attachmentError`.
+   */
+  private async saveAttachment(
+    tokenId: string,
+    att: Attachment,
+    filename: string | undefined,
+  ): Promise<void> {
+    const ext = filename?.split('.').pop() ?? 'bin';
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(filename ?? `attachment.${ext}`),
+    });
+    if (!uri) { return; }
+    await this.manager.saveAttachmentToPath(att, uri.fsPath);
+    this.post({ type: 'inspector.attachmentSaved', tokenId, path: uri.fsPath });
+  }
+
+  /**
+   * Shared "we have the bytes, now hand them to the inline viewer" path.
+   * Split out so cache hits and fresh preview fetches converge on
+   * identical delivery semantics — the webview can't tell which one
+   * happened. Posts a `data:` URI to the inline viewer; see the comment
+   * block below for why we use data URIs instead of webview resource
+   * URIs. The save path never reaches here — see saveAttachment.
    */
   private async deliverAttachment(
     tokenId: string,
-    save: boolean,
     buf: Buffer,
     contentType: string,
-    filename: string | undefined,
   ): Promise<void> {
-    if (save) {
-      const ext = filename?.split('.').pop() ?? 'bin';
-      const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(filename ?? `attachment.${ext}`),
+    // Defense in depth by ACTUAL byte count: the fetch path already
+    // refused over-cap tokens by their declared `len`, but a token can
+    // lie, and the cache-hit path re-enters here without re-checking the
+    // token.
+    if (buf.length > ATTACHMENT_PREVIEW_LIMIT) {
+      this.post({
+        type: 'inspector.attachmentError',
+        tokenId,
+        message: previewTooLargeMessage(buf.length),
       });
-      if (!uri) { return; }
-      await fs.writeFile(uri.fsPath, buf);
-      this.post({ type: 'inspector.attachmentSaved', tokenId, path: uri.fsPath });
       return;
     }
 
@@ -320,9 +382,8 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     //      between fs.writeFile and asWebviewUri.
     // Trade-off: a 1.6 MB image becomes a ~2.2 MB string sent
     // through postMessage. That's still well within
-    // structured-clone's budget; if we ever care about >10 MB
-    // image previews we can add a cap and fall back to the
-    // file-based path for those.
+    // structured-clone's budget; the ATTACHMENT_PREVIEW_LIMIT gate
+    // above keeps anything genuinely large off this path entirely.
     const dataUri = `data:${contentType};base64,${buf.toString('base64')}`;
     this.post({
       type: 'inspector.attachmentLoaded',
@@ -346,15 +407,17 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       `script-src ${webview.cspSource}`,
       `font-src ${webview.cspSource}`,
       `connect-src ${webview.cspSource}`,
+      "base-uri 'none'",
+      "form-action 'none'",
     ].join('; ');
     return `<!doctype html>
 <html><head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp};">
-<link rel="stylesheet" href="${codiconUri}">
+<link rel="stylesheet" href="${codiconUri.toString()}">
 </head><body>
 <ditto-inspector></ditto-inspector>
-<script src="${scriptUri}"></script>
+<script src="${scriptUri.toString()}"></script>
 </body></html>`;
   }
 }

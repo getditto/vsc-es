@@ -49,6 +49,10 @@ export const Uri = {
     return { scheme: m[1], path: m[2] ?? '', query: m[3] ?? '', fsPath: m[2] ?? '' };
   },
   file(p) { return { scheme: 'file', path: p, query: '', fsPath: p }; },
+  joinPath(base, ...segments) {
+    const path = [base?.path ?? '', ...segments].filter(Boolean).join('/').replace(/\/+/g, '/');
+    return { scheme: base?.scheme ?? 'file', path, query: '', fsPath: path };
+  },
 };
 
 // Default-only configuration surface used by tree/provider unit tests. Tests
@@ -60,4 +64,188 @@ export const workspace = {
       get(_key, defaultValue) { return defaultValue; },
     };
   },
+  onDidChangeConfiguration() { return { dispose() {} }; },
+  // Tests that drive a file-size gate set workspace.fsStatSize before the
+  // action (default 0 = an empty file). The map isn't needed — one size per
+  // test is enough because dialogs return one file at a time.
+  fsStatSize: 0,
+  fs: {
+    async stat() { return { size: workspace.fsStatSize }; },
+  },
 };
+
+export const ViewColumn = { Active: -1, Beside: -2, One: 1, Two: 2, Three: 3 };
+
+/**
+ * Webview panel fake.
+ *
+ * Panels are where the extension's lifecycle bugs live — undisposed
+ * subscriptions, tracker slots that outlive their panel — so they need to be
+ * testable without an Extension Development Host. This models only what a
+ * panel constructor and dispose path actually touch, and records enough
+ * (`posted`, `disposed`, the message/dispose listeners) for a test to drive
+ * the panel and assert on what it did.
+ *
+ * `createdWebviewPanels` is the seam: a test reads the panel its subject
+ * created, calls `fireMessage`/`fireDispose`, and inspects the result. Reset
+ * it in the test's setup — it is module-global, like the real editor's panel
+ * registry.
+ */
+export const createdWebviewPanels = [];
+
+class FakeWebview {
+  constructor() {
+    this.html = '';
+    this.cspSource = 'vscode-webview://stub';
+    this.posted = [];
+    this._messageListeners = [];
+  }
+
+  asWebviewUri(uri) { return { ...uri, scheme: 'https', toString: () => `https://stub${uri?.path ?? ''}` }; }
+
+  postMessage(msg) { this.posted.push(msg); return Promise.resolve(true); }
+
+  onDidReceiveMessage(listener, _thisArg, disposables) {
+    this._messageListeners.push(listener);
+    const sub = { dispose: () => {
+      this._messageListeners = this._messageListeners.filter(l => l !== listener);
+    } };
+    disposables?.push(sub);
+    return sub;
+  }
+}
+
+class FakeWebviewPanel {
+  constructor(viewType, title, viewColumn, options) {
+    this.viewType = viewType;
+    this.title = title;
+    this.viewColumn = viewColumn;
+    this.options = options ?? {};
+    this.webview = new FakeWebview();
+    this.active = true;
+    this.visible = true;
+    this.disposed = false;
+    this.revealCount = 0;
+    this._disposeListeners = [];
+    this._viewStateListeners = [];
+  }
+
+  onDidDispose(listener, _thisArg, disposables) {
+    this._disposeListeners.push(listener);
+    const sub = { dispose: () => {
+      this._disposeListeners = this._disposeListeners.filter(l => l !== listener);
+    } };
+    disposables?.push(sub);
+    return sub;
+  }
+
+  onDidChangeViewState(listener, _thisArg, disposables) {
+    this._viewStateListeners.push(listener);
+    const sub = { dispose: () => {
+      this._viewStateListeners = this._viewStateListeners.filter(l => l !== listener);
+    } };
+    disposables?.push(sub);
+    return sub;
+  }
+
+  reveal() { this.revealCount += 1; }
+
+  /** Close the panel the way the user's X button does: VS Code fires
+   *  onDidDispose, and the panel's own handler runs from there. */
+  dispose() {
+    if (this.disposed) { return; }
+    this.disposed = true;
+    for (const l of [...this._disposeListeners]) { l(); }
+  }
+
+  /** Deliver a message from the webview to the host.
+   *
+   *  The listeners live on the webview, not the panel — reading them from
+   *  `this` here silently delivered nothing, which made every message-handling
+   *  assertion fail with "not iterable" rather than with a useful diff. */
+  fireMessage(msg) { for (const l of [...this.webview._messageListeners]) { l(msg); } }
+
+  /** Drive a focus change. */
+  fireViewState(active) {
+    this.active = active;
+    for (const l of [...this._viewStateListeners]) { l({ webviewPanel: this }); }
+  }
+}
+
+/** No real progress UI in tests — run the task inline and resolve. */
+export const ProgressLocation = { Notification: 15 };
+
+export const window = {
+  createWebviewPanel(viewType, title, viewColumn, options) {
+    const panel = new FakeWebviewPanel(viewType, title, viewColumn, options);
+    createdWebviewPanels.push(panel);
+    return panel;
+  },
+  showErrorMessage(message) { window.shownErrors.push(message); return Promise.resolve(undefined); },
+  showWarningMessage(message) {
+    window.shownWarnings.push(message);
+    // Modal confirmations (e.g. Delete) await the user's choice; tests
+    // set window.warningResponse to the button label they want pressed.
+    const response = window.warningResponse;
+    window.warningResponse = undefined;
+    return Promise.resolve(response);
+  },
+  showInformationMessage(message) { window.shownInfos.push(message); return Promise.resolve(undefined); },
+  /** Tests set window.openDialogResult to an array of Uri-like values
+   *  to simulate picking files; undefined/null = user cancelled. */
+  showOpenDialog() { return Promise.resolve(window.openDialogResult); },
+  /** Tests set window.saveDialogResult to a Uri to simulate the user
+   *  picking a save destination; undefined = user cancelled. */
+  showSaveDialog(options) {
+    window.lastSaveDialogOptions = options;
+    return Promise.resolve(window.saveDialogResult);
+  },
+  /** Tests set window.quickPickResult to the item array the user "picked". */
+  showQuickPick() { return Promise.resolve(window.quickPickResult); },
+  /** Records the last validateInput callback so a test can exercise it, and
+   *  resolves to window.inputBoxResult (undefined = dismissed). */
+  showInputBox(options) {
+    window.lastInputBoxValidate = options?.validateInput;
+    return Promise.resolve(window.inputBoxResult);
+  },
+  withProgress(_options, task) {
+    return task({ report() {} }, { isCancellationRequested: false, onCancellationRequested() { return { dispose() {} }; } });
+  },
+  shownErrors: [],
+  shownWarnings: [],
+  shownInfos: [],
+  openDialogResult: undefined,
+  saveDialogResult: undefined,
+  lastSaveDialogOptions: undefined,
+  quickPickResult: undefined,
+  inputBoxResult: undefined,
+  warningResponse: undefined,
+  lastInputBoxValidate: undefined,
+};
+
+export const commands = {
+  executed: [],
+  executeCommand(command, ...args) {
+    commands.executed.push({ command, args });
+    return Promise.resolve(undefined);
+  },
+  registerCommand() { return { dispose() {} }; },
+};
+
+/** Clear every module-global recorder. Call from a test's setup so panels
+ *  created by an earlier test don't leak into this one's assertions. */
+export function __resetStub() {
+  createdWebviewPanels.length = 0;
+  window.shownErrors.length = 0;
+  window.shownWarnings.length = 0;
+  window.shownInfos.length = 0;
+  window.openDialogResult = undefined;
+  window.saveDialogResult = undefined;
+  window.lastSaveDialogOptions = undefined;
+  window.quickPickResult = undefined;
+  window.inputBoxResult = undefined;
+  window.warningResponse = undefined;
+  window.lastInputBoxValidate = undefined;
+  workspace.fsStatSize = 0;
+  commands.executed.length = 0;
+}

@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
-import { panelHtml } from './webview-utils.js';
+import { panelHtml, webviewMessageHandler } from './webview-utils.js';
+import { validateHttpApiUrl } from '../ditto/HttpQueryService.js';
+import { randomId } from '../util/id.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
 import { newConfig, type StoredDittoConfig, type SecretSet } from '../models/DittoConfig.js';
-import type { EditorIn, EditorOut, LogIn, LogOut } from '../ipc/messages.js';
+import type { EditorIn, EditorOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import {
@@ -38,7 +40,14 @@ export class DatabaseEditorPanel {
     }
     if (DatabaseEditorPanel.current) {
       DatabaseEditorPanel.current.panel.reveal();
-      DatabaseEditorPanel.current.init(existing);
+      // init() is async — a bare call drops the rejection, so a failed
+      // re-init would leave the reopened editor showing the previous
+      // connection's values with nothing logged.
+      void DatabaseEditorPanel.current.init(existing).catch((err: unknown) => {
+        logger.warn('Database editor re-init failed', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
       return;
     }
     DatabaseEditorPanel.current = new DatabaseEditorPanel(context, configs, secrets, logger, manager, existing);
@@ -82,21 +91,20 @@ export class DatabaseEditorPanel {
       cspSource: this.panel.webview.cspSource
     });
 
-    this.panel.webview.onDidReceiveMessage((msg: unknown) => {
-      void this.handle(msg).catch(() => {
-        if (!this.disposed) { this.logger.warn('Database editor message handling failed'); }
-      });
-    }, undefined, this.disposables);
+    // Route through the shared error-surfacing wrapper like every other
+    // panel — this is the credentials editor, the worst place for a
+    // rejection to be swallowed with nothing logged and nothing shown.
+    // `handle` keeps its own malformed-message validation (it consumes
+    // `unknown` deliberately).
+    this.panel.webview.onDidReceiveMessage(
+      webviewMessageHandler<EditorIn>(
+        this.logger, 'ext:dbEditor', 'Database editor action failed', (msg) => this.handle(msg),
+      ),
+      undefined,
+      this.disposables,
+    );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 
-    // Push initial channel level to webview.
-    this.post({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
-
-    // Subscribe to level changes; track disposable so we can clean up.
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.post({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
     this.disposables.push(this.manager.onLifecycleStateChange(() => {
       if (this.expectedConfigId) {
         this.post({
@@ -117,7 +125,7 @@ export class DatabaseEditorPanel {
     const generation = ++this.initGeneration;
     const config = existing
       ? this.configs.get(existing.id) ?? existing
-      : { ...newConfig(), id: cryptoRandomId() };
+      : { ...newConfig(), id: randomId(16) };
     let secrets: SecretSet;
     try {
       secrets = existing ? await this.secrets.read(existing.id) : { token: '' };
@@ -152,7 +160,7 @@ export class DatabaseEditorPanel {
     }
   }
 
-  private post(msg: EditorOut | LogOut) {
+  private post(msg: EditorOut) {
     if (this.disposed) { return; }
     void this.panel.webview.postMessage(msg).then(
       delivered => {
@@ -175,17 +183,7 @@ export class DatabaseEditorPanel {
       return;
     }
     const messageType = (raw as { type: string }).type;
-    const msg = raw as EditorIn | LogIn;
-    if (msg.type === 'log') {
-      if (!['error', 'warn', 'info', 'debug', 'trace'].includes(msg.level)
-        || typeof msg.message !== 'string') {
-        this.logger.warn('Ignored malformed database editor log message');
-        return;
-      }
-      const wlog = this.logger.withTag('webview:dittoDatabaseEditor');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+    const msg = raw as EditorIn;
     if (msg.type === 'editor.cancel') {
       this.panel.dispose();
       return;
@@ -315,6 +313,14 @@ function validate(
   }
   if (!secrets.token.trim()) { return { message: 'Token is required.' }; }
   if (config.mode === 'server' && !config.authUrl.trim()) { return { message: 'URL is required for Server mode.' }; }
+  // Both URLs are glued into `https://${value}` later with the bearer key
+  // attached — a `good.com@evil.com`-style value would send the credential
+  // to the wrong host. The validator refuses `@`, credentials-in-URL user
+  // info, and anything that doesn't parse as scheme-less host[:port][/path].
+  const authUrlError = validateHttpApiUrl(config.authUrl);
+  if (authUrlError) { return { message: `Auth URL: ${authUrlError}` }; }
+  const httpApiUrlError = validateHttpApiUrl(config.httpApiUrl);
+  if (httpApiUrlError) { return { message: `HTTP API URL: ${httpApiUrlError}` }; }
   const advanced = config.advancedConfig as unknown;
   if (advanced !== undefined && (
     !advanced || typeof advanced !== 'object' || Array.isArray(advanced)
@@ -332,10 +338,4 @@ function validate(
     return { message: systemSettingsError, field: 'advancedConfig' };
   }
   return null;
-}
-
-function cryptoRandomId(): string {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }

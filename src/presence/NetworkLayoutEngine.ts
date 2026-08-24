@@ -212,9 +212,10 @@ function calculatePositions(
       // the circle so chord lines stay short.
       const ordered = sortRing1Peers(peers, adjacency);
       const angles = calculateOptimalAngles(ordered.length);
-      for (let i = 0; i < ordered.length; i += 1) {
+      for (const [i, peerKey] of ordered.entries()) {
         const a = angles[i];
-        positions.set(ordered[i], { x: radius * Math.cos(a), y: radius * Math.sin(a) });
+        if (a === undefined) { continue; }
+        positions.set(peerKey, { x: radius * Math.cos(a), y: radius * Math.sin(a) });
       }
     } else {
       placeRingByParent(ring, peers, radius, parentMap, positions, localPeer);
@@ -268,8 +269,8 @@ function placeRingByParent(
       const sortedAngles = parentAngles.map(p => p.angle);
       const idx = sortedAngles.indexOf(parentAngle);
       const safeIdx = idx < 0 ? 0 : idx;
-      const prev = sortedAngles[(safeIdx + sortedAngles.length - 1) % sortedAngles.length];
-      const next = sortedAngles[(safeIdx + 1) % sortedAngles.length];
+      const prev = sortedAngles[(safeIdx + sortedAngles.length - 1) % sortedAngles.length] ?? parentAngle;
+      const next = sortedAngles[(safeIdx + 1) % sortedAngles.length] ?? parentAngle;
       let gapLeft = parentAngle - prev;
       let gapRight = next - parentAngle;
       if (gapLeft < 0) { gapLeft += 2 * Math.PI; }
@@ -291,9 +292,9 @@ function placeRingByParent(
     const totalSpan = siblingSpread * (childCount - 1);
     const startAngle = parentAngle - totalSpan / 2;
 
-    for (let i = 0; i < children.length; i += 1) {
+    for (const [i, childKey] of children.entries()) {
       const angle = startAngle + siblingSpread * i;
-      positions.set(children[i], { x: radius * Math.cos(angle), y: radius * Math.sin(angle) });
+      positions.set(childKey, { x: radius * Math.cos(angle), y: radius * Math.sin(angle) });
     }
   }
 }
@@ -339,6 +340,8 @@ export function sortRing1Peers(
 
   while (remaining.size > 0) {
     const tail = path[path.length - 1];
+    const head = path[0];
+    if (tail === undefined || head === undefined) { break; }
     const tailNeighbour = pickBestNeighbour(tail, adjacency, remaining, ring1Degree);
     if (tailNeighbour) {
       path.push(tailNeighbour);
@@ -346,7 +349,6 @@ export function sortRing1Peers(
       continue;
     }
     // Tail is stuck — try the head end.
-    const head = path[0];
     const headNeighbour = pickBestNeighbour(head, adjacency, remaining, ring1Degree);
     if (headNeighbour) {
       path.unshift(headNeighbour);
@@ -369,7 +371,7 @@ function pickHighestDegree(candidates: readonly string[], degree: Map<string, nu
   // Sort ascending by key first so the subsequent max() is deterministic
   // when degrees tie.
   const sorted = [...candidates].sort();
-  let best = sorted[0];
+  let best = sorted[0] ?? '';
   for (const c of sorted) {
     if ((degree.get(c) ?? 0) > (degree.get(best) ?? 0)) { best = c; }
   }

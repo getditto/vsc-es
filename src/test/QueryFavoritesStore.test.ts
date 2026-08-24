@@ -12,8 +12,8 @@ test('add/list: newest first', async () => {
   await s.add('A', 'q1');
   await s.add('A', 'q2');
   const list = s.list('A');
-  assert.equal(list[0].query, 'q2');
-  assert.equal(list[1].query, 'q1');
+  assert.equal(list[0]?.query, 'q2');
+  assert.equal(list[1]?.query, 'q1');
 });
 
 test('add dedups by query: returns existing entry, list does not grow', async () => {

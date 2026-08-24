@@ -18,8 +18,8 @@ test('validateJsonDocuments: parses array of objects with _id', () => {
   const raw = JSON.stringify([{ _id: 'a', name: 'Alice' }, { _id: 'b', name: 'Bob' }]);
   const docs = validateJsonDocuments(raw);
   assert.equal(docs.length, 2);
-  assert.equal(docs[0]._id, 'a');
-  assert.equal(docs[1]._id, 'b');
+  assert.equal(docs[0]?._id, 'a');
+  assert.equal(docs[1]?._id, 'b');
 });
 
 test('validateJsonDocuments: rejects non-array top level', () => {
@@ -70,21 +70,50 @@ test('validateCollectionName: accepts letters, numbers, underscores', () => {
   validateCollectionName('a1b2c3');
 });
 
-test('validateCollectionName: rejects SQL-injection attempts', () => {
-  for (const bad of ['users; DROP TABLE', 'users--comment', "x'", 'a b', 'has-dash', '$weird']) {
-    assert.throws(() => validateCollectionName(bad), ImportValidationError);
+test('validateCollectionName: accepts names that need backtick quoting', () => {
+  // Ditto allows these; the query builders backtick-quote the target, so
+  // rejecting them only locked the user out of collections they already had.
+  for (const ok of ['has-dash', 'a b', 'Bestellungen', 'order.items', '9starts_with_digit']) {
+    validateCollectionName(ok);
   }
+});
+
+test('validateCollectionName: injection attempts are neutralised by quoting, not rejection', () => {
+  // The defence is the backtick quoting in the builder, so assert on the
+  // statement rather than on a thrown error: a `;` or a `--` inside a quoted
+  // identifier is just part of the name.
+  for (const bad of ['users; DROP TABLE', 'users--comment', "x'", '$weird']) {
+    validateCollectionName(bad);
+    const q = buildSingleInsertQuery(bad, 'regular');
+    assert.match(q, /^INSERT INTO `/, `quoted: ${bad}`);
+    assert.equal(q.split('\n')[0], `INSERT INTO \`${bad}\``);
+  }
+});
+
+test('buildSingleInsertQuery: a backtick in the name is doubled, not escaped out', () => {
+  // The one character with meaning inside a quoted identifier. Doubling it is
+  // the only correct escape; anything else lets the identifier terminate early.
+  assert.equal(
+    buildSingleInsertQuery('we`ird', 'regular').split('\n')[0],
+    'INSERT INTO `we``ird`',
+  );
 });
 
 test('validateCollectionName: rejects empty string', () => {
   assert.throws(() => validateCollectionName(''), ImportValidationError);
 });
 
+test('validateCollectionName: rejects control characters', () => {
+  for (const bad of ['a\0b', 'a\nb', 'a\rb']) {
+    assert.throws(() => validateCollectionName(bad), ImportValidationError);
+  }
+});
+
 // ─── Query builders ────────────────────────────────────────────
 
 test('buildBatchInsertQuery: regular insert produces ON ID CONFLICT clause', () => {
   const q = buildBatchInsertQuery('Users', 2, 'regular');
-  assert.match(q, /INSERT INTO Users/);
+  assert.match(q, /INSERT INTO `Users`/);
   assert.match(q, /\(deserialize_json\(:doc0\)\), \(deserialize_json\(:doc1\)\)/);
   assert.match(q, /ON ID CONFLICT DO UPDATE/);
 });
@@ -131,7 +160,7 @@ test('chunkArray: chunk size 0 throws', () => {
 // ─── importDocuments (the orchestrator) ────────────────────────
 
 test('importDocuments: happy path inserts all docs in batches; success count matches total', async () => {
-  const calls: { query: string; args?: Record<string, unknown> }[] = [];
+  const calls: { query: string; args?: Record<string, unknown> | undefined }[] = [];
   const execute = async (query: string, args?: Record<string, unknown>) => { calls.push({ query, args }); };
   const docs = Array.from({ length: 7 }, (_, i) => ({ _id: `id-${i}` }));
   const result = await importDocuments({
@@ -148,16 +177,19 @@ test('importDocuments: happy path inserts all docs in batches; success count mat
   assert.equal(calls.length, 3);
   // Each call goes through the BATCH path; no single-doc fallback.
   for (const c of calls) {
-    assert.match(c.query, /INSERT INTO Users/);
+    assert.match(c.query, /INSERT INTO `Users`/);
     assert.doesNotMatch(c.query, /:jsonDoc/);
   }
 });
 
-test('importDocuments: invalid collection name throws before any execute call', async () => {
+test('importDocuments: unquotable collection name throws before any execute call', async () => {
   let executed = false;
   await assert.rejects(importDocuments({
     documents: [{ _id: 'a' }],
-    collection: 'evil; DROP TABLE',
+    // A NUL can't be expressed as a DQL identifier at all. An injection-shaped
+    // name like 'evil; DROP TABLE' is NOT rejected any more — it's quoted, and
+    // the builder tests assert that it stays inside the backticks.
+    collection: 'evil\0name',
     insertType: 'regular',
     execute: async () => { executed = true; },
   }), ImportValidationError);
@@ -194,8 +226,8 @@ test('importDocuments: batch failure → falls back to single-doc inserts, error
   assert.equal(result.successCount, 2);
   assert.equal(result.failureCount, 1);
   assert.equal(result.errors.length, 1);
-  assert.match(result.errors[0], /Document b/);
-  assert.match(result.errors[0], /row 2 bad/);
+  assert.match(result.errors[0]!, /Document b/);
+  assert.match(result.errors[0]!, /row 2 bad/);
 });
 
 test('importDocuments: every doc in a failing batch can fail independently', async () => {
@@ -229,11 +261,11 @@ test('importDocuments: progress callback fires at expected boundaries', async ()
   // 3 batches (2,2,1) → 6 ticks total: 3 "starting" + 3 "completed".
   assert.equal(ticks.length, 6);
   // First tick: starting batch 1, currentDocumentId='id-0'.
-  assert.equal(ticks[0].current, 1);
-  assert.equal(ticks[0].currentDocumentId, 'id-0');
+  assert.equal(ticks[0]?.current, 1);
+  assert.equal(ticks[0]?.currentDocumentId, 'id-0');
   // Last tick: completion of final partial batch → current = total.
-  assert.equal(ticks[ticks.length - 1].current, 5);
-  assert.equal(ticks[ticks.length - 1].total, 5);
+  assert.equal(ticks[ticks.length - 1]?.current, 5);
+  assert.equal(ticks[ticks.length - 1]?.total, 5);
 });
 
 test('importDocuments: progress callback that throws does not abort import', async () => {
@@ -258,6 +290,65 @@ test('importDocuments: insertType=initial threads through to query string', asyn
     batchSize: 1,
   });
   assert.match(observed, /INITIAL DOCUMENTS/);
+});
+
+test('importDocuments: a database switch mid-import aborts the remaining batches', async () => {
+  // The switch orchestrator closes the panel but cannot cancel this loop,
+  // and `execute` always hits the manager's CURRENT session. The checkActive
+  // re-poll must stop the tail from landing in the new database; what was
+  // already written is fine to report (ON ID CONFLICT DO UPDATE is idempotent
+  // on re-run).
+  let active = 'db-A';
+  const usedBatches: string[] = [];
+  const result = await importDocuments({
+    documents: Array.from({ length: 9 }, (_, i) => ({ _id: `id-${i}` })),
+    collection: 'Users',
+    insertType: 'regular',
+    execute: async () => {
+      usedBatches.push(active);
+      if (usedBatches.length === 1) { active = 'db-B'; } // switch behind batch 1
+    },
+    batchSize: 3,
+    checkActive: () => active,
+  });
+  assert.equal(result.cancelled, true);
+  assert.equal(result.successCount, 3, 'only the first batch landed');
+  assert.equal(result.failureCount, 0);
+  assert.deepEqual(usedBatches, ['db-A'], 'no batch executed against the new database');
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0]!, /database changed mid-import/);
+  assert.match(result.errors[0]!, /3 of 9/, 'partial progress is surfaced');
+});
+
+test('importDocuments: no checkActive polling when the callback is absent', async () => {
+  // Backwards compatibility: callers that don't care about switching still
+  // get the old pure-batch behaviour.
+  const result = await importDocuments({
+    documents: [{ _id: 'a' }, { _id: 'b' }],
+    collection: 'Users',
+    insertType: 'regular',
+    execute: async () => {},
+    batchSize: 1,
+  });
+  assert.equal(result.cancelled, undefined);
+  assert.equal(result.successCount, 2);
+});
+
+test('importDocuments: a switch detected before the FIRST batch writes nothing', async () => {
+  let calls = 0;
+  let executed = false;
+  const result = await importDocuments({
+    documents: [{ _id: 'a' }],
+    collection: 'Users',
+    insertType: 'regular',
+    execute: async () => { executed = true; },
+    // Entry snapshot 'db-A'; the pre-batch poll already sees the switch.
+    checkActive: () => (calls++ === 0 ? 'db-A' : 'db-B'),
+  });
+  assert.equal(result.cancelled, true);
+  assert.equal(executed, false, 'execute must not run once the snapshot differs');
+  assert.equal(result.successCount, 0);
+  assert.match(result.errors[0]!, /database changed mid-import/);
 });
 
 test('importDocuments: empty document set returns zero counts without calling execute', async () => {

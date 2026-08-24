@@ -1,7 +1,12 @@
 import * as vscode from 'vscode';
 import type { DittoManager } from './DittoManager.js';
 import type { Logger } from '../logging/types.js';
-import type { DittoCollection, DittoIndex } from '../models/DittoCollection.js';
+import type { DittoCollection, DittoIndex, IndexField } from '../models/DittoCollection.js';
+import {
+  buildCreateIndexQuery, buildDropIndexQuery, makeIndexName, normalizeIndexFields,
+  parseIndexKeys, indexKeysMatch, describeIndexKeys, InvalidIndexError,
+} from './index-builder.js';
+import { quoteIdentifier } from './dql-identifier.js';
 
 /**
  * Cache of collections (with counts + indexes) for the active database.
@@ -28,7 +33,7 @@ export class CollectionsRepository {
   private readonly _changeEmitter = new vscode.EventEmitter<DittoCollection[]>();
   readonly onChange: vscode.Event<DittoCollection[]> = this._changeEmitter.event;
   private readonly log: Logger;
-  private collectionsObserver?: { cancel(): void };
+  private collectionsObserver?: { cancel(): void } | undefined;
 
   constructor(
     private readonly manager: DittoManager,
@@ -52,11 +57,51 @@ export class CollectionsRepository {
     await this.hydrate('refresh');
   }
 
-  async createIndex(collection: string, fieldName: string): Promise<void> {
-    const safeField = fieldName.replace(/[. ]/g, '_');
-    const indexName = `idx_${collection}_${safeField}`;
-    const query = `CREATE INDEX IF NOT EXISTS ${indexName} ON ${collection} (${fieldName})`;
-    this.log.info('Creating index', { collection, fieldName, indexName });
+  /**
+   * Create an index over one or more fields. More than one field produces a
+   * composite index (SDK 5.1+); their order is preserved because the optimizer
+   * only uses a composite index from its leading key onwards.
+   */
+  async createIndex(collection: string, fields: readonly IndexField[]): Promise<void> {
+    const cleaned = normalizeIndexFields(fields);
+    const indexName = makeIndexName(collection, cleaned);
+
+    // Mid-switch guard: the switch orchestrator closes the Add Index
+    // panel but cannot cancel an in-flight createIndex, and every
+    // executeRaw call resolves against the CURRENT session. Snapshot the
+    // active config id at entry and re-check it right before the CREATE
+    // runs so a switch between the system:indexes probe and the write
+    // fails loudly instead of creating the index on the new database.
+    const activeAtEntry = this.readActiveConfigId();
+
+    // `IF NOT EXISTS` compares index NAMES only, so an existing index with the
+    // same generated name but a different definition — a flipped direction, or
+    // a different field that sanitized to the same name — makes the statement
+    // silently succeed while changing nothing. Detect that instead of letting
+    // the user believe their new definition took effect.
+    const existing = await this.manager.executeRaw(
+      'SELECT * FROM system:indexes WHERE _id = :id',
+      { id: `${collection}.${indexName}` },
+    );
+    const firstExisting = existing[0];
+    if (firstExisting) {
+      const existingKeys = parseIndexKeys(firstExisting.fields);
+      if (indexKeysMatch(existingKeys, cleaned)) {
+        this.log.info('Index already exists with the same definition', { collection, indexName });
+        return;
+      }
+      throw new InvalidIndexError(
+        `An index named "${indexName}" already exists on "${collection}" with a different `
+        + `definition (${describeIndexKeys(existingKeys)}). Delete it before re-creating.`,
+      );
+    }
+
+    this.assertStillActive(activeAtEntry);
+
+    const query = buildCreateIndexQuery(collection, cleaned, indexName);
+    this.log.info('Creating index', {
+      collection, indexName, keys: describeIndexKeys(cleaned),
+    });
     await this.manager.executeRaw(query);
     await this.hydrate('createIndex');
   }
@@ -68,7 +113,7 @@ export class CollectionsRepository {
    *  the equivalent `<collection>.<name>` form would also work.
    *  Re-hydrates so the tree updates immediately. */
   async dropIndex(indexName: string, collection: string): Promise<void> {
-    const query = `DROP INDEX IF EXISTS ${indexName} ON ${collection}`;
+    const query = buildDropIndexQuery(indexName, collection);
     this.log.info('Dropping index', { indexName, collection });
     await this.manager.executeRaw(query);
     await this.hydrate('dropIndex');
@@ -87,6 +132,27 @@ export class CollectionsRepository {
   }
 
   // ─── private ─────────────────────────────────────────────────
+
+  /** The currently-active config id, or undefined when the manager
+   *  cannot tell (unit-test fakes only forward executeRaw). A null/
+   *  empty value is treated as "no session" and bubbles down through
+   *  the natural executeRaw failure — the guard only defends against
+   *  a switch BETWEEN two known sessions. */
+  private readActiveConfigId(): string | null | undefined {
+    return typeof this.manager.getActiveConfigId === 'function'
+      ? this.manager.getActiveConfigId()
+      : undefined;
+  }
+
+  /** Throw if the active config changed away from `expected` since it
+   *  was snapshotted. No-op when either side is unknown. */
+  private assertStillActive(expected: string | null | undefined): void {
+    if (!expected) { return; }
+    const current = this.readActiveConfigId();
+    if (current !== undefined && current !== expected) {
+      throw new Error('The active connection changed mid-index-operation; index not created. Reopen the panel and try again.');
+    }
+  }
 
   /**
    * Subscribe to live `__collections` updates. Re-entrant — if an
@@ -193,16 +259,20 @@ export class CollectionsRepository {
     // collection doesn't poison the rest. `count` is a reserved word in
     // DQL; alias as `numDocs`.
     const countResults = await Promise.allSettled(
-      collections.map(c => this.manager.executeRaw(`SELECT COUNT(*) AS numDocs FROM ${c.name}`)),
+      collections.map(c => this.manager.executeRaw(
+        `SELECT COUNT(*) AS numDocs FROM ${quoteIdentifier(c.name, 'collection')}`,
+      )),
     );
     countResults.forEach((res, i) => {
+      const c = collections[i];
+      if (!c) { return; }
       if (res.status === 'fulfilled') {
         const first = res.value[0];
         const n = first?.numDocs;
-        if (typeof n === 'number') { collections[i].documentCount = n; }
+        if (typeof n === 'number') { c.documentCount = n; }
       } else {
         this.log.warn('COUNT(*) failed for collection', {
-          collection: collections[i].name,
+          collection: c.name,
           err: res.reason instanceof Error ? res.reason.message : String(res.reason),
         });
       }
@@ -227,18 +297,6 @@ export class CollectionsRepository {
   }
 }
 
-/** Shape of a row from `SELECT * FROM system:indexes`. Two field shapes
- *  exist in the wild:
- *   - Newer SDK: `[{ direction: 'asc', key: ['`fieldName`'] }, …]`
- *   - Older SDK: `['fieldName', …]`
- *
- *  Everything is typed as `unknown` because the SDK doesn't expose a
- *  declarative type for system rows. `parseSystemIndexRow` does the
- *  runtime narrowing in one place. */
-interface SystemIndexFieldDescriptor {
-  direction?: string;
-  key?: unknown[];
-}
 
 /** Pure parser for a `system:indexes` row into a `DittoIndex`. Returns
  *  `undefined` if the row is missing required fields so the caller can
@@ -248,24 +306,21 @@ function parseSystemIndexRow(row: Record<string, unknown>): DittoIndex | undefin
   const collection = typeof row.collection === 'string' ? row.collection : '';
   if (!id || !collection) { return undefined; }
 
-  const rawFields = row.fields;
-  const fields: string[] = [];
-  if (Array.isArray(rawFields)) {
-    for (const f of rawFields) {
-      if (typeof f === 'string') {
-        fields.push(f.replace(/`/g, ''));
-      } else if (f && typeof f === 'object' && !Array.isArray(f)) {
-        const desc = f as SystemIndexFieldDescriptor;
-        const key = desc.key;
-        if (Array.isArray(key) && key.length > 0 && typeof key[0] === 'string') {
-          fields.push(key[0].replace(/`/g, ''));
-        }
-      }
-    }
-  }
+  const fields = parseIndexKeys(row.fields);
 
-  const dotIdx = id.indexOf('.');
-  const displayName = dotIdx >= 0 ? id.slice(dotIdx + 1) : id;
+  // Strip the collection prefix to get the display name — NOT the first
+  // dot. A dotted collection name (`app.ios`) puts its own dot first, and
+  // splitting there turned `app.ios.idx_name` into `ios.idx_name`, which
+  // broke both the tree display and the DROP INDEX the delete flow builds
+  // from the display name. Fall back to the first-dot split only if the id
+  // doesn't carry the collection prefix at all (defensive — the store
+  // always prefixes today).
+  const displayName = id.startsWith(`${collection}.`)
+    ? id.slice(collection.length + 1)
+    : (() => {
+      const dotIdx = id.indexOf('.');
+      return dotIdx >= 0 ? id.slice(dotIdx + 1) : id;
+    })();
   return { id, collection, fields, displayName };
 }
 

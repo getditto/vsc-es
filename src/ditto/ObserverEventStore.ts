@@ -8,10 +8,16 @@ export interface ObserverEvent {
   id: string;
   /** ISO-8601 wall-clock instant the event was captured on the host. */
   eventTimeISO: string;
-  /** The full materialized rows for this firing — the same shape as
+  /** The materialized rows for this firing — the same shape as
    *  a query result. The detail pane renders these via the existing
-   *  JSON viewer / shared result table. */
+   *  JSON viewer / shared result table. Capped on the host (see
+   *  `OBSERVER_ROW_CAP` in DittoManager) so a huge result set isn't
+   *  structured-cloned to the webview on every firing. */
   data: Record<string, unknown>[];
+  /** Uncapped row count of the firing's full result set. When
+   *  `totalRows > data.length`, `data` holds only the first
+   *  OBSERVER_ROW_CAP rows and the UI should indicate the cap. */
+  totalRows: number;
   /** Diff arrays from the SDK's `Differ`. Each entry is an index
    *  into `data` (insertions/updates) or into the previous firing's
    *  data (deletions). `moves` is a list of `{from, to}` tuples. */

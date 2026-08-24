@@ -46,6 +46,12 @@ const CLOUD_KEY = 'ditto-cloud-node';
  *  that ring-1↔ring-1 chords stop overlapping the centre, while still
  *  fitting comfortably inside a typical panel viewport at zoom 100%. */
 const EXPANDED_RADIUS_SCALE = 1.75;
+const UNRELATED_PEER_ALPHA = 0.25;
+// Keep unrelated links barely visible for topology context while making
+// the selected peer's links visually dominant. Connection colours are
+// intentionally bright, so a stronger reduction than peer dimming is
+// needed for the focus treatment to read clearly.
+const UNRELATED_LINE_ALPHA = 0.08;
 
 export interface SceneOptions {
   /** Initial scale (1.0 = 100%). Clamped 0.5–2.0 by zoom helpers. */
@@ -76,6 +82,11 @@ export class PresenceGraphScene {
    *  commit to drive position transitions. */
   layout: LayoutResult | undefined;
   localKey = '';
+  /** Persistent click selection. Hover remains transient and independent. */
+  selectedPeerKey: string | undefined;
+  /** Transient pointer focus. Used for the same dimming treatment until
+   *  a click selection takes precedence. */
+  hoveredPeerKey: string | undefined;
   /** Drives scale/alpha for newly-added peers — rendered by drawPeer. */
 
   /** Star field is owned here so the same RAF loop ticks both. */
@@ -120,6 +131,18 @@ export class PresenceGraphScene {
     this.handleCloudPeer(input);
     this.upsertLines(input);
     this.localKey = input.localPeerKey;
+    if (this.selectedPeerKey && !this.peers.has(this.selectedPeerKey)) {
+      this.selectedPeerKey = undefined;
+    }
+    if (this.hoveredPeerKey && !this.peers.has(this.hoveredPeerKey)) {
+      this.hoveredPeerKey = undefined;
+    }
+    // Line highlighting is derived from the hovered peer, never stored across
+    // updates: upsertLines rebuilds the map from scratch on every presence
+    // tick. Carrying the flag over instead would both strand a stale `true`
+    // once hover was cleared without a pointer event, and miss links that
+    // appeared while the peer stayed hovered.
+    this.setHovered(this.hoveredPeerKey ? this.peers.get(this.hoveredPeerKey) : undefined);
     if (topologyChanged) {
       this.recalculateLayout();
     }
@@ -164,6 +187,7 @@ export class PresenceGraphScene {
         localExisting.label = input.localDeviceName;
       }
     } else {
+      invalidatePillWidth(input.localPeerKey);
       this.peers.set(input.localPeerKey, {
         key: input.localPeerKey,
         label: input.localDeviceName,
@@ -182,6 +206,13 @@ export class PresenceGraphScene {
           existing.label = r.deviceName;
         }
       } else {
+        // The width cache is module-global and outlives any one scene, so a
+        // peer first seen by *this* scene may still have a width cached from
+        // a previous one (the graph tab rebuilds the scene on every switch).
+        // Without this, a device renamed while the tab was hidden keeps the
+        // old pill width — overflowing text and a wrong hit box — for the
+        // rest of the session.
+        invalidatePillWidth(r.peerKey);
         this.peers.set(r.peerKey, {
           key: r.peerKey,
           label: r.deviceName,
@@ -224,6 +255,9 @@ export class PresenceGraphScene {
   }
 
   private upsertLines(input: PresenceGraphInput): void {
+    // The only place the lines map is rebuilt, so the only place the focus
+    // neighbour cache can go stale in a way the focus key won't reveal.
+    this.linesEpoch += 1;
     const next = new Map<string, ConnectionLineData>();
 
     // Group connections by sorted-pair so multi-type pairs share an offset bucket.
@@ -323,15 +357,17 @@ export class PresenceGraphScene {
   /**
    * Advance every animated piece by one frame.
    *
-   * - Floating stars are ticked unconditionally (background loops).
+   * - Floating stars are ticked while the caller keeps the loop alive; the
+   *   Lit element freezes them after an idle period (they are pure ambient
+   *   decoration, so a static field is fine — they do NOT count as
+   *   in-flight animation for the return value).
    * - Position transitions ease-in-out over their duration; finished
    *   ones drop out of the map.
-   * - Newly added peer nodes have their alpha/scale eased toward 1
-   *   (we don't currently flag "new", so the appear animation lands
-   *   in a follow-up — matters less than the layout transitions).
    *
-   * Returns true if any animation is still in flight. Caller can use
-   * that to short-circuit RAF when everything has settled.
+   * Returns true while any graph animation is still in flight (position
+   *   transitions, or a user interaction that must not freeze mid-drag).
+   * The caller uses that to keep the RAF loop awake and to settle it once
+   * everything is still.
    */
   tick(now: number, dt: number): boolean {
     this.stars.tick(now, dt);
@@ -351,9 +387,10 @@ export class PresenceGraphScene {
         this.transitions.delete(key);
       }
     }
-    // Stars never settle, so we always need the loop running while
-    // the panel is visible.
-    return true;
+    // Stars deliberately do not keep the loop alive — the element freezes
+    // them after a short idle window so a visible-but-idle panel doesn't
+    // repaint at 60fps forever.
+    return this.transitions.size > 0 || this.isUserInteracting;
   }
 
   // ─── Interaction API ────────────────────────────────────────
@@ -378,7 +415,7 @@ export class PresenceGraphScene {
     const list = [...this.peers.values()];
     for (let i = list.length - 1; i >= 0; i -= 1) {
       const n = list[i];
-      if (pillContainsPoint(ctx, n, world)) { return n; }
+      if (n && pillContainsPoint(ctx, n, world)) { return n; }
     }
     return undefined;
   }
@@ -386,7 +423,8 @@ export class PresenceGraphScene {
   /** Set hover state on at-most one node. The previously-hovered node
    *  (if any) is un-highlighted. Returns true if hover changed. */
   setHovered(node: PeerNodeData | undefined): boolean {
-    let changed = false;
+    let changed = this.hoveredPeerKey !== node?.key;
+    this.hoveredPeerKey = node?.key;
     for (const n of this.peers.values()) {
       const wantHighlighted = n === node;
       if (!!n.highlighted !== wantHighlighted) {
@@ -394,21 +432,117 @@ export class PresenceGraphScene {
         changed = true;
       }
     }
-    if (node) {
-      // Highlight every line connected to the hovered node.
-      for (const line of this.lines.values()) {
-        const want = line.fromKey === node.key || line.toKey === node.key;
-        if (!!line.highlighted !== want) {
-          line.highlighted = want;
-          changed = true;
-        }
-      }
-    } else {
-      for (const line of this.lines.values()) {
-        if (line.highlighted) { line.highlighted = false; changed = true; }
+    // Line emphasis is skipped for the local peer in Direct mode: every
+    // line touches it there, so highlighting its lines would thicken every
+    // stroke at once — the same glitch the selectPeer guard rejects for
+    // clicks. In full-mesh mode its spokes are a minority of the graph and
+    // worth emphasizing, same as any other peer's. The pill itself still
+    // gets the hover fill above.
+    const skipLineFocus = node?.key === this.localKey && this.showDirectConnectedOnly;
+    const lineFocusKey = node && !skipLineFocus ? node.key : undefined;
+    for (const line of this.lines.values()) {
+      const want = lineFocusKey !== undefined
+        && (line.fromKey === lineFocusKey || line.toKey === lineFocusKey);
+      if (!!line.highlighted !== want) {
+        line.highlighted = want;
+        changed = true;
       }
     }
     return changed;
+  }
+
+  /** Enable/disable Direct mode and discard focus when it is not applicable. */
+  setShowDirectConnectedOnly(value: boolean): void {
+    this.showDirectConnectedOnly = value;
+    if (!value) {
+      this.selectedPeerKey = undefined;
+      // Goes through setHovered rather than clearing the key directly so the
+      // node/line `highlighted` flags are reset too — otherwise the previously
+      // hovered peer keeps its emphasized stroke until the next input push.
+      this.setHovered(undefined);
+    }
+  }
+
+  /** Toggle persistent peer focus. Selection is intentionally Direct-mode only.
+   *
+   *  The local peer is not selectable: in Direct mode every line touches it by
+   *  construction, so focusing it would exempt the whole graph from dimming
+   *  and only thicken every stroke at once — which reads as a glitch, not a
+   *  focus treatment. */
+  selectPeer(key: string | undefined): void {
+    const invalid = key !== undefined && (!this.peers.has(key) || key === this.localKey);
+    if (!this.showDirectConnectedOnly || invalid) {
+      this.selectedPeerKey = undefined;
+      return;
+    }
+    this.selectedPeerKey = this.selectedPeerKey === key ? undefined : key;
+  }
+
+  /** Reset magnification and place the actual local-node position at canvas centre. */
+  resetViewToLocal(): void {
+    this.zoom = 1;
+    const local = this.peers.get(this.localKey)?.position ?? { x: 0, y: 0 };
+    this.camera = { x: -local.x, y: -local.y };
+  }
+
+  /** Bumped whenever the lines map is rebuilt. Together with the focus key it
+   *  is the full cache key for the neighbour set below: line objects are
+   *  mutated in place for `highlighted`, but from/to keys only ever change
+   *  when upsertLines replaces the map. */
+  private linesEpoch = 0;
+  private neighbourCache: { key: string; epoch: number; neighbours: Set<string> } | undefined;
+
+  /** Keys directly connected to `focused`.
+   *
+   *  Cached because render() asks the focus question once per peer per frame:
+   *  scanning every line for every peer made painting O(peers x lines) at
+   *  60 fps, which on a busy mesh is the dominant cost of the whole graph.
+   *  One scan per (focus, topology) pair instead. */
+  private neighboursOf(focused: string): Set<string> {
+    const cached = this.neighbourCache;
+    if (cached && cached.key === focused && cached.epoch === this.linesEpoch) {
+      return cached.neighbours;
+    }
+    const neighbours = new Set<string>();
+    for (const line of this.lines.values()) {
+      if (line.fromKey === focused) { neighbours.add(line.toKey); }
+      else if (line.toKey === focused) { neighbours.add(line.fromKey); }
+    }
+    this.neighbourCache = { key: focused, epoch: this.linesEpoch, neighbours };
+    return neighbours;
+  }
+
+  /** Exposed for focused tests and renderer decisions. */
+  focusForPeer(key: string): { selected: boolean; alpha: number } {
+    const focused = this.activeFocusKey();
+    if (!focused) { return { selected: false, alpha: 1 }; }
+    if (key === focused) {
+      return { selected: this.selectedPeerKey === key, alpha: 1 };
+    }
+    if (this.neighboursOf(focused).has(key)) {
+      return { selected: false, alpha: 1 };
+    }
+    return { selected: false, alpha: UNRELATED_PEER_ALPHA };
+  }
+
+  /** Exposed for focused tests and renderer decisions. */
+  focusForLine(line: ConnectionLineData): { selected: boolean; alpha: number } {
+    const focused = this.activeFocusKey();
+    if (!focused) { return { selected: false, alpha: 1 }; }
+    const touchesFocus = line.fromKey === focused || line.toKey === focused;
+    return {
+      selected: touchesFocus && this.selectedPeerKey === focused,
+      alpha: touchesFocus ? 1 : UNRELATED_LINE_ALPHA,
+    };
+  }
+
+  /** A click selection is sticky and wins over incidental hover. */
+  private activeFocusKey(): string | undefined {
+    if (!this.showDirectConnectedOnly) { return undefined; }
+    if (this.selectedPeerKey) { return this.selectedPeerKey; }
+    // Hovering the local peer is not a focus: every line touches it in
+    // Direct mode, so it would exempt the whole graph from dimming.
+    return this.hoveredPeerKey === this.localKey ? undefined : this.hoveredPeerKey;
   }
 
   /** Pin a peer's position (drag start) so transitions can't move it. */
@@ -430,7 +564,11 @@ export class PresenceGraphScene {
 
   /** Clamp helper for zoom changes — same 0.5–2.0 range as SwiftUI. */
   setZoom(z: number): void {
-    this.zoom = Math.max(0.5, Math.min(2.0, z));
+    // Round to whole percents: the 0.1/0.05 zoom steps accumulate binary
+    // float error (1 − 0.1 × 5 = 0.5000000000000001), which defeats the
+    // exact-boundary disabled state on the zoom buttons and shows up as a
+    // dead final click.
+    this.zoom = Math.round(Math.max(0.5, Math.min(2.0, z)) * 100) / 100;
   }
 
   /** Pan the camera by a delta in canvas (CSS) pixels. Adjust by zoom
@@ -476,12 +614,14 @@ export class PresenceGraphScene {
       const from = this.peers.get(line.fromKey)?.position;
       const to = this.peers.get(line.toKey)?.position;
       if (!from || !to) { continue; }
-      drawConnectionLine(ctx, line, from, to);
+      const focus = this.focusForLine(line);
+      drawConnectionLine(ctx, line, from, to, focus.alpha, focus.selected);
     }
 
     // Nodes on top.
     for (const node of this.peers.values()) {
-      drawPeerNode(ctx, node);
+      const focus = this.focusForPeer(node.key);
+      drawPeerNode(ctx, node, focus.alpha, focus.selected);
     }
 
     ctx.restore();

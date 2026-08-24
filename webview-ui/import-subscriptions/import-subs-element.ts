@@ -1,6 +1,6 @@
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 interface ImportableSubscription {
   id: string;
@@ -27,7 +27,7 @@ type ViewState =
 export class ImportSubscriptionsElement extends LitElement {
   @state() private view: ViewState = { kind: 'loading' };
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block; padding: 24px; max-width: 820px;
       font-family: var(--vscode-font-family); color: var(--vscode-foreground);
@@ -56,28 +56,27 @@ export class ImportSubscriptionsElement extends LitElement {
     .progress { font-size: 12px; color: var(--vscode-descriptionForeground); margin-right: auto; }
   `;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    onHostMessage<In>((msg) => {
-      switch (msg.type) {
-        case 'importSubs.loading':
-          this.view = { kind: 'loading' };
-          break;
-        case 'importSubs.loaded':
-          this.view = { kind: 'loaded', rows: msg.subscriptions, selected: new Set() };
-          break;
-        case 'importSubs.error':
-          this.view = { kind: 'error', message: msg.message };
-          break;
-        case 'importSubs.importing':
-          this.view = { kind: 'importing', status: msg.status };
-          break;
-        case 'importSubs.imported':
-          // Host closes the panel right after — no UI work needed.
-          break;
-      }
-    });
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<In>(this, (msg) => {
+    switch (msg.type) {
+      case 'importSubs.loading':
+        this.view = { kind: 'loading' };
+        break;
+      case 'importSubs.loaded':
+        this.view = { kind: 'loaded', rows: msg.subscriptions, selected: new Set() };
+        break;
+      case 'importSubs.error':
+        this.view = { kind: 'error', message: msg.message };
+        break;
+      case 'importSubs.importing':
+        this.view = { kind: 'importing', status: msg.status };
+        break;
+      case 'importSubs.imported':
+        // Host closes the panel right after — no UI work needed.
+        break;
+    }
+  });
 
   private toggle(id: string): void {
     if (this.view.kind !== 'loaded') { return; }
@@ -107,7 +106,7 @@ export class ImportSubscriptionsElement extends LitElement {
 
   private cancel(): void { postToHost({ type: 'importSubs.cancel' }); }
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       <h2>Import Subscriptions from Server</h2>
       <div class="subtitle">

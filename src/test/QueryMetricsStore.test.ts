@@ -23,8 +23,8 @@ test('QueryMetricsStore: capture mints a stable id', () => {
   s.capture('A', md());
   const list = s.list('A');
   assert.equal(list.length, 1);
-  assert.equal(typeof list[0].id, 'string');
-  assert.ok(list[0].id.length > 0);
+  assert.equal(typeof list[0]?.id, 'string');
+  assert.ok((list[0]?.id.length ?? 0) > 0);
 });
 
 test('QueryMetricsStore: list is newest-first', () => {
@@ -43,7 +43,7 @@ test('QueryMetricsStore: caps at MAX_RECORDS, drops oldest', () => {
   const list = s.list('A');
   assert.equal(list.length, QueryMetricsStore.MAX_RECORDS);
   // Newest record (latest q-index) is at the front.
-  assert.equal(list[0].dql, `q${QueryMetricsStore.MAX_RECORDS + 5 - 1}`);
+  assert.equal(list[0]?.dql, `q${QueryMetricsStore.MAX_RECORDS + 5 - 1}`);
   // Records q0..q4 should have fallen off.
   assert.ok(!list.some(r => r.dql === 'q0'));
   assert.ok(!list.some(r => r.dql === 'q4'));
@@ -53,8 +53,8 @@ test('QueryMetricsStore: per-DB isolation', () => {
   const s = new QueryMetricsStore();
   s.capture('A', md({ dql: 'a-query' }));
   s.capture('B', md({ dql: 'b-query' }));
-  assert.equal(s.list('A')[0].dql, 'a-query');
-  assert.equal(s.list('B')[0].dql, 'b-query');
+  assert.equal(s.list('A')[0]?.dql, 'a-query');
+  assert.equal(s.list('B')[0]?.dql, 'b-query');
 });
 
 test('QueryMetricsStore: clear wipes one DB only', () => {

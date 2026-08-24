@@ -20,7 +20,7 @@ const MIN_COLUMN_WIDTH = 40;
  *  lockstep without re-rendering all rows on each pixel of drag. */
 @customElement('log-table')
 export class LogTable extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       /* Fill the available height from the parent's flex layout, but keep
@@ -119,7 +119,12 @@ export class LogTable extends LitElement {
     }
   `;
 
+  /** The loaded window, not the whole result set. */
   @property({ type: Array }) lines: LogLine[] = [];
+  /** Absolute index of `lines[0]` within the filtered result set. */
+  @property({ type: Number }) windowOffset = 0;
+  /** Rows matching the filter, before windowing — sizes the scroll area. */
+  @property({ type: Number }) totalRows = 0;
   @property({ type: Number }) selectedId: number | null = null;
 
   // Renamed off `scrollTop` because that's an HTMLElement instance
@@ -133,23 +138,72 @@ export class LogTable extends LitElement {
   @state() private colWidths = { ts: 110, lvl: 60, tag: 220, utag: 120 };
   private dragging: { col: 'ts' | 'lvl' | 'tag' | 'utag'; startX: number; startW: number } | null = null;
 
-  connectedCallback(): void {
+  private resizeObserver?: ResizeObserver | undefined;
+
+  override connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener('scroll', this.onScroll);
+    // Track the viewport height continuously — a one-shot read in
+    // firstUpdated goes stale when the panel is resized, leaving the
+    // virtualization window wrong (blank space or over-render).
+    // ResizeObserver fires immediately on observe, covering the initial
+    // measurement too.
+    this.resizeObserver = new ResizeObserver(() => {
+      const h = this.clientHeight;
+      if (h > 0 && h !== this.viewportHeight) { this.viewportHeight = h; }
+    });
+    this.resizeObserver.observe(this);
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     this.removeEventListener('scroll', this.onScroll);
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = undefined;
+    // A disconnect mid-drag (panel move/close) must not leave the window
+    // listeners attached to a detached element.
+    window.removeEventListener('pointermove', this.onResizeMove);
+    window.removeEventListener('pointerup', this.onResizeEnd);
+    this.dragging = null;
+    if (this.rangeFrame !== null) {
+      cancelAnimationFrame(this.rangeFrame);
+      this.rangeFrame = null;
+    }
     super.disconnectedCallback();
-  }
-
-  firstUpdated(): void {
-    this.viewportHeight = this.clientHeight || 500;
   }
 
   private onScroll = (): void => {
     this._scrollTop = (this as unknown as HTMLElement).scrollTop;
+    this.reportVisibleRange();
   };
+
+  /** Tell the owner which absolute rows are needed.
+   *
+   *  The table is virtualised to roughly a viewport's worth of rows, so the
+   *  owner has no reason to hold — or the host to serialise — the whole result
+   *  set. It fetches a window around whatever this reports.
+   *
+   *  Coalesced to one report per frame: a scroll gesture fires far more often
+   *  than the window can usefully change. */
+  private rangeFrame: number | null = null;
+  private reportVisibleRange(): void {
+    if (this.rangeFrame !== null) { return; }
+    this.rangeFrame = requestAnimationFrame(() => {
+      this.rangeFrame = null;
+      const { startIdx, endIdx } = this.visibleRange();
+      this.dispatchEvent(new CustomEvent('visible-range', {
+        detail: { start: startIdx, end: endIdx },
+        bubbles: true,
+        composed: true,
+      }));
+    });
+  }
+
+  /** Absolute row indices the viewport needs, including overscan. */
+  private visibleRange(): { startIdx: number; endIdx: number } {
+    const startIdx = Math.max(0, Math.floor(this._scrollTop / ROW_HEIGHT) - OVERSCAN);
+    const visibleCount = Math.ceil(this.viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
+    return { startIdx, endIdx: Math.min(this.totalRows, startIdx + visibleCount) };
+  }
 
   private clickRow(lineId: number): void {
     this.dispatchEvent(new CustomEvent('line-clicked', { detail: { lineId }, bubbles: true, composed: true }));
@@ -179,19 +233,14 @@ export class LogTable extends LitElement {
     window.removeEventListener('pointermove', this.onResizeMove);
   };
 
-  /** Build the `style` attribute string that propagates the current
-   *  column widths to the :host CSS custom properties read by both the
-   *  header and the rows. Stays as one inline assignment so a drag
-   *  re-render touches only the host element, not every row. */
-  private hostStyle(): string {
-    return `--col-ts:${this.colWidths.ts}px; --col-lvl:${this.colWidths.lvl}px; --col-tag:${this.colWidths.tag}px; --col-utag:${this.colWidths.utag}px;`;
-  }
-
   private renderHead(): TemplateResult {
     const draggingClass = (col: 'ts' | 'lvl' | 'tag' | 'utag'): string =>
       this.dragging?.col === col ? 'resize dragging' : 'resize';
+    // The head reads the same --col-* custom properties as the rows;
+    // they're set on :host by updated() and inherit through the shadow
+    // tree, so no inline style is needed here.
     return html`
-      <div class="head" style=${this.hostStyle()}>
+      <div class="head">
         <div class="cell">Timestamp
           <div class=${draggingClass('ts')}
                @pointerdown=${(e: PointerEvent) => this.onResizeStart('ts', e)}></div>
@@ -213,29 +262,40 @@ export class LogTable extends LitElement {
     `;
   }
 
-  render(): TemplateResult {
-    // Apply column widths on the host so both head + rows pick them up
-    // via CSS variables. style.setProperty done declaratively here so the
-    // Lit render is the single source of truth.
-    (this as unknown as HTMLElement).style.cssText = this.hostStyle();
+  /** Apply column widths as CSS custom properties on the host so both
+   *  head + rows pick them up. Done in updated() (not render()) so render
+   *  stays pure, and via setProperty rather than cssText so unrelated
+   *  inline styles on the host are not clobbered. */
+  protected override updated(changed: Map<string, unknown>): void {
+    if (changed.has('colWidths')) {
+      const s = (this as unknown as HTMLElement).style;
+      s.setProperty('--col-ts', `${this.colWidths.ts}px`);
+      s.setProperty('--col-lvl', `${this.colWidths.lvl}px`);
+      s.setProperty('--col-tag', `${this.colWidths.tag}px`);
+      s.setProperty('--col-utag', `${this.colWidths.utag}px`);
+    }
+  }
 
-    if (this.lines.length === 0) {
+  override render(): TemplateResult {
+    if (this.totalRows === 0) {
       return html`
         ${this.renderHead()}
         <div class="empty">No lines match the current filter.</div>
       `;
     }
-    const total = this.lines.length;
-    const startIdx = Math.max(0, Math.floor(this._scrollTop / ROW_HEIGHT) - OVERSCAN);
-    const visibleCount = Math.ceil(this.viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
-    const endIdx = Math.min(total, startIdx + visibleCount);
-    const visible = this.lines.slice(startIdx, endIdx);
+    // The scroll area is sized to the whole filtered result set, but only the
+    // loaded window can be painted. Rows outside it render as blanks for the
+    // frame or two before the owner's fetch lands.
+    const { startIdx, endIdx } = this.visibleRange();
+    const from = Math.max(startIdx, this.windowOffset);
+    const to = Math.min(endIdx, this.windowOffset + this.lines.length);
+    const visible = to > from ? this.lines.slice(from - this.windowOffset, to - this.windowOffset) : [];
 
     return html`
       ${this.renderHead()}
-      <div class="spacer" style="height: ${total * ROW_HEIGHT}px;">
+      <div class="spacer" style="height: ${this.totalRows * ROW_HEIGHT}px;">
         ${visible.map((l, i) => {
-          const idx = startIdx + i;
+          const idx = from + i;
           const ts = l.timestamp ? new Date(l.timestamp).toISOString().slice(11, 23) : '—';
           const top = idx * ROW_HEIGHT;
           return html`

@@ -64,7 +64,8 @@ export class FloatingStars {
   private makeStar(): Star {
     const x = this.randInRange(-FIELD_RANGE, FIELD_RANGE);
     const y = this.randInRange(-FIELD_RANGE, FIELD_RANGE);
-    const fill = DIAMOND_FILLS[Math.floor(this.rand() * DIAMOND_FILLS.length)];
+    const fill = DIAMOND_FILLS[Math.floor(this.rand() * DIAMOND_FILLS.length)]
+      ?? 'rgba(128, 128, 128, 0.30)';
 
     // SwiftUI distribution: 80% drift, 10% pulse, 10% spin.
     const r = this.rand() * 100;

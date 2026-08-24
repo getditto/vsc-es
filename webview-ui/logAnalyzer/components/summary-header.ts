@@ -6,7 +6,7 @@ import type { SummaryCounts } from '../../../src/logAnalyzer/types.js';
  *  Pure presentation — all values arrive via @property from the root. */
 @customElement('summary-header')
 export class SummaryHeader extends LitElement {
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       padding: 8px 12px;
@@ -28,7 +28,7 @@ export class SummaryHeader extends LitElement {
   @property({ type: String }) sdkVersion: string | null = null;
   @property({ type: String }) sessionRange = '';
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     const c = this.counts;
     if (!c) { return html`<span class="muted">Loading…</span>`; }
     return html`

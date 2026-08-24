@@ -1,0 +1,60 @@
+name: validate
+
+# The gate that runs on every change. `build-and-validate.yml` is
+# workflow_dispatch-only and produces signed per-target VSIXes plus the
+# Extension-Development-Host integration suites — that is release machinery, too
+# slow and too credential-dependent to sit on a pull request. This job is the
+# cheap half: types, lint, unit tests, and a bundle that actually links.
+#
+# esbuild strips types without checking them, so `npm run build` passing tells
+# you nothing about type correctness. `typecheck` is therefore not redundant
+# with `build` — it is the only thing standing between a type error and a
+# release.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # A new push supersedes the previous run for the same ref.
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # Run the three checks as separate steps rather than via `npm run
+      # validate` so a failure names itself in the job summary instead of
+      # requiring someone to open the log. `if: always()` so one failure
+      # doesn't hide the other two — a PR author should see every problem in
+      # one pass.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        if: always()
+        run: npm run lint
+
+      - name: Unit tests
+        if: always()
+        run: npm test
+
+      # Catches the failures typechecking cannot: a missing entry point, a
+      # bundler-resolution error, an asset the build script expects to copy.
+      - name: Build
+        if: always()
+        run: npm run build

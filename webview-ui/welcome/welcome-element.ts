@@ -11,7 +11,7 @@
 
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { postToHost, onHostMessage } from '../shared/messaging.js';
+import { postToHost, HostMessages } from '../shared/messaging.js';
 
 type Msg = { type: 'welcome.init'; hasExistingDatabases: boolean };
 
@@ -75,7 +75,7 @@ export class WelcomeElement extends LitElement {
    *  to "Reference" in that mode. */
   @state() private hasExistingDatabases = false;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       max-width: 880px;
@@ -267,14 +267,13 @@ export class WelcomeElement extends LitElement {
     .learn-more a { font-size: 12px; }
   `;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    onHostMessage<Msg>((msg) => {
-      if (msg.type === 'welcome.init') {
-        this.hasExistingDatabases = msg.hasExistingDatabases;
-      }
-    });
-  }
+  /** Host-message subscription. The controller owns its own lifetime, so a
+   *  re-attach cannot leave a second handler bound to the stale element. */
+  readonly hostMessages = new HostMessages<Msg>(this, (msg) => {
+    if (msg.type === 'welcome.init') {
+      this.hasExistingDatabases = msg.hasExistingDatabases;
+    }
+  });
 
   private registerDatabase = (): void => {
     postToHost({ type: 'welcome.registerDatabase' });
@@ -288,7 +287,7 @@ export class WelcomeElement extends LitElement {
     postToHost({ type: 'welcome.close' });
   };
 
-  render(): TemplateResult {
+  override render(): TemplateResult {
     return html`
       ${this.renderHero()}
       ${this.renderWhatIsDitto()}

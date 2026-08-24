@@ -36,6 +36,15 @@ jobs:
 
       - run: npm ci
 
+      # The release path must not be able to ship what the PR gate would have
+      # rejected — esbuild strips types without checking them, so `build`
+      # alone proves nothing about type correctness.
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      - run: npm test
+
       - run: npm run build
 
       - name: Prune wrong-arch native binaries

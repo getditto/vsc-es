@@ -27,8 +27,23 @@ export interface Logger {
 
   withTag(tag: string): Logger;
 
+  /** Register exact secret VALUES (e.g. a live auth token) to redact from
+   *  all output, in addition to the built-in pattern-based redaction.
+   *  Values shorter than 8 chars are ignored to avoid over-redaction, and
+   *  duplicates collapse. The values are held in memory only and are never
+   *  themselves logged. Registration is shared across withTag children. */
+  registerKnownSecrets(values: readonly string[]): void;
+  /** Forget every value registered via registerKnownSecrets (e.g. after a
+   *  disconnect, so a recycled token does not over-redact later sessions). */
+  clearKnownSecrets(): void;
+
   /** Flush + read all log files chronologically. Used by the Export Logs command. */
   readAllLogs(): Promise<string>;
+  /** Newest `maxLines` log lines across the rotation set, oldest-first. Use
+   *  this instead of readAllLogs when only recent history matters — it reads
+   *  backwards and stops early rather than materialising the whole retention
+   *  window. */
+  readRecentLogLines(maxLines: number): Promise<string[]>;
 
   /** Flush + close. Call from extension.deactivate(). */
   dispose(): Promise<void>;

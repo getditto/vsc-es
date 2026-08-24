@@ -20,8 +20,6 @@ test('OpenPanelsTracker: empty state by default', () => {
   const f = fakeMemento();
   const t = new OpenPanelsTracker(f.api);
   assert.deepEqual(t.get('A'), { query: [], peers: false });
-  assert.equal(t.hasAny('A'), false);
-  assert.equal(t.count('A'), 0);
 });
 
 test('OpenPanelsTracker: upsert adds a new query tab', async () => {
@@ -79,14 +77,15 @@ test('OpenPanelsTracker: setPeers toggles cleanly', async () => {
   assert.equal(t.get('A').peers, false);
 });
 
-test('OpenPanelsTracker: count + hasAny reflect both kinds', async () => {
+test('OpenPanelsTracker: per-DB state aggregates both kinds', async () => {
   const f = fakeMemento();
   const t = new OpenPanelsTracker(f.api);
   await t.upsertQueryTab('A', { id: 't1', text: 'A' });
   await t.upsertQueryTab('A', { id: 't2', text: 'B' });
   await t.setPeers('A', true);
-  assert.equal(t.count('A'), 3);
-  assert.equal(t.hasAny('A'), true);
+  const s = t.get('A');
+  assert.equal(s.query.length, 2);
+  assert.equal(s.peers, true);
 });
 
 test('OpenPanelsTracker: per-DB isolation', async () => {

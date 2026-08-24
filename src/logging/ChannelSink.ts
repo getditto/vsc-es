@@ -10,9 +10,14 @@ import type { Sink } from './Sink.js';
  * filter at the Logger layer based on the channel's reported level.
  */
 export class ChannelSink implements Sink {
+  private disposed = false;
+
   constructor(private readonly channel: vscode.LogOutputChannel) {}
 
   write(level: LogLevel, formatted: string): void {
+    // Writes can race disposal during shutdown (e.g. a disconnect log line
+    // landing after the channel is disposed) — a disposed channel may throw.
+    if (this.disposed) { return; }
     switch (level) {
       case 'error': this.channel.error(formatted); break;
       case 'warn':  this.channel.warn(formatted);  break;
@@ -31,5 +36,5 @@ export class ChannelSink implements Sink {
   }
 
   show(): void { this.channel.show(); }
-  dispose(): void { this.channel.dispose(); }
+  dispose(): void { this.disposed = true; this.channel.dispose(); }
 }

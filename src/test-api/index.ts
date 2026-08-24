@@ -29,7 +29,7 @@ export function buildConfigFromEnv(env: EnvShape): {
   secrets: SecretSet;
 } {
   for (const key of REQUIRED_ENV_KEYS) {
-    if (!env[key] || env[key]!.trim() === '') {
+    if (!env[key] || env[key].trim() === '') {
       throw new Error(`Missing required env var ${key}`);
     }
   }
@@ -51,7 +51,7 @@ export function makeTestApi(deps: {
   manager: DittoManager;
   env?: EnvShape;
 }): TestApi {
-  const env = deps.env ?? (process.env as EnvShape);
+  const env = deps.env ?? (process.env);
   return {
     async registerFromEnv() {
       const { config, secrets } = buildConfigFromEnv(env);

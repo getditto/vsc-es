@@ -26,17 +26,32 @@ export function parseLine(raw: string, id: number): LogLine {
   if (!m) {
     return { id, timestamp: null, level: 'info', tag: null, raw: safe, text: safe };
   }
-  const [, tsRaw, lvlRaw, tag, text] = m;
+  const [, tsRaw, lvlRaw, tag] = m;
+  if (tsRaw === undefined || lvlRaw === undefined) {
+    return { id, timestamp: null, level: 'info', tag: null, raw: safe, text: safe };
+  }
   const level = LEVEL_TOKENS[lvlRaw.trim()] ?? 'info';
   let timestamp: Date | null = null;
   const d = new Date(tsRaw);
   if (!isNaN(d.getTime())) timestamp = d;
+  // `text` is a lazy, memoised, ENUMERABLE getter rather than an eagerly
+  // captured substring: the AnalyzerSink retains up to 50k parsed lines for
+  // the life of the extension, and most of them never have their message
+  // body read at all (it is only needed while an analyzer panel is open).
+  // Enumerable matters: lines cross to the webview via postMessage, whose
+  // JSON serialisation only picks up own enumerable properties.
+  let textMemo: string | null = null;
   return {
     id,
     timestamp,
     level,
     tag: tag ?? null,
     raw: safe,
-    text: text ?? '',
+    get text(): string {
+      if (textMemo === null) {
+        textMemo = LINE_RE.exec(safe)?.[4] ?? '';
+      }
+      return textMemo;
+    },
   };
 }

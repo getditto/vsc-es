@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { panelHtml, autoRevealInspectorOnce } from './webview-utils.js';
-import type { DittoCollection } from '../models/DittoCollection.js';
-import type { AddIndexIn, AddIndexOut, LogIn, LogOut } from '../ipc/messages.js';
+import { panelHtml, autoRevealInspectorOnce, webviewMessageHandler } from './webview-utils.js';
+import type { DittoCollection, IndexField } from '../models/DittoCollection.js';
+import type { AddIndexIn, AddIndexOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 
 /** Structural shim — the panel just needs these three methods, so we avoid
@@ -9,7 +9,7 @@ import type { Logger } from '../logging/types.js';
  *  trivially fakeable). */
 export interface AddIndexCollectionsShim {
   current(): DittoCollection[];
-  createIndex(collection: string, fieldName: string): Promise<void>;
+  createIndex(collection: string, fields: readonly IndexField[]): Promise<void>;
   refresh(): Promise<void>;
 }
 
@@ -72,20 +72,13 @@ export class AddIndexPanel {
     });
 
     this.panel.webview.onDidReceiveMessage(
-      (msg: AddIndexIn | LogIn) => this.handle(msg),
+      webviewMessageHandler<AddIndexIn>(
+        this.logger, 'ext:addIndex', 'Add index failed', (msg) => this.handle(msg),
+      ),
       undefined,
       this.disposables,
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
-
-    // Push initial channel level to webview.
-    this.panel.webview.postMessage({ type: 'log.levelChanged', level: logger.getChannelLevel() } satisfies LogOut);
-
-    // Subscribe to level changes; track disposable so we can clean up.
-    const levelSub = logger.onDidChangeChannelLevel((level) => {
-      this.panel.webview.postMessage({ type: 'log.levelChanged', level } satisfies LogOut);
-    });
-    this.panel.onDidDispose(() => levelSub.dispose(), null, this.disposables);
 
     // Defer the initial init message slightly so the webview script has
     // mounted its message listener before we post.
@@ -104,19 +97,14 @@ export class AddIndexPanel {
 
   private post(msg: AddIndexOut): void { this.panel.webview.postMessage(msg); }
 
-  private async handle(msg: AddIndexIn | LogIn): Promise<void> {
-    if (msg.type === 'log') {
-      const wlog = this.logger.withTag('webview:dittoAddIndex');
-      wlog[msg.level](msg.message, msg.ctx);
-      return;
-    }
+  private async handle(msg: AddIndexIn): Promise<void> {
     if (msg.type === 'addIndex.cancel') {
       this.dispose();
       return;
     }
     if (msg.type === 'addIndex.create') {
       try {
-        await this.collections.createIndex(msg.collection, msg.field);
+        await this.collections.createIndex(msg.collection, msg.fields);
         await this.collections.refresh();
         this.post({ type: 'addIndex.created' });
         this.dispose();

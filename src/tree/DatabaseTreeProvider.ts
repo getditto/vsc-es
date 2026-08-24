@@ -5,6 +5,7 @@ import type { ObserverStore } from '../storage/ObserverStore.js';
 import type { DatabaseTreeNode } from './DatabaseTreeItem.js';
 import type { LifecycleState } from '../ditto/lifecycle-state.js';
 import type { DittoCollection } from '../models/DittoCollection.js';
+import { describeIndexKeys } from '../ditto/index-builder.js';
 
 /**
  * Build a `TreeItemLabel` whose count portion is wrapped in
@@ -13,7 +14,7 @@ import type { DittoCollection } from '../models/DittoCollection.js';
  * affordance to a "chip" — so the count reads as a styled pill at the
  * end of the label.
  *
- * The label is a single nbsp-padded string (`<text> <count>`) so
+ * The label is a single nbsp-padded string (`<text> <count>`) so
  * the highlight has visible padding on the left of the number,
  * approximating chip whitespace. Counts are formatted with locale
  * thousands separators because the previous 2-char badge cap forced
@@ -44,6 +45,7 @@ export interface CollectionsSource {
 export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTreeNode> {
   private readonly _changeEmitter = new vscode.EventEmitter<DatabaseTreeNode | undefined>();
   readonly onDidChangeTreeData = this._changeEmitter.event;
+  private readonly disposables: vscode.Disposable[] = [];
 
   constructor(
     private readonly configs: ConfigStore,
@@ -53,10 +55,21 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     private readonly lifecycleFor?: LifecycleResolver,
     private readonly collections?: CollectionsSource,
   ) {
-    configs.onDidChange(() => this._changeEmitter.fire(undefined));
-    subs.onDidChange(() => this._changeEmitter.fire(undefined));
-    observers.onDidChange(() => this._changeEmitter.fire(undefined));
-    collections?.onChange(() => this._changeEmitter.fire(undefined));
+    this.disposables.push(
+      configs.onDidChange(() => this._changeEmitter.fire(undefined)),
+      subs.onDidChange(() => this._changeEmitter.fire(undefined)),
+      observers.onDidChange(() => this._changeEmitter.fire(undefined)),
+    );
+    if (collections) {
+      this.disposables.push(
+        collections.onChange(() => this._changeEmitter.fire(undefined)),
+      );
+    }
+  }
+
+  dispose(): void {
+    while (this.disposables.length) { this.disposables.pop()?.dispose(); }
+    this._changeEmitter.dispose();
   }
 
   refresh(node?: DatabaseTreeNode) { this._changeEmitter.fire(node); }
@@ -276,13 +289,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
           : node.status === 'error'
             ? new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'))
             : new vscode.ThemeIcon('circle-outline');
-        item.description = node.status === 'active' ? 'connected' : undefined;
+        if (node.status === 'active') { item.description = 'connected'; }
         item.contextValue = `database.${node.status}`;
         item.tooltip = node.config.name;
         item.id = `db.${node.config.id}`;
-        item.command = node.status === 'idle' || node.status === 'error'
-          ? { command: 'dittoVsce.connect', title: 'Connect', arguments: [node] }
-          : undefined;
+        if (node.status === 'idle' || node.status === 'error') {
+          item.command = { command: 'dittoVsce.connect', title: 'Connect', arguments: [node] };
+        }
 
         const ls = this.lifecycleFor?.();
         let transitionLabel: string | undefined;
@@ -296,7 +309,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
           item.iconPath = new vscode.ThemeIcon('sync~spin');
           item.description = transitionLabel;
           item.contextValue = 'database.transitioning';
-          item.command = undefined;
+          delete item.command;
         }
         return item;
       }
@@ -460,14 +473,24 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         );
         item.iconPath = new vscode.ThemeIcon('symbol-namespace');
         item.contextValue = 'index';
+        // Composite indexes are the point of the key list — showing it inline
+        // saves expanding the row to find out what a name like
+        // `idx_tasks_status_createdAt` actually covers.
+        item.description = describeIndexKeys(node.index.fields);
+        item.tooltip = node.index.fields.length > 1
+          ? `Composite index: ${item.description}`
+          : item.description;
         item.id = `idx.${node.databaseId}.${node.collectionName}.${node.index.id}`;
         return item;
       }
       case 'indexField': {
-        const item = new vscode.TreeItem(node.field, vscode.TreeItemCollapsibleState.None);
+        const item = new vscode.TreeItem(node.field.name, vscode.TreeItemCollapsibleState.None);
+        // The direction is only meaningful alongside the key order, so it goes
+        // in the description rather than the label.
+        item.description = node.field.ascending ? 'ASC' : 'DESC';
         item.iconPath = new vscode.ThemeIcon('symbol-field');
         item.contextValue = 'indexField';
-        item.id = `idxF.${node.databaseId}.${node.collectionName}.${node.indexId}.${node.field}`;
+        item.id = `idxF.${node.databaseId}.${node.collectionName}.${node.indexId}.${node.field.name}`;
         return item;
       }
       case 'peerListing': {

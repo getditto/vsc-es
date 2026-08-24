@@ -35,15 +35,17 @@ export async function deleteConnectionAtomically(
     if (secretDeleteAttempted) {
       try { await secrets.write(id, previousSecrets); } catch { rollbackFailed = true; }
     }
-    throw new ConnectionPersistenceError(rollbackFailed);
+    throw new ConnectionPersistenceError(rollbackFailed, 'deleted');
   }
 }
 
 export class ConnectionPersistenceError extends Error {
-  constructor(readonly rollbackFailed: boolean) {
+  /** `action` names the operation that failed so the message doesn't say
+   *  "could not be saved" on the delete path. */
+  constructor(readonly rollbackFailed: boolean, action: 'saved' | 'deleted') {
     super(rollbackFailed
-      ? 'Connection could not be saved, and some previous values could not be restored. Review the connection before retrying.'
-      : 'Connection could not be saved. Previous values were restored.');
+      ? `Connection could not be ${action}, and some previous values could not be restored. Review the connection before retrying.`
+      : `Connection could not be ${action}. Previous values were restored.`);
   }
 }
 
@@ -77,7 +79,9 @@ export async function saveConnectionAtomically(
   nextSecrets: SecretSet,
 ): Promise<void> {
   const previousConfig = configs.get(config.id);
-  let previousSecrets: SecretSet;
+  // Hoisted so the catch block restores a properly-typed value rather
+  //  than asserting non-null on a declaration the compiler can't prove.
+  let previousSecrets: SecretSet | undefined;
   let configWriteAttempted = false;
   let secretsWriteAttempted = false;
 
@@ -89,8 +93,8 @@ export async function saveConnectionAtomically(
     await secrets.write(config.id, nextSecrets);
   } catch {
     let rollbackFailed = false;
-    if (secretsWriteAttempted) {
-      try { await secrets.write(config.id, previousSecrets!); } catch { rollbackFailed = true; }
+    if (secretsWriteAttempted && previousSecrets !== undefined) {
+      try { await secrets.write(config.id, previousSecrets); } catch { rollbackFailed = true; }
     }
     if (configWriteAttempted) {
       try {
@@ -98,6 +102,6 @@ export async function saveConnectionAtomically(
         else { await configs.delete(config.id); }
       } catch { rollbackFailed = true; }
     }
-    throw new ConnectionPersistenceError(rollbackFailed);
+    throw new ConnectionPersistenceError(rollbackFailed, 'saved');
   }
 }
