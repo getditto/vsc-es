@@ -84,13 +84,13 @@
     "viewsWelcome": [
       {
         "view": "dittoDatabases",
-        "contents": "No Ditto connections yet.\n\nNew to Ditto? Take the guided tour to set up your first connection.\n[Open Welcome](command:dittoVsce.openWelcome)\n\nAlready have Portal credentials?\n[Register Connection…](command:dittoVsce.registerDatabase)"
+        "contents": "No Ditto connections yet.\n\nNew to Ditto? Take the guided tour to set up your first connection.\n[Open Welcome](command:dittoVsce.openWelcome)\n\nAlready have Portal credentials?\n[Register Connection\u2026](command:dittoVsce.registerDatabase)"
       }
     ],
     "commands": [
       {
         "command": "dittoVsce.registerDatabase",
-        "title": "Ditto: Register Connection…",
+        "title": "Ditto: Register Connection\u2026",
         "icon": "$(add)"
       },
       {
@@ -117,7 +117,7 @@
       },
       {
         "command": "dittoVsce.newSubscription",
-        "title": "Ditto: New Subscription…",
+        "title": "Ditto: New Subscription\u2026",
         "icon": "$(add)"
       },
       {
@@ -132,7 +132,7 @@
       },
       {
         "command": "dittoVsce.newObserver",
-        "title": "Ditto: New Observer…",
+        "title": "Ditto: New Observer\u2026",
         "icon": "$(add)"
       },
       {
@@ -150,7 +150,7 @@
       },
       {
         "command": "dittoVsce.importSubscriptionsFromServer",
-        "title": "Ditto: Import Subscriptions from Server…",
+        "title": "Ditto: Import Subscriptions from Server\u2026",
         "icon": "$(cloud-download)"
       },
       {
@@ -169,7 +169,7 @@
       },
       {
         "command": "dittoVsce.openImportData",
-        "title": "Import Data…",
+        "title": "Import Data\u2026",
         "icon": "$(cloud-upload)"
       },
       {
@@ -179,7 +179,7 @@
       },
       {
         "command": "dittoVsce.getQuickstarts",
-        "title": "Ditto: Get Quickstarts…",
+        "title": "Ditto: Get Quickstarts\u2026",
         "category": "Ditto"
       },
       {
@@ -201,7 +201,7 @@
       },
       {
         "command": "dittoVsce.exportLogs",
-        "title": "Ditto: Export Logs for Bug Report…"
+        "title": "Ditto: Export Logs for Bug Report\u2026"
       },
       {
         "command": "dittoVsce.showLogFile",
@@ -219,11 +219,11 @@
       },
       {
         "command": "dittoVsce.queryAllInCollection",
-        "title": "SELECT * FROM …"
+        "title": "SELECT * FROM \u2026"
       },
       {
         "command": "dittoVsce.addIndex",
-        "title": "Add Index…",
+        "title": "Add Index\u2026",
         "icon": "$(add)"
       },
       {
@@ -512,27 +512,27 @@
   },
   "devDependencies": {
     "@codemirror/lang-json": "^6.0.2",
-    "@codemirror/state": "^6.6.0",
-    "@codemirror/view": "^6.42.1",
-    "@eslint/js": "^9.39.5",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.9",
+    "@eslint/js": "^10.0.1",
     "@types/glob": "^8.1.0",
-    "@types/jsdom": "^21.1.7",
+    "@types/jsdom": "^30.0.0",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^22.10.0",
-    "@types/vscode": "^1.106.0",
+    "@types/node": "^26.2.0",
+    "@types/vscode": "^1.134.0",
     "@vscode/codicons": "^0.0.45",
-    "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^3.9.1",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
     "codemirror": "^6.0.2",
-    "esbuild": "^0.28.1",
-    "eslint": "^9.39.5",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.8.1",
     "glob": "^13.0.6",
-    "jsdom": "^25.0.1",
+    "jsdom": "^30.0.1",
     "lit": "^3.3.2",
-    "markdown-it": "^14.1.1",
-    "mocha": "^11.7.5",
-    "tsx": "^4.16.2",
-    "typescript": "^5.5.3",
+    "markdown-it": "^15.0.0",
+    "mocha": "^11.8.0",
+    "tsx": "^4.23.12",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.67.0"
   },
   "dependencies": {
@@ -544,10 +544,13 @@
     "brace-expansion@5": "5.0.9",
     "diff": "8.0.3",
     "esbuild": "$esbuild",
-    "fast-uri": "3.1.4",
+    "fast-uri": "3.1.5",
     "form-data": "4.0.6",
-    "js-yaml": "4.3.0",
-    "linkify-it": "5.0.2",
+    "js-yaml": "4.3.1",
+     "linkify-it": "5.0.2",
+     "markdown-it@^15.0.0": {
+       "linkify-it": "6.1.0"
+     },
     "serialize-javascript": "^7.0.5",
     "tmp": "0.2.7",
     "undici": "7.29.0"

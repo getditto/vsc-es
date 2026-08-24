@@ -20,6 +20,7 @@ g.ShadowRoot = dom.window.ShadowRoot;
 g.Document = dom.window.Document;
 g.CSSStyleSheet = dom.window.CSSStyleSheet;
 g.CustomEvent = dom.window.CustomEvent;
+g.MessageEvent = dom.window.MessageEvent;
 g.Event = dom.window.Event;
 g.MouseEvent = dom.window.MouseEvent;
 g.WheelEvent = dom.window.WheelEvent;
