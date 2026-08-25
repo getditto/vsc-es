@@ -173,6 +173,11 @@
         "icon": "$(cloud-upload)"
       },
       {
+        "command": "dittoVsce.openDebugConsole",
+        "title": "Ditto: Open Debug Console",
+        "icon": "$(terminal)"
+      },
+      {
         "command": "dittoVsce.openWelcome",
         "title": "Ditto: Welcome",
         "icon": "$(question)"
@@ -473,6 +478,11 @@
           "type": "boolean",
           "default": true,
           "description": "Capture EXPLAIN plans and duration metrics for queries. When off, the Metrics tab in the Inspector and the Query Metrics panel are hidden, and queries run without the EXPLAIN side-trip (no metrics overhead)."
+        },
+        "dittoVsce.collectSystemMetrics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Ditto's startup-gated system:metrics virtual collection for connections this extension opens (sets DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED around Ditto.open) and show the System metrics section in the Database Metrics panel. Changes apply at the NEXT connect — the SDK parameter is startup-only."
         },
         "dittoVsce.logAnalyzer.customPatternsFile": {
           "type": "string",

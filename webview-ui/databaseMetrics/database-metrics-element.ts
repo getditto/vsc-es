@@ -29,10 +29,38 @@ interface DbMetricsSnapshot {
   computedAt: number;
 }
 
+// ─── System metrics wire shapes (mirror of src/ipc/messages.ts) ──
+interface SystemMetricSample {
+  key: string;
+  labels: Record<string, string>;
+  description: string;
+  unit: string;
+  kind: 'counter' | 'histogram';
+  sinceConnect: number;
+  periodDelta: number;
+  sumSinceConnect?: number;
+  absMax?: number;
+}
+
+interface SystemMetricsSnapshot {
+  samples: SystemMetricSample[];
+  sinceMs: number;
+  polledAtMs: number;
+  pollIntervalMs: number;
+}
+
+type SystemMetricsStatus =
+  | { kind: 'working'; snapshot: SystemMetricsSnapshot }
+  | { kind: 'settingDisabled' }
+  | { kind: 'exporterDisabled' }
+  | { kind: 'noConnection' }
+  | { kind: 'unavailable'; message: string };
+
 type In =
   | { type: 'dbMetrics.loading' }
   | { type: 'dbMetrics.snapshot'; snapshot: DbMetricsSnapshot }
-  | { type: 'dbMetrics.error'; message: string };
+  | { type: 'dbMetrics.error'; message: string }
+  | { type: 'dbMetrics.systemMetrics'; status: SystemMetricsStatus };
 
 type ViewState =
   | { kind: 'idle' }
@@ -75,11 +103,56 @@ const CATEGORY_DESCRIPTION: Record<string, string> = {
   otherBytes: 'Lock files, metrics scratch, anything Ditto writes outside the named buckets.',
 };
 
+// ─── System metrics dashboard sections ─────────────────────────
+// Exact metric keys (all Info level), per the SDK 5.1 source
+// (ditto-link2/ditto-backend-sqlite3/ditto-sync-docs metrics.rs).
+const DSOQ_KEYS = [
+  'ditto.network.dsoq.connection.opened',
+  'ditto.network.dsoq.connection.closed',
+  'ditto.network.dsoq.handshake_failed',
+  'ditto.network.dsoq.endpoint.connect_failed',
+  'ditto.network.dsoq.tlv.decode_invalid',
+  'ditto.network.dsoq.tlv.unknown_type_fatal',
+  'ditto.network.dsoq.tlv.unknown_type_optional',
+  'ditto.network.dsoq.stream.unreliable.datagram_dropped_no_stream',
+  'ditto.network.dsoq.stream.reliable.implicit_refused',
+];
+
+const SQLITE_KEYS = [
+  'ditto.backend.sqlite3.fsync_total',
+  'ditto.backend.sqlite3.fsync_duration_secs',
+  'ditto.backend.sqlite3.wal_size_pages',
+  'ditto.backend.sqlite3.checkpoint_duration_secs',
+];
+
+const RECOVERY_KEYS = [
+  'ditto.replication.metadata_corrupt_recoveries',
+  'ditto.replication.session_resets',
+];
+
+/** `ditto.network.dsoq.connection.opened` → `connection.opened` */
+function shortKey(key: string): string {
+  const lastDotOfPrefix = key.lastIndexOf('.', key.indexOf('.', key.indexOf('.') + 1) + 1);
+  return key.slice(lastDotOfPrefix + 1);
+}
+
+function formatNum(n: number, unit: string): string {
+  if (unit === 'seconds') {
+    if (n < 0.001) { return `${(n * 1_000_000).toFixed(0)} µs`; }
+    if (n < 1) { return `${(n * 1000).toFixed(1)} ms`; }
+    return `${n.toFixed(2)} s`;
+  }
+  return n.toLocaleString();
+}
+
 @customElement('ditto-database-metrics')
 export class DatabaseMetricsElement extends LitElement {
   @state() private view: ViewState = { kind: 'idle' };
   @state() private sortKey: SortKey = 'cborPayloadBytes';
   @state() private sortDir: SortDir = 'desc';
+  /** Latest system:metrics status from the host. `null` until the first
+   *  poll/publish lands — the section shows a collecting state briefly. */
+  @state() private systemMetrics: SystemMetricsStatus | null = null;
 
   static override styles = css`
     :host {
@@ -214,6 +287,46 @@ export class DatabaseMetricsElement extends LitElement {
       border: 1px solid var(--vscode-inputValidation-errorBorder);
       border-radius: 4px;
     }
+
+    .sys-section { margin-top: 28px; }
+    .sys-note {
+      padding: 10px 12px;
+      background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      color: var(--vscode-descriptionForeground);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .sys-note code {
+      font-family: var(--vscode-editor-font-family);
+      color: var(--vscode-foreground);
+    }
+    .sys-alert {
+      margin: 8px 0;
+      padding: 8px 12px;
+      border: 1px solid var(--vscode-editorWarning-foreground, #cca700);
+      border-radius: 4px;
+      color: var(--vscode-editorWarning-foreground, #cca700);
+      font-size: 12px;
+    }
+    .sys-hint {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin: 4px 0 8px;
+    }
+    .sys-table th { cursor: default; }
+    .sys-table td.labels {
+      color: var(--vscode-descriptionForeground);
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+    }
+    .sys-none {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      font-style: italic;
+      padding: 6px 0;
+    }
   `;
 
   /** Host-message subscription. The controller owns its own lifetime, so a
@@ -227,6 +340,8 @@ export class DatabaseMetricsElement extends LitElement {
       this.view = { kind: 'loaded', snapshot: m.snapshot };
     } else if (m.type === 'dbMetrics.error') {
       this.view = { kind: 'error', message: m.message };
+    } else if (m.type === 'dbMetrics.systemMetrics') {
+      this.systemMetrics = m.status;
     }
   }
 
@@ -258,6 +373,7 @@ export class DatabaseMetricsElement extends LitElement {
         </button>
       </div>
       ${this.renderBody()}
+      ${this.renderSystemMetrics()}
     `;
   }
 
@@ -307,6 +423,146 @@ export class DatabaseMetricsElement extends LitElement {
         ? html`<div class="empty">No user collections found.</div>`
         : this.renderCollectionTable(s)}
     `;
+  }
+
+  // ─── System metrics (SDK 5.1 system:metrics) ─────────────────
+
+  private renderSystemMetrics(): TemplateResult | typeof nothing {
+    const st = this.systemMetrics;
+    let body: TemplateResult;
+    if (st === null) {
+      body = html`<div class="sys-none">Collecting — the first poll lands shortly after this panel opens…</div>`;
+    } else if (st.kind === 'working') {
+      body = this.renderSystemDashboard(st.snapshot);
+    } else if (st.kind === 'settingDisabled') {
+      body = html`
+        <div class="sys-note">
+          System metrics are disabled. Enable
+          <code>dittoVsce.collectSystemMetrics</code> and reconnect this database —
+          the SDK enables the <code>system:metrics</code> exporter at connection
+          startup only (runtime changes are ignored by Ditto).
+        </div>`;
+    } else if (st.kind === 'exporterDisabled') {
+      body = html`
+        <div class="sys-note">
+          <code>system:metrics</code> exporter is off for this connection — it was
+          opened with <code>dittoVsce.collectSystemMetrics</code> disabled. The
+          exporter parameter is startup-only, so the fix is: enable the setting,
+          then disconnect and reconnect this database.
+        </div>`;
+    } else if (st.kind === 'noConnection') {
+      body = html`<div class="sys-note">No active connection — connect this database to show system metrics.</div>`;
+    } else {
+      body = html`<div class="sys-note">System metrics unavailable: ${st.message}</div>`;
+    }
+    return html`
+      <div class="sys-section">
+        <div class="section-head"><h2>System metrics</h2></div>
+        ${body}
+      </div>
+    `;
+  }
+
+  private renderSystemDashboard(snap: SystemMetricsSnapshot): TemplateResult {
+    const since = new Date(snap.sinceMs).toLocaleTimeString();
+    const polled = new Date(snap.polledAtMs).toLocaleTimeString();
+    return html`
+      <div class="sys-hint">
+        Totals since ${since}; last polled ${polled}, every ${(snap.pollIntervalMs / 1000).toFixed(0)}s.
+        Values accumulate per-read deltas — <code>system:metrics</code> reads flush Ditto's counters.
+      </div>
+      ${this.renderDsoqSection(snap)}
+      ${this.renderSqliteSection(snap)}
+      ${this.renderRecoverySection(snap)}
+    `;
+  }
+
+  private samplesFor(snap: SystemMetricsSnapshot, keys: string[]): SystemMetricSample[] {
+    const wanted = new Set(keys);
+    return snap.samples
+      .filter(s => wanted.has(s.key))
+      .sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key)
+        || JSON.stringify(a.labels).localeCompare(JSON.stringify(b.labels)));
+  }
+
+  private renderMetricTable(title: string, keys: string[], snap: SystemMetricsSnapshot, hint?: string): TemplateResult {
+    const rows = this.samplesFor(snap, keys);
+    return html`
+      <div class="section-head"><h2>${title}</h2></div>
+      ${hint ? html`<div class="sys-hint">${hint}</div>` : nothing}
+      ${rows.length === 0
+        ? html`<div class="sys-none">No observations yet — these metrics appear once there is matching activity.</div>`
+        : html`
+          <table class="sys-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Labels</th>
+                <th class="numeric">Since connect</th>
+                <th class="numeric">Last period</th>
+                <th class="numeric">Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(r => html`
+                <tr>
+                  <td>${shortKey(r.key)}</td>
+                  <td class="labels">${Object.entries(r.labels).map(([k, v]) => `${k}=${v}`).join(' ')}</td>
+                  <td class="numeric">${formatNum(r.sinceConnect, r.kind === 'histogram' ? 'count' : r.unit)}</td>
+                  <td class="numeric">${formatNum(r.periodDelta, r.kind === 'histogram' ? 'count' : r.unit)}</td>
+                  <td class="numeric">${r.kind === 'histogram'
+                    ? html`${r.sinceConnect > 0 ? html`avg ${formatNum((r.sumSinceConnect ?? 0) / r.sinceConnect, r.unit)}` : nothing}${r.absMax !== undefined ? html` · max ${formatNum(r.absMax, r.unit)}` : nothing}`
+                    : r.description}
+                  </td>
+                </tr>
+              `)}
+            </tbody>
+          </table>
+        `}
+    `;
+  }
+
+  private totalFor(snap: SystemMetricsSnapshot, key: string): number {
+    return snap.samples.filter(s => s.key === key).reduce((acc, s) => acc + s.sinceConnect, 0);
+  }
+
+  private renderDsoqSection(snap: SystemMetricsSnapshot): TemplateResult {
+    const opened = this.totalFor(snap, 'ditto.network.dsoq.connection.opened');
+    const closed = this.totalFor(snap, 'ditto.network.dsoq.connection.closed');
+    const divergence = opened - closed;
+    return html`
+      ${opened + closed > 0 && divergence !== 0 ? html`
+        <div class="sys-alert">
+          Connections opened (${opened.toLocaleString()}) and closed (${closed.toLocaleString()}) diverge
+          by ${Math.abs(divergence).toLocaleString()} — divergence indicates a connection
+          leak or handshake instability.
+        </div>
+      ` : nothing}
+      ${this.renderMetricTable(
+        'DSOQ network',
+        DSOQ_KEYS,
+        snap,
+        'Non-zero tlv.unknown_type_* counts indicate interop/version skew between peers.',
+      )}
+    `;
+  }
+
+  private renderSqliteSection(snap: SystemMetricsSnapshot): TemplateResult {
+    return this.renderMetricTable(
+      'SQLite per database role',
+      SQLITE_KEYS,
+      snap,
+      'Broken down by labels.db: main / replication_metadata / attachment / system_info.',
+    );
+  }
+
+  private renderRecoverySection(snap: SystemMetricsSnapshot): TemplateResult {
+    return this.renderMetricTable(
+      'Replication recovery',
+      RECOVERY_KEYS,
+      snap,
+      'Non-zero counts here mean replication metadata needed recovery, or a sync session was reset (see labels.cause).',
+    );
   }
 
   private renderCollectionTable(s: DbMetricsSnapshot): TemplateResult {

@@ -1,0 +1,1 @@
+2026-08-20T10:15:03.456Z  WARN   [sdk]  session metadata database was corrupt on open; deleting and reinitializing this peer's metadata, then retrying  {"remote.peer_id":"peer-9f2a","error":"corruption: checksum mismatch"}

@@ -14,6 +14,8 @@ import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import type { QueryMetricsStore } from '../storage/QueryMetricsStore.js';
 import { executeRemoteQuery } from '../ditto/HttpQueryService.js';
+import { extractQueryAdvice } from '../ditto/advise.js';
+import { isAdviseStatement } from '../ditto/QueryProfileParser.js';
 import { extractCollectionName } from '../ditto/import-subscription-parser.js';
 import { detectAttachments } from '../inspector/inspector-state.js';
 import { quoteIdentifier } from '../ditto/dql-identifier.js';
@@ -335,6 +337,10 @@ export class QueryEditorPanel {
       await this.handleExport(msg.json, msg.rowCount);
       return;
     }
+    if (msg.type === 'query.createSuggestedIndex') {
+      await this.handleCreateSuggestedIndex(msg.statement, msg.collection);
+      return;
+    }
     if (msg.type === 'query.rowActivated') {
       // Double-click → flip the Inspector to JSON. setQueryTab is a
       // no-op when content.kind isn't 'query', but in practice the
@@ -386,6 +392,9 @@ export class QueryEditorPanel {
         columns,
         durationMs,
         metadata,
+        // ADVISE rows carry their index suggestions inline; hoist them so
+        // the webview renders the advisory card without re-deriving it.
+        advice: extractQueryAdvice(rows),
       });
       this.lastMetadata = metadata;
       this.lastSelectedRowJson = null;
@@ -480,12 +489,14 @@ export class QueryEditorPanel {
    *  string, or '' on any failure (network, server error, parse error)
    *  so the Metrics tab degrades to "(plan unavailable)" rather than
    *  failing the whole query. Skips when the user already prefixed
-   *  EXPLAIN, matching DittoManager.runExplain on the local path. */
+   *  EXPLAIN, matching DittoManager.runExplain on the local path. ADVISE
+   *  is skipped too — `EXPLAIN ADVISE …` is not valid syntax. */
   private async fetchHttpExplain(
     httpReq: { httpApiUrl: string; httpApiKey: string; allowUntrustedCerts: boolean },
     query: string,
   ): Promise<string> {
     if (query.trimStart().toUpperCase().startsWith('EXPLAIN')) { return ''; }
+    if (isAdviseStatement(query)) { return ''; }
     try {
       const r = await executeRemoteQuery({ ...httpReq, query: `EXPLAIN ${query}` }, this.logger);
       const first = r.items[0];
@@ -833,6 +844,65 @@ export class QueryEditorPanel {
       vscode.window.showErrorMessage(
         `Add attachment failed: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+  }
+
+  /**
+   * Apply one ADVISE suggestion: confirm (modal, so a stray click can't
+   * write to the store), re-check the active connection after the modal —
+   * it is the window during which a connection switch can start, and
+   * executeRaw resolves against the CURRENT session (mirrors the mid-switch
+   * guard in CollectionsRepository.createIndex / ImportService.checkActive)
+   * — then run the exact `CREATE INDEX IF NOT EXISTS …` Ditto proposed.
+   *
+   * The tree refresh goes through the `dittoVsce.refreshCollections`
+   * command rather than a constructor-injected CollectionsRepository so
+   * this panel keeps its existing dependency set (extension.ts command
+   * handler owns the repo and already logs refresh failures).
+   *
+   * `ADVISE AND PROVISION` is intentionally never a path here: nothing in
+   * the UI runs provisioning silently.
+   */
+  private async handleCreateSuggestedIndex(statement: string, collection: string): Promise<void> {
+    const log = this.logger.withTag('ext:QueryEditor');
+    const activeAtEntry = this.manager.getActiveConfigId();
+    if (activeAtEntry !== this.databaseId) {
+      this.post({
+        type: 'query.adviseFeedback',
+        statement,
+        outcome: 'failed',
+        message: 'This tab\'s database is not the active connection — connect to it and try again.',
+      });
+      return;
+    }
+    const confirm = await vscode.window.showWarningMessage(
+      `Create the suggested index on ${collection}?`,
+      { modal: true, detail: statement },
+      'Create Index',
+    );
+    if (confirm !== 'Create Index') {
+      this.post({ type: 'query.adviseFeedback', statement, outcome: 'declined' });
+      return;
+    }
+    if (this.manager.getActiveConfigId() !== activeAtEntry) {
+      this.post({
+        type: 'query.adviseFeedback',
+        statement,
+        outcome: 'failed',
+        message: 'The active connection changed while confirming — the index was not created.',
+      });
+      return;
+    }
+    try {
+      await this.manager.executeRaw(statement);
+      this.post({ type: 'query.adviseFeedback', statement, outcome: 'created' });
+      vscode.window.showInformationMessage(`Index created on ${collection}.`);
+      log.info('ADVISE suggestion applied', { collection, statement });
+      void vscode.commands.executeCommand('dittoVsce.refreshCollections');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error('ADVISE suggestion failed', { collection, statement, err: message });
+      this.post({ type: 'query.adviseFeedback', statement, outcome: 'failed', message });
     }
   }
 

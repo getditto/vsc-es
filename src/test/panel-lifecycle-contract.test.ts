@@ -118,6 +118,7 @@ const DB_NAME = 'DB Under Test';
 const SHOW_ARGS: Record<string, () => unknown[]> = {
   AddIndexPanel:            () => [fakeContext(), anyStub(), anyStub()],
   DatabaseMetricsPanel:     () => [fakeContext(), anyStub(), anyStub(), DB_ID, anyStub(), anyStub()],
+  DebugConsolePanel:        () => [fakeContext(), anyStub()],
   ImportDataPanel:          () => [fakeContext(), anyStub(), anyStub(), anyStub(), DB_ID, anyStub()],
   ImportSubscriptionsPanel: () => [fakeContext(), anyStub(), anyStub(), anyStub(), anyStub(), DB_ID, anyStub()],
   LogAnalyzerPanel:         () => [fakeContext(), DB_ID, DB_NAME, anyStub(), () => Promise.resolve([]), anyStub(), anyStub()],
@@ -136,6 +137,7 @@ async function panels(): Promise<PanelUnderTest[]> {
   const mods = await Promise.all([
     import('../panels/AddIndexPanel.js'),
     import('../panels/DatabaseMetricsPanel.js'),
+    import('../panels/DebugConsolePanel.js'),
     import('../panels/ImportDataPanel.js'),
     import('../panels/ImportSubscriptionsPanel.js'),
     import('../panels/LogAnalyzerPanel.js'),

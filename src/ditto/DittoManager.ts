@@ -37,7 +37,8 @@ import {
 import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
-import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect } from './QueryProfileParser.js';
+import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, isAdviseStatement } from './QueryProfileParser.js';
+import { withSystemMetricsEnv, readCollectSystemMetrics } from './SystemMetricsService.js';
 import { projectQueryRows } from './query-projection.js';
 import { startSyncWithCollectionScopes } from './sync-scopes.js';
 import { applySystemSettings, parseShowAllOptions } from './system-settings.js';
@@ -198,7 +199,16 @@ export class DittoManager {
 
       let ditto: Ditto;
       try {
-        ditto = await Ditto.open(dittoCfg);
+        // The system:metrics exporter is a startup-gated system parameter
+        // (`metrics_exporter_virtual_collection_enabled`, default false;
+        // runtime ALTER SYSTEM is ignored). The SDK reads it from the
+        // DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED env var at open,
+        // so when the dittoVsce.collectSystemMetrics setting is on we flip
+        // the var just around Ditto.open and restore it after. Process-wide
+        // env caveat (another Ditto SDK in the same host would also see it)
+        // is accepted and documented in SystemMetricsService — this
+        // extension is the only SDK host in its process.
+        ditto = await withSystemMetricsEnv(readCollectSystemMetrics(), () => Ditto.open(dittoCfg));
       } catch (openErr) {
         // The SDK uses an OS-level advisory lock on `__ditto_lock_file` inside
         // the working directory; the file itself is an empty placeholder. When
@@ -734,7 +744,9 @@ export class DittoManager {
     // Capture the EXPLAIN plan as a non-fatal side-trip, gated on the
     // metrics setting. We pass the ORIGINAL (non-PROFILE-prefixed)
     // query so EXPLAIN runs against what the user typed.
-    const explain = collectMetrics ? await this.runExplain(query) : '';
+    // ADVISE is skipped: `EXPLAIN ADVISE <SELECT…>` is not valid syntax, so
+    // the side-trip would burn a doomed SDK call on every advice run.
+    const explain = collectMetrics && !isAdviseStatement(query) ? await this.runExplain(query) : '';
 
     const metadata: QueryResultMetadata = {
       dql: query,
