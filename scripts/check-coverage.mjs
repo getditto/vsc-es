@@ -71,11 +71,13 @@ const report = execFileSync('node', [
 ], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
 
 // ─── Parse the nested text report ───────────────────────────────
-// Format: "ℹ" + depth spaces + name + padding + | line% | branch% | func% | uncovered-ranges
+// Format: "ℹ" (Node 23+/24) or "#" (Node 22) + depth spaces + name + padding
+// + | line% | branch% | func% | uncovered-ranges
+const ROW_PREFIX = /^(?:ℹ|#)(\s+)(\S[^|]*?)\s*\|/;
 const rows = new Map(); // full path → { pct, uncovered: number }
 const stack = [];
 for (const line of report.split('\n')) {
-  const m = line.match(/^ℹ(\s+)(\S[^|]*?)\s*\|/);
+  const m = line.match(ROW_PREFIX);
   if (!m) continue;
   const indent = m[1].length;
   const name = m[2].trim();
@@ -116,6 +118,12 @@ for (const file of loadList) {
 worst.sort((a, b) => a.pct - b.pct);
 
 const threshold = Number((process.argv.find(a => a.startsWith('--threshold=')) ?? '--threshold=85').split('=')[1]);
+
+if (rows.size === 0) {
+  console.error('FAIL: no file rows parsed from the coverage report — the node:test coverage text format is not what this parser expects (Node version drift?).');
+  process.exit(2);
+}
+
 const pct = (covered / total) * 100;
 
 console.log(`\nCoverage gate: ${pct.toFixed(2)}% lines over ${loadList.length} runtime files (${covered}/${total} lines) — threshold ${threshold}%`);

@@ -127,10 +127,17 @@ test('Welcome: renders all eight feature cards', async t => {
 
 test('Welcome: links out to the docs and the quickstart repo', async t => {
   const { el } = await mount(t);
-  const hrefs = [...el.shadowRoot!.querySelectorAll('a')].map(a => a.getAttribute('href'));
-  assert.ok(hrefs.includes('https://docs.ditto.live/home/about-ditto'));
-  assert.ok(hrefs.includes('https://github.com/getditto/quickstart'));
-  assert.ok(hrefs.includes('https://docs.ditto.live/dql/dql'));
+  const hrefs = new Set([...el.shadowRoot!.querySelectorAll('a')].map(a => a.getAttribute('href')));
+  // Exact-match membership via Set.has — Array#includes with a URL literal
+  // trips CodeQL's incomplete-URL-substring heuristic even though this is an
+  // equality check, not sanitization.
+  for (const url of [
+    'https://docs.ditto.live/home/about-ditto',
+    'https://github.com/getditto/quickstart',
+    'https://docs.ditto.live/dql/dql',
+  ]) {
+    assert.ok(hrefs.has(url), `missing link ${url}`);
+  }
 });
 
 test('Welcome: ignores host messages while detached and resumes on re-attach', async t => {
