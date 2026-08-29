@@ -6,3 +6,6 @@ dist/
 *.vsix
 docs/superpowers/
 .vscode-test/
+
+# test-injector generated datasets (schema is committed; data is generated on demand)
+scripts/test-injector/data/

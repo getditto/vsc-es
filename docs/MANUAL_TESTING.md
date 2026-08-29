@@ -492,8 +492,16 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 ### T23 · Debug Socket Console (SDK 5.1 `debug_socket`)
 
 **Pre-conditions:** macOS or Linux (no debug socket on Windows). You need an app
-running Ditto **SDK 5.1+** with the debug socket enabled. Any form factor works —
-e.g. a quickstart app with this added after opening Ditto:
+running Ditto **SDK 5.1+** with the debug socket enabled. The repo ships a
+ready-made one — the test injector (`scripts/test-injector/`):
+
+```sh
+npm run injector:generate -- --collection=tasks --count=200
+npm run injector:run -- --collection=tasks --debug-socket=/tmp/my-app-ditto-debug.sock
+```
+
+Any other 5.1+ app works too — e.g. a quickstart app with this added after
+opening Ditto:
 
 ```text
 ALTER SYSTEM SET debug_socket = '/tmp/my-app-ditto-debug.sock'
