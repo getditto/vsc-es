@@ -53,6 +53,13 @@ npm run validate   # typecheck + lint + unit tests
 npm run build
 ```
 
+CI (`.github/workflows/validate.yml`) additionally runs `npm run coverage`:
+the gate in `scripts/check-coverage.mjs` enforces ≥85% line coverage computed
+over ALL runtime source files (node:test only reports files the suite loaded,
+so the script counts never-loaded files as 0%). Its exclusion list (type-only
+modules, `src/extension.ts`, webview `main.ts` bootstraps) is documented in
+the script — treat additions to it as a review-relevant decision.
+
 `npm run validate` is what CI runs on every pull request (`.github/workflows/validate.yml`).
 Note that `npm run build` does **not** typecheck — esbuild strips types without
 checking them — so `npm run typecheck` is a separate, non-redundant gate.

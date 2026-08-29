@@ -53,6 +53,14 @@ jobs:
         if: always()
         run: npm test
 
+      # The coverage gate reconciles node's loaded-files-only report against
+      # the real source tree (never-loaded files count as 0%) and enforces
+      # ≥85% lines over all runtime files; exclusions are documented in
+      # scripts/check-coverage.mjs. Re-runs the suite with V8 coverage on.
+      - name: Coverage gate
+        if: always()
+        run: npm run coverage
+
       # Catches the failures typechecking cannot: a missing entry point, a
       # bundler-resolution error, an asset the build script expects to copy.
       - name: Build

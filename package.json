@@ -482,7 +482,7 @@
         "dittoVsce.collectSystemMetrics": {
           "type": "boolean",
           "default": true,
-          "description": "Enable Ditto's startup-gated system:metrics virtual collection for connections this extension opens (sets DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED around Ditto.open) and show the System metrics section in the Database Metrics panel. Changes apply at the NEXT connect — the SDK parameter is startup-only."
+          "description": "Enable Ditto's startup-gated system:metrics virtual collection for connections this extension opens (sets DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED around Ditto.open) and show the System metrics section in the Database Metrics panel. Changes apply at the NEXT connect \u2014 the SDK parameter is startup-only."
         },
         "dittoVsce.logAnalyzer.customPatternsFile": {
           "type": "string",
@@ -520,7 +520,8 @@
     "test:integration:load": "DITTO_CI_DEPTH=load node dist/test/integration/runTests.js",
     "test:integration:e2e": "DITTO_CI_DEPTH=e2e DITTO_CI_MODE=1 node dist/test/integration/runTests.js",
     "vscode:prepublish": "npm run build",
-    "package": "vsce package --target ${TARGET:?TARGET env var must be set, e.g. darwin-arm64}"
+    "package": "vsce package --target ${TARGET:?TARGET env var must be set, e.g. darwin-arm64}",
+    "coverage": "node scripts/check-coverage.mjs"
   },
   "devDependencies": {
     "@codemirror/lang-json": "^6.0.2",
@@ -559,10 +560,10 @@
     "fast-uri": "3.1.5",
     "form-data": "4.0.6",
     "js-yaml": "4.3.1",
-     "linkify-it": "5.0.2",
-     "markdown-it@^15.0.0": {
-       "linkify-it": "6.1.0"
-     },
+    "linkify-it": "5.0.2",
+    "markdown-it@^15.0.0": {
+      "linkify-it": "6.1.0"
+    },
     "serialize-javascript": "^7.0.5",
     "tmp": "0.2.7",
     "undici": "7.29.0"
