@@ -99,11 +99,24 @@ export function parseShowAllOptions(result: unknown): SystemSettingOption[] {
     if (!parameter) {
       const entries = Object.entries(record);
       const first = entries.length === 1 ? entries[0] : undefined;
-      if (!first) { continue; }
-      const [singleParameter, singleValue] = first;
-      value = singleValue;
-      const option = optionFromValue(singleParameter, value);
-      if (option) { options.push(option); }
+      if (first) {
+        const [singleParameter, singleValue] = first;
+        value = singleValue;
+        const option = optionFromValue(singleParameter, value);
+        if (option) { options.push(option); }
+        continue;
+      }
+      // SDK 5.x SHOW ALL shape: one item whose value is a single wide object
+      // mapping every parameter name to its current value (~388 entries),
+      // not one row per parameter. Verified live against 5.1.0 — and no
+      // parameter is named like a column header, so the wide path cannot
+      // misroute (probed: no 'name'/'parameter'/'value' keys exist).
+      if (entries.length > 1) {
+        for (const [key, entryValue] of entries) {
+          const option = optionFromValue(key, entryValue);
+          if (option) { options.push(option); }
+        }
+      }
       continue;
     }
     const option = optionFromValue(parameter, value);
@@ -122,6 +135,13 @@ export function parseShowAllOptions(result: unknown): SystemSettingOption[] {
 function optionFromValue(parameter: string, value: unknown): SystemSettingOption | null {
   const normalized = parameter.trim().toUpperCase();
   if (!PARAMETER_PATTERN.test(normalized) || value === null || value === undefined) { return null; }
+  // DQL returns large integers as bigint (SHOW ALL has bigint-valued
+  // parameters); coerce within the safe range like peer-info's asNumber.
+  if (typeof value === 'bigint') {
+    const asNumber = Number(value);
+    if (!Number.isSafeInteger(asNumber)) { return null; }
+    return { parameter: normalized, type: 'integer', value: asNumber };
+  }
   if (typeof value === 'boolean') { return { parameter: normalized, type: 'boolean', value }; }
   if (typeof value === 'number' && Number.isSafeInteger(value)) {
     return { parameter: normalized, type: 'integer', value };

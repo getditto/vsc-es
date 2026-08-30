@@ -796,12 +796,16 @@ export class DittoManager {
    * inside the finally block so the user isn't left with a stranded session.
   */
   async applyTransportConfig(opts: TransportPrefs): Promise<void> {
+    // Fail fast BEFORE queueing on the lock: without this pre-check the lock
+    // serializes two applies (the second waits, then re-applies) and the
+    // in-progress guard inside the locked method could never trip — a user
+    // double-clicking Apply would silently apply twice instead of being told.
+    if (this.applyingTransports) { throw new Error('Transport change already in progress.'); }
     await withConnectionPersistenceLock(() => this.applyTransportConfigLocked(opts));
   }
 
   private async applyTransportConfigLocked(opts: TransportPrefs): Promise<void> {
     if (!this.session) { throw new Error('No active database.'); }
-    if (this.applyingTransports) { throw new Error('Transport change already in progress.'); }
     const session = this.session;
     const ditto = session.ditto;
     const configId = session.configId;

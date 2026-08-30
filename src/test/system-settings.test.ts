@@ -151,3 +151,40 @@ test('parseShowAllOptions deterministically keeps the first duplicate parameter'
     { parameter: 'LIMIT', type: 'integer', value: 10 },
   ]);
 });
+
+test('parseShowAllOptions parses the SDK 5.x wide-map SHOW ALL shape', () => {
+  // SDK 5.x answers SHOW ALL with ONE item whose value is a single object of
+  // ~388 parameter entries (probed live against 5.1.0). Reserved parameters
+  // are still filtered, unset (null) values skipped, values typed.
+  const result = {
+    items: [
+      { value: {
+        attachment_repair_forward_capacity: 4096,
+        attachments_auto_fetch: false,
+        dql_strict_mode: false,               // reserved — filtered out
+        user_collection_sync_scopes: null,    // reserved + null — filtered out
+        request_timeout_note: 'use DQL_REQUEST_TIMEOUT_SECONDS',
+        mesh_chooser_config: { wifi_aware_enabled: false },
+        tombstone_reap_batch_size: 1024n,     // bigint → integer within safe range
+        too_big_for_number: 2n ** 60n,        // bigint beyond safe range — skipped
+        unset_string: null,                   // null — skipped
+      } },
+    ],
+  };
+  assert.deepEqual(parseShowAllOptions(result), [
+    { parameter: 'ATTACHMENT_REPAIR_FORWARD_CAPACITY', type: 'integer', value: 4096 },
+    { parameter: 'ATTACHMENTS_AUTO_FETCH', type: 'boolean', value: false },
+    { parameter: 'MESH_CHOOSER_CONFIG', type: 'json', value: { wifi_aware_enabled: false } },
+    { parameter: 'REQUEST_TIMEOUT_NOTE', type: 'string', value: 'use DQL_REQUEST_TIMEOUT_SECONDS' },
+    { parameter: 'TOMBSTONE_REAP_BATCH_SIZE', type: 'integer', value: 1024 },
+  ]);
+});
+
+test('parseShowAllOptions: a legacy {name, value} row still takes the named-column path', () => {
+  // The wide-map path is reserved for >1-entry records with no column-ish
+  // keys; a legacy {name, value} row still takes the named-column path.
+  const result = { items: [{ value: { name: 'mesh_enabled', value: true } }] };
+  assert.deepEqual(parseShowAllOptions(result), [
+    { parameter: 'MESH_ENABLED', type: 'boolean', value: true },
+  ]);
+});

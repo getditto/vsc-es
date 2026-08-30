@@ -244,10 +244,11 @@ test('getSystemSettingOptions runs SHOW ALL against the active store', async t =
   const cfg = makeConfig();
   const { mgr, ditto } = await stageSession(t, cfg);
   // Spy on the store the manager holds so the assertion covers "the right
-  // statement reached the right store", independent of how much of the
-  // current SDK's SHOW ALL shape parseShowAllOptions recognises (the modern
-  // single-object shape yields no named options — a forward-compat gap the
-  // DatabaseEditorPanel surfaces as an empty list, pinned here).
+  // statement reached the right store". SDK 5.x answers SHOW ALL with one
+  // item whose value is a single wide object (param name → value, ~388 keys)
+  // — parseShowAllOptions now understands that shape, so the options list
+  // must be non-empty against a real store (it was silently empty before the
+  // fix, which the DatabaseEditorPanel surfaced as a blank settings list).
   const executed: string[] = [];
   const realExecute = ditto.store.execute.bind(ditto.store);
   ditto.store.execute = ((q: string, a?: unknown) => { executed.push(q); return realExecute(q, a as never); }) as never;
@@ -255,7 +256,9 @@ test('getSystemSettingOptions runs SHOW ALL against the active store', async t =
 
   const options = await mgr.getSystemSettingOptions(cfg.id);
   assert.deepEqual(executed, ['SHOW ALL']);
-  assert.ok(Array.isArray(options), 'returns an options array, never throws');
+  assert.ok(options.length > 100, `expected the full 5.x parameter list, got ${options.length} options`);
+  assert.ok(options.some(o => o.parameter === 'DQL_REQUEST_TIMEOUT_SECONDS'),
+    'a known 5.1 parameter parses through the wide-map shape');
 });
 
 // ─── Subscription registration / cancellation ──────────────────
@@ -540,13 +543,10 @@ test('applyTransportConfig refuses a concurrent apply', async t => {
   // parks recovery's __small_peer_info query (recovery's one awaited step)
   // until the refusal has been observed.
   //
-  // NOTE the public entry can't interleave two applies on ONE manager:
-  // withConnectionPersistenceLock serializes them before the per-instance
-  // flag is checked (the second runs AFTER the first completes — correct
-  // queueing, not the bug the flag prevents). The flag guards re-entrancy:
-  // a path that reaches applyTransportConfigLocked without the lock (e.g.
-  // a store callback re-entering the manager). The test drives that shape
-  // via internals, which is also why the fake Ditto is acceptable here.
+  // The refusal now lives in the PUBLIC entry point: a pre-lock check on
+  // `applyingTransports` fails fast while an apply is in flight (previously
+  // the check sat inside the locked method, where the lock's serialization
+  // made it unreachable — the second call would queue and silently re-apply).
   const dir = tmpdir();
   const log = recordingLogger();
   const mgr = new DittoManager(contextIn(dir), log.logger);
@@ -589,8 +589,7 @@ test('applyTransportConfig refuses a concurrent apply', async t => {
   assert.equal(mgr.isApplyingTransports(), true, 'the first apply is parked mid-recovery');
 
   await assert.rejects(
-    () => (internals(mgr) as unknown as { applyTransportConfigLocked(o: never): Promise<void> })
-      .applyTransportConfigLocked({ isLanEnabled: true, isBluetoothLeEnabled: false, isAwdlEnabled: false } as never),
+    () => mgr.applyTransportConfig({ isLanEnabled: true, isBluetoothLeEnabled: false, isAwdlEnabled: false }),
     /Transport change already in progress/,
   );
   assert.equal(transportConfig.peerToPeer.lan.isEnabled, false, 'the refused apply never touched the config');

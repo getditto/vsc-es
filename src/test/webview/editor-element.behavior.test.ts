@@ -598,10 +598,10 @@ test('DatabaseEditor: a fresh init wipes drafts, errors, and the saving flag', a
   assert.equal(q<HTMLInputElement>(el, '#connection-token').value, 'fresh-token');
   assert.equal(q<HTMLButtonElement>(el, '.save').disabled, false);
   assert.equal(q<HTMLDetailsElement>(el, 'details.advanced').open, false);
-  // Note: init does NOT clear validationError — the banner from the previous
-  // config survives until the next advanced-config edit or save attempt.
-  assert.match(q(el, '.error-banner').textContent ?? '', /stale banner/,
-    'documents current behaviour: validationError is not reset by editor.init');
+  // Fixed behavior: init clears a stale validationError banner — the error
+  // named the previous config's problem and must not follow the new one.
+  assert.equal(el.shadowRoot!.querySelector('.error-banner'), null,
+    'editor.init resets validationError so a stale banner cannot survive a re-init');
 });
 
 test('DatabaseEditor: duplicate scope collections are flagged on both rows', async t => {
