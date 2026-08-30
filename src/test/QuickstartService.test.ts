@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { QuickstartService } from '../quickstart/QuickstartService.js';
+import { QuickstartService, createNodeGitRunner } from '../quickstart/QuickstartService.js';
 import type { GitRunner } from '../quickstart/QuickstartService.js';
 import { QUICKSTART_REPO_URL, QUICKSTART_FOLDER_NAME } from '../quickstart/quickstart-projects.js';
 import type { Logger, LogLevel } from '../logging/types.js';
@@ -378,4 +378,185 @@ test('cloneOrPull throws on non-zero git exit', async () => {
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }
+});
+
+test('cloneOrPull pull-existing throws a fast-forward-specific error on non-zero exit', async () => {
+  const parent = tmpdir('qs-pull-fail-');
+  try {
+    fs.mkdirSync(path.join(parent, QUICKSTART_FOLDER_NAME, '.git'), { recursive: true });
+    const { git } = recordingGit(1);
+    const svc = new QuickstartService(makeStubLogger(), git);
+    await assert.rejects(
+      () => svc.cloneOrPull(parent, 'pull-existing', () => {}, new AbortController().signal),
+      /git pull failed with exit 1 \(fast-forward refused; checkout may be dirty or diverged\)/,
+    );
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('cloneOrPull rejects an unimplemented mode', async () => {
+  const parent = tmpdir('qs-mode-');
+  try {
+    const { git, calls } = recordingGit(0);
+    const svc = new QuickstartService(makeStubLogger(), git);
+    await assert.rejects(
+      () => svc.cloneOrPull(
+        parent, 'shallow-clone' as never, () => {}, new AbortController().signal,
+      ),
+      /cloneOrPull mode not implemented: shallow-clone/,
+    );
+    assert.equal(calls.length, 0, 'no git invocation for an unknown mode');
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('cloneOrPull forwards the last non-empty stderr line as progress', async () => {
+  const parent = tmpdir('qs-progress-');
+  try {
+    // Git streams progress on stderr, \r- or \n-separated, with blank fragments
+    // at chunk boundaries. Only the last non-empty line is a status update.
+    const git: GitRunner = {
+      version: async () => 'git version 2.45.0',
+      run: async (_args, _cwd, onStderr) => {
+        onStderr('Cloning into \'getstarted\'...\r\n');
+        onStderr('Receiving objects:  12% (50/416)\r\nReceiving objects:  34% (142/416)\n');
+        onStderr('\n\n');
+        return 0;
+      },
+    };
+    const svc = new QuickstartService(makeStubLogger(), git);
+    const progress: string[] = [];
+    await svc.cloneOrPull(parent, 'fresh-clone', (m) => { progress.push(m); },
+      new AbortController().signal);
+
+    assert.deepEqual(progress, [
+      'Cloning into \'getstarted\'...',
+      'Receiving objects:  34% (142/416)',
+    ], 'blank-only chunks produce no update');
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('inspectTarget — a plain file at the target path is a non-git-folder', async () => {
+  const root = tmpdir('qs-inspect-file-');
+  try {
+    const target = path.join(root, 'quickstart');
+    fs.writeFileSync(target, 'I am a file, not a directory');
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    const result = await svc.inspectTarget(target);
+    assert.equal(result.kind, 'non-git-folder');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('inspectTarget — a git checkout without a HEAD file reports head "unknown"', async () => {
+  const root = tmpdir('qs-inspect-nohead-');
+  try {
+    const target = path.join(root, 'quickstart');
+    fs.mkdirSync(path.join(target, '.git'), { recursive: true });
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    const result = await svc.inspectTarget(target);
+    assert.equal(result.kind, 'git-checkout');
+    if (result.kind === 'git-checkout') {
+      assert.equal(result.head, 'unknown', 'a missing HEAD is best-effort, not fatal');
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('inspectTarget — an unreadable HEAD file still reports the checkout', async () => {
+  const root = tmpdir('qs-inspect-badhead-');
+  try {
+    const target = path.join(root, 'quickstart');
+    // A directory named HEAD makes readFileSync throw (EISDIR) — the catch
+    // leaves head as 'unknown' instead of failing the inspection.
+    fs.mkdirSync(path.join(target, '.git', 'HEAD'), { recursive: true });
+    const svc = new QuickstartService(makeStubLogger(), stubGit);
+    const result = await svc.inspectTarget(target);
+    assert.equal(result.kind, 'git-checkout');
+    if (result.kind === 'git-checkout') {
+      assert.equal(result.head, 'unknown');
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ─── createNodeGitRunner (real child_process) ──────────────────
+//
+// These spawn the real `git` binary — no repo needed. Git is present on the
+// dev machines and CI runners this suite targets; where it is not, the
+// version probe test skips rather than fails.
+
+test('createNodeGitRunner version() reports the installed git', async (t) => {
+  const runner = createNodeGitRunner();
+  const v = await runner.version();
+  if (v === null) {
+    t.skip('git is not on PATH in this environment');
+    return;
+  }
+  assert.match(v, /^git version \d+\./);
+});
+
+test('createNodeGitRunner version() resolves null when git cannot be spawned', async () => {
+  // Emptying PATH makes the spawn fail with ENOENT, which must surface as
+  // null (not a rejection) so the flow controller can offer remediation.
+  const saved = process.env.PATH;
+  process.env.PATH = '';
+  try {
+    const runner = createNodeGitRunner();
+    assert.equal(await runner.version(), null);
+  } finally {
+    process.env.PATH = saved;
+  }
+});
+
+test('createNodeGitRunner run() resolves the exit code and forwards stderr', async () => {
+  const runner = createNodeGitRunner();
+  const chunks: string[] = [];
+  // A bogus subcommand: exits non-zero and explains itself on stderr.
+  const exit = await runner.run(['definitely-not-a-git-subcommand'], null,
+    (c) => { chunks.push(c); }, new AbortController().signal);
+
+  assert.notEqual(exit, 0, 'a bogus subcommand fails');
+  assert.ok(
+    chunks.join('').includes('definitely-not-a-git-subcommand'),
+    `stderr was forwarded; saw: ${JSON.stringify(chunks)}`,
+  );
+});
+
+test('createNodeGitRunner run() resolves 0 for a successful command', async (t) => {
+  const runner = createNodeGitRunner();
+  if (await runner.version() === null) {
+    t.skip('git is not on PATH in this environment');
+    return;
+  }
+  const exit = await runner.run(['--version'], null, () => {}, new AbortController().signal);
+  assert.equal(exit, 0);
+});
+
+test('createNodeGitRunner run() rejects when the working directory does not exist', async () => {
+  // spawn() reports a bad cwd via the child's 'error' event; the runner must
+  // reject rather than leak a pending Promise.
+  const runner = createNodeGitRunner();
+  await assert.rejects(
+    runner.run(['--version'], path.join(os.tmpdir(), 'qs-no-such-dir-9f8e7d6c'), () => {},
+      new AbortController().signal),
+    /ENOENT/,
+  );
+});
+
+test('createNodeGitRunner run() rejects when spawn itself throws synchronously', async () => {
+  // A malformed signal makes spawn() throw in the call frame; without the
+  // guard the returned Promise would leak pending forever.
+  const runner = createNodeGitRunner();
+  await assert.rejects(
+    runner.run(['--version'], null, () => {}, {} as AbortSignal),
+    (err: unknown) => err instanceof Error && /AbortSignal/.test(err.message),
+  );
 });

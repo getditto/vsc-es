@@ -236,8 +236,15 @@ export const window = {
 
 export const commands = {
   executed: [],
+  /** Tests set commands.executeCommandError to an Error to make the next (and
+   *  subsequent, until cleared) executeCommand calls reject with it — the
+   *  failure path of command fan-outs. __resetStub() clears it. */
+  executeCommandError: undefined,
   executeCommand(command, ...args) {
     commands.executed.push({ command, args });
+    if (commands.executeCommandError) {
+      return Promise.reject(commands.executeCommandError);
+    }
     return Promise.resolve(undefined);
   },
   registerCommand() { return { dispose() {} }; },
@@ -260,4 +267,5 @@ export function __resetStub() {
   workspace.fsStatSize = 0;
   workspace.configValues = {};
   commands.executed.length = 0;
+  commands.executeCommandError = undefined;
 }
