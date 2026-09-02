@@ -48,6 +48,7 @@ jobs:
     permissions:
       contents: read
       checks: write # reviewdog posts results as a check run
+      pull-requests: read # reviewdog reads the PR diff to scope annotations
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -64,6 +65,7 @@ jobs:
     permissions:
       contents: read
       security-events: write # uploads SARIF findings to the Security tab
+      actions: read # upload-sarif reads workflow-run metadata; required on private repos
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
