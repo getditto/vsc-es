@@ -8,7 +8,7 @@ import type { Logger } from '../logging/types.js';
  *  only directive standing between an injected `<script>` and execution, and
  *  a predictable nonce is one an attacker who can inject markup can simply
  *  guess or replay. 128 bits, base64url so it needs no HTML escaping. */
-export function nonce(): string {
+function nonce(): string {
   return randomBytes(16).toString('base64url');
 }
 

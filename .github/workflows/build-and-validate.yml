@@ -15,4 +15,7 @@ jobs:
     uses: ./.github/workflows/_build-matrix.yml
     with:
       depth: ${{ inputs.depth }}
-    secrets: inherit
+    secrets:
+      DITTO_CI_DATABASE_ID: ${{ secrets.DITTO_CI_DATABASE_ID }}
+      DITTO_CI_DEVELOPMENT_TOKEN: ${{ secrets.DITTO_CI_DEVELOPMENT_TOKEN }}
+      DITTO_CI_URL: ${{ secrets.DITTO_CI_URL }}

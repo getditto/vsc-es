@@ -117,6 +117,9 @@ export class HelpContentElement extends LitElement {
     }
     // Inject bundled help HTML. Source is `resources/help/*.md` rendered by
     // `scripts/render-help.mjs` at build time — not user-supplied content.
+    // (eslint-plugin-no-unsanitized can't see into Lit's `.innerHTML=` binding
+    // syntax — it's text inside a tagged template, not a real assignment
+    // expression — so this sink is documented here rather than suppressed.)
     return html`<div .innerHTML=${this.htmlContent}></div>`;
   }
 }

@@ -70,7 +70,7 @@ export function isProfilableSelect(query: string): boolean {
 /** Profile envelope key Ditto emits as the trailing item. Exported
  *  so the host's "did we get a profile back?" check uses the same
  *  literal as the parser. */
-export const PROFILE_ENVELOPE_KEY = '~request_profile';
+const PROFILE_ENVELOPE_KEY = '~request_profile';
 
 /** Forgiving parser for the `~request_profile` envelope. Returns null
  *  if the input doesn't look like a profile (no `~request_profile` key,

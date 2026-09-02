@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Routine version drift for npm dependencies. Known-vulnerable versions are
+  # already covered separately by GitHub's Dependabot security updates
+  # (repo Settings → Code security) regardless of this file — this config is
+  # for ordinary updates that never rise to a CVE.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  # Keeps third-party Actions current. If/when a workflow pins an action to a
+  # commit SHA rather than a tag, Dependabot still resolves version bumps and
+  # updates the trailing version comment in the same PR.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"

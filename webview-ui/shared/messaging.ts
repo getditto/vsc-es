@@ -22,7 +22,7 @@ export function postToHost<T>(msg: T): void {
  * live handler holding a reference to the old element — every subsequent
  * host message is then processed once per past mount.
  */
-export function onHostMessage<T>(handler: (msg: T) => void): () => void {
+function onHostMessage<T>(handler: (msg: T) => void): () => void {
   const listener = (e: MessageEvent): void => { handler(e.data as T); };
   window.addEventListener('message', listener);
   return () => { window.removeEventListener('message', listener); };

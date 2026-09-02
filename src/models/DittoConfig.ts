@@ -1,6 +1,6 @@
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
 
-export type AuthMode = 'server' | 'smallPeersOnly';
+type AuthMode = 'server' | 'smallPeersOnly';
 
 /**
  * Log level values accepted by the Ditto SDK's `Logger.minimumLogLevel`.
@@ -43,7 +43,7 @@ export interface SystemSettingOption {
 /** Container for connection settings that are intentionally hidden from the
  *  default registration flow. Keep this extensible as more advanced SDK
  *  configuration is exposed by the editor. */
-export interface AdvancedConfig {
+interface AdvancedConfig {
   collectionSyncScopes?: CollectionSyncScopeEntry[];
   systemSettings?: SystemSetting[];
 }
@@ -165,7 +165,7 @@ export interface LocalPeerInfo {
  * via a separate IPC so the graph re-renders in lockstep with the
  * peer cards on every presence event.
  */
-export interface RawPresenceGraph {
+interface RawPresenceGraph {
   remotePeers: { peerKey: string; deviceName: string }[];
   /** Undirected edges as the SDK reports them. Includes peer↔peer
    *  edges that don't involve local. Caller is responsible for the

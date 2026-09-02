@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Local secret-scanning backstop, ahead of GitHub's push protection.
+#
+# Installed via `git config core.hooksPath .githooks` (see the `prepare`
+# script in package.json, which npm runs automatically on `npm install`).
+# Deliberately not a husky/lint-staged dependency — this is one hook running
+# one external, non-npm tool, and `core.hooksPath` does that natively.
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+warning: gitleaks not installed — skipping local secret scan.
+         Install it to catch secrets before they leave your machine:
+           macOS:   brew install gitleaks
+           other:   https://github.com/gitleaks/gitleaks#installing
+         (GitHub push protection still runs server-side either way.)
+EOF
+  exit 0
+fi
+
+gitleaks protect --staged --redact --config .gitleaks.toml

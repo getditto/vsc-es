@@ -55,7 +55,7 @@ const TASK_DETAILS = [
   'Capture before/after numbers for the comparison sheet.',
 ];
 
-export const tasks = {
+const tasks = {
   name: 'tasks',
   build(rng) {
     return {
@@ -79,7 +79,7 @@ const sentence = (rng, n) => Array.from({ length: n }, () =>
   `${rng.pick(MOVIE_WORDS)} ${rng.pick(['meets', 'falls into', 'escapes', 'discovers', 'betrays'])} ${rng.pick(MOVIE_WORDS).toLowerCase()}.`,
 ).join(' ');
 
-export const movies = {
+const movies = {
   name: 'movies',
   build(rng, ctx) {
     const title = `The ${rng.pick(MOVIE_WORDS)} ${rng.pick(MOVIE_WORDS)}`;
@@ -237,7 +237,7 @@ function employeeEdits(rng, base, station) {
   });
 }
 
-export const orders = {
+const orders = {
   name: 'orders',
   build(rng, ctx) {
     const org = ctx.org;

@@ -64,6 +64,16 @@ the script — treat additions to it as a review-relevant decision.
 Note that `npm run build` does **not** typecheck — esbuild strips types without
 checking them — so `npm run typecheck` is a separate, non-redundant gate.
 
+Before handoff on anything touching dependencies, `.github/workflows/`,
+secret/credential handling, or the webview's HTML/DOM layer, also run:
+
+```sh
+npm run security   # audit, lint's security rules, knip, license-check, gitleaks, semgrep, actionlint, zizmor
+```
+
+See [`docs/Developer.md` § 15](docs/Developer.md#15-security) for what each
+check covers and the pre-release checklist.
+
 For documentation-only or agent-instruction-only changes, use Markdown/link inspection and `git diff --check`; a full build is unnecessary. For UI, SDK lifecycle, packaging, or VS Code contribution changes, also identify the relevant recipes in `docs/MANUAL_TESTING.md` and report any manual checks not run.
 
 ## Review priorities

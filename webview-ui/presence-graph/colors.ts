@@ -38,17 +38,6 @@ export const CONNECTION_STYLES: Record<ConnectionTypeName, ConnectionStyle> = {
   Cloud:       { color: '#AF52DE', dash: [8, 4] },
 };
 
-/**
- * Map the SDK's ConnectionType string (we receive `'Bluetooth' |
- * 'AccessPoint' | 'P2PWiFi' | 'WebSocket'` in our presence IPC) to
- * the styling table. Cloud connections aren't a real SDK type — they
- * come from the synthetic `ditto-cloud-node` peer and we tag them
- * before lookup.
- */
-export function styleForConnectionType(type: ConnectionTypeName): ConnectionStyle {
-  return CONNECTION_STYLES[type];
-}
-
 // ─── Peer node colours ─────────────────────────────────────────
 
 export const NODE_LOCAL_FILL = '#007AFF';   // systemBlue

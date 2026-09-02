@@ -9,7 +9,7 @@ import type { StoredObserver } from '../models/StoredObserver.js';
  *  from the feature shortcuts (Presence, Query Editor, Metrics).
  *  `importGroup` divides the metrics feature rows from the
  *  bulk-actions group below them (currently just Import Data). */
-export type SectionHeaderId = 'features' | 'importGroup';
+type SectionHeaderId = 'features' | 'importGroup';
 
 export type DatabaseTreeNode =
   | { kind: 'database'; config: StoredDittoConfig; status: 'idle' | 'activating' | 'active' | 'error' }

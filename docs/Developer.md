@@ -672,4 +672,75 @@ connected, or even registered.
   app, possibly on another platform/container).
 - **History is session-only.** The last 50 runs are kept in the webview, newest first;
   nothing is persisted.
+
+---
+
+## 15. Security
+
+Vulnerability reports go to security@ditto.com — see [`SECURITY.md`](../SECURITY.md)
+for the disclosure policy. This section is for contributors: the tooling that
+checks this codebase, and what to run before cutting a release.
+
+### 15.1 Tooling overview
+
+| Tool | Catches | Runs |
+|---|---|---|
+| `npm audit` | Known CVEs in production dependencies | `validate.yml` (every PR), local |
+| ESLint + `eslint-plugin-security` + `eslint-plugin-no-unsanitized` | Unsafe regex/fs patterns, DOM-sink XSS in `webview-ui/` | `npm run lint` (every PR), local |
+| Knip | Unused files, exports, and dependencies | `validate.yml` (every PR), local |
+| `license-checker` | Non-allow-listed licenses in production dependencies | `validate.yml` (every PR), local |
+| gitleaks | Secrets in a commit | pre-commit hook (staged diff), local full-history scan |
+| Semgrep | OWASP Top 10 / security-audit rule packs | `security.yml` (PR + push + weekly), local |
+| actionlint | GitHub Actions workflow syntax/logic errors | `security.yml` (PR + push + weekly), local |
+| zizmor | GitHub Actions supply-chain issues (unpinned actions, excessive secrets, template injection, cache poisoning) | `security.yml` (PR + push + weekly), local |
+| CodeQL (`security-extended`) | Broader static-analysis vulnerability classes | GitHub default setup, weekly |
+| Dependabot | CVE alerts (always) + routine version drift (`.github/dependabot.yml`) | GitHub-native |
+
+Config lives in `knip.config.js`, `.gitleaks.toml`, and `eslint.config.mjs`.
+Each has inline comments explaining every suppression — if you add one, explain
+*why* the finding doesn't apply, the same way the existing ones do.
+
+### 15.2 Running it locally
+
+```sh
+npm run security
+```
+
+Runs everything from the table above against your working tree in one pass.
+The npm-native checks (audit, lint, knip, license-check) always run. The
+external-binary checks (gitleaks, semgrep, actionlint, zizmor) run if
+installed, and print an install hint and skip otherwise — install what you're
+missing:
+
+```sh
+brew install gitleaks semgrep actionlint uv   # zizmor runs via `uvx`, from uv
+```
+
+Each check also has its own script if you want to run just one:
+`npm run audit`, `npm run lint`, `npm run knip`, `npm run license-check`.
+
+The gitleaks pre-commit hook (`.githooks/pre-commit`, wired up automatically
+by `npm install` via the `prepare` script) only scans your *staged* diff, so
+it stays fast — `npm run security` runs gitleaks against full history instead.
+
+### 15.3 Security release checklist
+
+Run before tagging a release (in addition to the existing steps in
+[`docs/releases/TEMPLATE.md`](releases/TEMPLATE.md)):
+
+1. `npm run security` passes clean on `main` at the commit you're about to tag.
+2. Check for open [Dependabot alerts](https://github.com/getditto/vsc-es/security/dependabot)
+   and [code scanning alerts](https://github.com/getditto/vsc-es/security/code-scanning) —
+   both should read zero-open before a release, not just at some earlier point.
+3. If `allowUntrustedCerts`, secret redaction (`src/logging/secrets.ts`), or
+   anything under `src/storage/SecretStore.ts` changed since the last release,
+   re-read the diff adversarially — these are the paths where a subtle bug
+   becomes a credential leak, not just a wrong query result.
+4. Skim the CycloneDX SBOM the release workflow attaches
+   (`ditto-vsce-<tag>.cdx.json`) if a new production dependency was added —
+   confirm it was intentional.
+5. New GitHub Actions steps or third-party actions since the last release?
+   Confirm they're pinned to a commit SHA (`npm run security`'s zizmor/
+   actionlint steps catch this, but a human read of the diff is cheap
+   insurance on the workflow that publishes the release itself).
 - **Apply.** The webview's advisory card renders reason + statement per suggestion with a "Create index" button → `query.createSuggestedIndex` → the host shows a modal confirm, re-checks the active connection after the modal (mid-switch guard, same shape as `CollectionsRepository.createIndex`), runs the statement verbatim through `executeRaw`, then refreshes the index tree via the `dittoVsce.refreshCollections` command (so the panel keeps its existing dependency set). `ADVISE AND PROVISION` is deliberately not surfaced anywhere — nothing runs CREATE INDEX without the modal.

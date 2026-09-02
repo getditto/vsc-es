@@ -37,10 +37,10 @@ import type {
 /** Process env var the SDK reads for the startup-gated exporter parameter. */
 export const SYSTEM_METRICS_ENV_VAR = 'DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED';
 
-export const SYSTEM_METRICS_QUERY = 'SELECT * FROM system:metrics';
+const SYSTEM_METRICS_QUERY = 'SELECT * FROM system:metrics';
 
 /** Default poll cadence while a Database Metrics panel is visible. */
-export const DEFAULT_POLL_INTERVAL_MS = 5_000;
+const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
 /** Workspace setting reader — mirrors `readCollectProfiling`/`readCollectMetrics`
  *  in QueryEditorPanel. Default true: this is a developer tool, Info-level

@@ -18,7 +18,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -65,7 +65,7 @@ const loadList = [...listSources(path.join(ROOT, 'src'), 'src'),
 // ─── Run the suite with coverage ────────────────────────────────
 const report = execFileSync('node', [
   '--import', 'tsx',
-  '--import', './scripts/register-vscode-stub.mjs',
+  '--import', pathToFileURL(path.join(ROOT, 'scripts', 'register-vscode-stub.mjs')).href,
   '--test', '--experimental-test-coverage',
   'src/test/*.test.ts', 'src/test/webview/*.test.ts',
 ], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });

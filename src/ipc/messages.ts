@@ -67,7 +67,7 @@ export type ImportSubsOut =
 /** Insert mode mirrors SwiftUI's InsertType — `'regular'` does an
  *  upsert (ON ID CONFLICT DO UPDATE), `'initial'` uses Ditto's
  *  INITIAL DOCUMENTS bulk-import optimisation (first-load only). */
-export type ImportDataInsertType = 'regular' | 'initial';
+type ImportDataInsertType = 'regular' | 'initial';
 
 export type ImportDataIn =
   // User clicked "Choose File…" — host opens an OS file picker, reads
@@ -320,7 +320,7 @@ export type ObserverOut =
 // ─── Query Metrics panel ───────────────────────────────────────
 /** A single record in the Query Metrics history. The shape is the
  *  same as QueryResultMetadata with a stable id minted by the store. */
-export interface QueryMetricsRecord extends QueryResultMetadata {
+interface QueryMetricsRecord extends QueryResultMetadata {
   id: string;
 }
 
@@ -393,13 +393,13 @@ export type SystemMetricsStatus =
   | { kind: 'unavailable'; message: string };
 
 // ─── Database Metrics panel ────────────────────────────────────
-export interface DbMetricsCollectionStats {
+interface DbMetricsCollectionStats {
   name: string;
   documentCount: number;
   cborPayloadBytes: number;
 }
 
-export interface DbMetricsSnapshot {
+interface DbMetricsSnapshot {
   storeBytes: number;
   replicationBytes: number;
   attachmentsBytes: number;
@@ -525,11 +525,11 @@ export type AnalyzerIn =
 // socket serves full DQL (mutations, ALTER SYSTEM) by default, which is why
 // the webview carries a persistent live-mutation warning.
 
-export type DebugConsoleConnectionState = 'disconnected' | 'connecting' | 'connected';
+type DebugConsoleConnectionState = 'disconnected' | 'connecting' | 'connected';
 
 /** One executed statement + its outcome, appended to the webview's
  *  bounded in-session history (never persisted). */
-export interface DebugConsoleRun {
+interface DebugConsoleRun {
   statement: string;
   ok: boolean;
   /** Server-side error (`ERROR:` line) or client-side failure (timeout,

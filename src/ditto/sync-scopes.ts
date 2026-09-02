@@ -3,7 +3,7 @@ import type {
   CollectionSyncScopeEntry,
 } from '../models/DittoConfig.js';
 
-export const COLLECTION_SYNC_SCOPES = [
+const COLLECTION_SYNC_SCOPES = [
   'AllPeers',
   'BigPeerOnly',
   'SmallPeersOnly',
