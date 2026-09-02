@@ -47,18 +47,35 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      checks: write # reviewdog posts results as a check run
-      pull-requests: read # reviewdog reads the PR diff to scope annotations
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
-      - uses: reviewdog/action-actionlint@d290e336d5a743810aef4404f757dc862276d2ae # v1.73.4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          reporter: github-check
-          fail_level: error
+      # The release binary, verified against the checksum published with it,
+      # rather than reviewdog/action-actionlint. Reviewdog wants the PR diff
+      # to scope its annotations, and gets it either from the API or by
+      # re-fetching with persisted git credentials — but `persist-credentials:
+      # false` above (the artipacked hardening) removes the second path, and
+      # a security gate shouldn't need write-ish PR scopes to lint a YAML
+      # file. Running the binary directly also lints EVERY workflow, not just
+      # the ones this PR touched, which is what a gate should do, and it is
+      # the same invocation `npm run security` uses locally.
+      - name: Install actionlint
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          TARBALL="actionlint_${VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$TARBALL" \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${TARBALL}"
+          echo "${SHA256}  ${TARBALL}" | sha256sum --check --strict
+          tar -xzf "$TARBALL" actionlint
+          sudo install -m 0755 actionlint /usr/local/bin/actionlint
+
+      - name: Actionlint
+        run: actionlint -color
 
   zizmor:
     runs-on: ubuntu-24.04
