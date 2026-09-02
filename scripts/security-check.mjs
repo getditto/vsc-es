@@ -70,8 +70,14 @@ if (commandExists('actionlint')) {
 }
 
 if (commandExists('uvx')) {
+  // `--collect=all` so dependabot.yml is audited too, not just workflows —
+  // the CI zizmor-action collects it by default, and a local run that
+  // skipped it would report "pass" for findings CI then fails on. Paths are
+  // listed explicitly rather than passing `.`, which would descend into
+  // node_modules and audit every dependency's own workflows.
   results.push(['zizmor (GitHub Actions)', run('zizmor', 'uvx', [
-    'zizmor', '--min-severity', 'medium', '.github/workflows/',
+    'zizmor', '--min-severity', 'medium', '--collect=all',
+    '.github/workflows', '.github/dependabot.yml',
   ], { env: GH_TOKEN ? { GH_TOKEN } : {} })]);
 } else {
   console.log('\n── zizmor ───────────────────────────────────────────────');

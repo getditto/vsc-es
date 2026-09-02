@@ -9,6 +9,17 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Don't auto-open a PR for a version the moment it is published: the
+    # hijacked-package playbook is to publish a malicious release and rely on
+    # automation to pull it in before anyone looks. Dependabot's implicit
+    # default is only 3 days. This applies to VERSION updates only — security
+    # updates open immediately, so CVE fixes are never delayed. Same threat
+    # model as `min-release-age` in .npmrc, one layer up.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 7
     groups:
       dev-dependencies:
         dependency-type: development
@@ -23,6 +34,13 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # Same cooldown reasoning as npm above, and it matters more here: a
+    # compromised action runs inside CI with this repo's token.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 7
     groups:
       actions:
         patterns:
