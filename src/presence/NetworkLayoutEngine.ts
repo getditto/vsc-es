@@ -13,7 +13,7 @@
  *   1. **BFS ring assignment** — local peer at ring 0, direct
  *      neighbours at ring 1, multi-hop at 2+, disconnected at the
  *      outermost ring. A `parentMap` records who discovered whom so
- *      step 3 can anchor children to their parent's angle.
+ *      the compact layout can anchor children to their parent's angle.
  *
  *   2. **Ring-1 ordering** — naïve "evenly distribute" makes chord
  *      lines between two ring-1 peers cut through whatever unrelated
@@ -61,6 +61,10 @@ const RADIUS_INCREMENT = 101.25;  // Additional radius per ring (180 * 0.75 * 0.
 const MIN_ANGULAR_SEPARATION = (15 * Math.PI) / 180; // 15° in radians
 const PEER_DIAMETER = 60;         // Used to compute the minimum ring radius given crowding
 const PEER_SPACING = 20;          // Gap between adjacent peers when sizing a ring up
+/** Conservative center-to-center footprint used only when full-mesh mode
+ * packs a BFS layer across multiple visual rings. Pills have variable widths,
+ * so this intentionally errs on the side of fewer peers per ring. */
+const EXPANDED_NODE_FOOTPRINT = 200;
 
 /** Top-of-circle start angle (90°); peers are laid out clockwise from
  *  here. Picked so the first ring-1 peer sits directly above local. */
@@ -75,9 +79,10 @@ const START_ANGLE = Math.PI / 2;
  *
  * `radiusScale` (default 1.0) multiplies the base ring radius + the
  * per-ring increment. Used by the Presence Graph webview to spread
- * peers wider when "Direct Connected only" is OFF — a fully-connected
- * mesh at the default tight spacing is unreadable, but at 1.75× the
- * chord lines stop overlapping nearly as much. The crowding-based
+ * peers wider when "Direct Connected only" is OFF. Expanded mode also
+ * packs each BFS layer into as many concentric visual rings as needed:
+ * direct peers stay closest to the local peer, and later BFS layers do
+ * not start until the previous layer is complete. The crowding-based
  * minimum-circumference floor is intentionally NOT scaled (pill sizes
  * don't change), so very small meshes don't drift apart for no reason.
  */
@@ -88,9 +93,28 @@ export function calculateLayout(
   radiusScale: number = 1,
 ): LayoutResult {
   const adjacency = buildAdjacencyGraph(connections);
-  const { ringAssignments, parentMap } = performBFS(localPeerKey, adjacency, allPeerKeys);
+  const { ringAssignments: bfsRings, parentMap } = performBFS(localPeerKey, adjacency, allPeerKeys);
+  const expanded = radiusScale > 1;
+  if (expanded) {
+    // Preserve the useful ring-1 chord locality before a crowded direct
+    // layer is split across multiple visual rings.
+    const logicalRing1 = bfsRings.get(1);
+    if (logicalRing1 && logicalRing1.length > 1) {
+      bfsRings.set(1, sortRing1Peers(logicalRing1, adjacency));
+    }
+  }
+  const ringAssignments = expanded
+    ? packBfsRings(bfsRings, radiusScale)
+    : bfsRings;
   const ringRadii = calculateRingRadii(ringAssignments, radiusScale);
-  const positions = calculatePositions(ringAssignments, ringRadii, localPeerKey, parentMap, adjacency);
+  const positions = calculatePositions(
+    ringAssignments,
+    ringRadii,
+    localPeerKey,
+    parentMap,
+    adjacency,
+    expanded,
+  );
   return { positions, ringAssignments, ringRadii };
 }
 
@@ -164,6 +188,38 @@ function performBFS(
   return { ringAssignments, parentMap };
 }
 
+/** Convert logical BFS layers into visual rings for expanded/full-mesh mode.
+ * A crowded layer may consume several rings, but the next BFS layer never
+ * starts until the current layer is complete. */
+function packBfsRings(
+  bfsRings: Map<number, string[]>,
+  radiusScale: number,
+): Map<number, string[]> {
+  const packed = new Map<number, string[]>();
+  packed.set(0, [...(bfsRings.get(0) ?? [])]);
+
+  let visualRing = 1;
+  const logicalRings = [...bfsRings.keys()]
+    .filter(r => r > 0)
+    .sort((a, b) => a - b);
+  for (const logicalRing of logicalRings) {
+    const peers = bfsRings.get(logicalRing) ?? [];
+    let offset = 0;
+    while (offset < peers.length) {
+      const capacity = peersPerExpandedRing(visualRing, radiusScale);
+      packed.set(visualRing, peers.slice(offset, offset + capacity));
+      offset += capacity;
+      visualRing += 1;
+    }
+  }
+  return packed;
+}
+
+function peersPerExpandedRing(ring: number, radiusScale: number): number {
+  const radius = (BASE_RADIUS + (ring - 1) * RADIUS_INCREMENT) * radiusScale;
+  return Math.max(1, Math.floor((2 * Math.PI * radius) / EXPANDED_NODE_FOOTPRINT));
+}
+
 // ─── Stage 3a: ring radii (may expand when crowded) ────────────
 
 function calculateRingRadii(
@@ -196,6 +252,7 @@ function calculatePositions(
   localPeer: string,
   parentMap: Map<string, string>,
   adjacency: Map<string, Set<string>>,
+  expanded: boolean,
 ): Map<string, Point> {
   const positions = new Map<string, Point>();
   positions.set(localPeer, { x: 0, y: 0 });
@@ -207,7 +264,18 @@ function calculatePositions(
     const radius = ringRadii.get(ring) ?? 0;
     if (peers.length === 0) { continue; }
 
-    if (ring === 1) {
+    if (expanded) {
+      // Every visual ring is an independent orbit. Parent anchoring would
+      // bunch siblings together again, so expanded rings always use equal
+      // angular spacing.
+      const ordered = ring === 1 ? sortRing1Peers(peers, adjacency) : [...peers];
+      const angles = calculateOptimalAngles(ordered.length);
+      for (const [i, peerKey] of ordered.entries()) {
+        const a = angles[i];
+        if (a === undefined) { continue; }
+        positions.set(peerKey, { x: radius * Math.cos(a), y: radius * Math.sin(a) });
+      }
+    } else if (ring === 1) {
       // Greedy double-ended path: cluster connected peers adjacent on
       // the circle so chord lines stay short.
       const ordered = sortRing1Peers(peers, adjacency);

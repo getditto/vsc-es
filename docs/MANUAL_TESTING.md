@@ -263,6 +263,10 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
     - That peer, the local peer, and every connection between them stay at full opacity.
     - Unrelated peers and connections become semi-transparent.
     - Clicking the selected peer again or clicking open canvas space restores normal opacity everywhere.
+    - Turn **Direct** off and click a remote peer in the full mesh:
+      - The selected peer and every peer connected to it stay prominent.
+      - Connections not touching the selected peer dim while retaining their connection-type colours.
+      - Clicking the selected peer again or clicking open canvas space clears the full-mesh focus.
 12. Verify interaction and live-update edge cases:
     - Dragging a peer moves it without being mistaken for a selection click.
     - Turning **Direct** off clears any selection and shows the full graph normally.

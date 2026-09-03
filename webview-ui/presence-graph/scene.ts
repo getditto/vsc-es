@@ -38,13 +38,15 @@ export interface PresenceGraphInput {
   connections: { from: string; to: string; type: ConnectionTypeName }[];
 }
 
+export const MIN_GRAPH_ZOOM = 0.25;
+export const MAX_GRAPH_ZOOM = 2.0;
+
 const CLOUD_KEY = 'ditto-cloud-node';
 
 /** Ring radius multiplier applied when "Direct Connected only" is OFF.
- *  At 1.0 (default), peers cluster tightly enough that a fully-meshed
- *  ring-1 looks like a ball of yarn. At 1.75 the ring breathes enough
- *  that ring-1↔ring-1 chords stop overlapping the centre, while still
- *  fitting comfortably inside a typical panel viewport at zoom 100%. */
+ *  Expanded layout also packs crowded BFS layers into progressively larger
+ *  visual rings, keeping a large full mesh readable instead of stacking every
+ *  peer on one circumference. */
 const EXPANDED_RADIUS_SCALE = 1.75;
 const UNRELATED_PEER_ALPHA = 0.25;
 // Keep unrelated links barely visible for topology context while making
@@ -54,7 +56,7 @@ const UNRELATED_PEER_ALPHA = 0.25;
 const UNRELATED_LINE_ALPHA = 0.08;
 
 export interface SceneOptions {
-  /** Initial scale (1.0 = 100%). Clamped 0.5–2.0 by zoom helpers. */
+  /** Initial scale (1.0 = 100%). Clamped 0.25–2.0 by zoom helpers. */
   zoom?: number;
   /** Camera offset in world coordinates. (0,0) puts local at canvas centre. */
   cameraOffset?: Point;
@@ -451,10 +453,12 @@ export class PresenceGraphScene {
     return changed;
   }
 
-  /** Enable/disable Direct mode and discard focus when it is not applicable. */
+  /** Enable/disable Direct mode and discard focus because the visible graph
+   *  (and therefore the selected peer's neighbourhood) is changing. */
   setShowDirectConnectedOnly(value: boolean): void {
+    const modeChanged = value !== this.showDirectConnectedOnly;
     this.showDirectConnectedOnly = value;
-    if (!value) {
+    if (modeChanged) {
       this.selectedPeerKey = undefined;
       // Goes through setHovered rather than clearing the key directly so the
       // node/line `highlighted` flags are reset too — otherwise the previously
@@ -463,15 +467,16 @@ export class PresenceGraphScene {
     }
   }
 
-  /** Toggle persistent peer focus. Selection is intentionally Direct-mode only.
+  /** Toggle persistent peer focus in either graph mode.
    *
    *  The local peer is not selectable: in Direct mode every line touches it by
    *  construction, so focusing it would exempt the whole graph from dimming
    *  and only thicken every stroke at once — which reads as a glitch, not a
-   *  focus treatment. */
+   *  focus treatment. Full-mesh selection uses the same focus treatment so a
+   *  selected peer's neighbours and connection types stand out. */
   selectPeer(key: string | undefined): void {
     const invalid = key !== undefined && (!this.peers.has(key) || key === this.localKey);
-    if (!this.showDirectConnectedOnly || invalid) {
+    if (invalid) {
       this.selectedPeerKey = undefined;
       return;
     }
@@ -538,10 +543,9 @@ export class PresenceGraphScene {
 
   /** A click selection is sticky and wins over incidental hover. */
   private activeFocusKey(): string | undefined {
-    if (!this.showDirectConnectedOnly) { return undefined; }
     if (this.selectedPeerKey) { return this.selectedPeerKey; }
-    // Hovering the local peer is not a focus: every line touches it in
-    // Direct mode, so it would exempt the whole graph from dimming.
+    // Hovering the local peer is not a focus in Direct mode: every line
+    // touches it there, so it would exempt the whole graph from dimming.
     return this.hoveredPeerKey === this.localKey ? undefined : this.hoveredPeerKey;
   }
 
@@ -562,13 +566,14 @@ export class PresenceGraphScene {
     if (node) { node.position = pos; }
   }
 
-  /** Clamp helper for zoom changes — same 0.5–2.0 range as SwiftUI. */
+  /** Clamp helper for zoom changes. The lower bound accommodates large
+   *  expanded presence graphs with many visual rings. */
   setZoom(z: number): void {
     // Round to whole percents: the 0.1/0.05 zoom steps accumulate binary
-    // float error (1 − 0.1 × 5 = 0.5000000000000001), which defeats the
+    // float error (1 − 0.1 × 8 = 0.19999999999999996), which defeats the
     // exact-boundary disabled state on the zoom buttons and shows up as a
     // dead final click.
-    this.zoom = Math.round(Math.max(0.5, Math.min(2.0, z)) * 100) / 100;
+    this.zoom = Math.round(Math.max(MIN_GRAPH_ZOOM, Math.min(MAX_GRAPH_ZOOM, z)) * 100) / 100;
   }
 
   /** Pan the camera by a delta in canvas (CSS) pixels. Adjust by zoom

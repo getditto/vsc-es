@@ -6,7 +6,12 @@
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { CONNECTION_STYLES, type ConnectionTypeName } from './colors.js';
-import { PresenceGraphScene, type PresenceGraphInput } from './scene.js';
+import {
+  MAX_GRAPH_ZOOM,
+  MIN_GRAPH_ZOOM,
+  PresenceGraphScene,
+  type PresenceGraphInput,
+} from './scene.js';
 
 @customElement('ditto-presence-graph')
 export class PresenceGraphElement extends LitElement {
@@ -626,9 +631,9 @@ export class PresenceGraphElement extends LitElement {
           />
         </label>
         <div class="control-group" aria-label="Zoom controls">
-          <button @click=${this.zoomOut} ?disabled=${z <= 0.5} title="Zoom out">−</button>
+          <button @click=${this.zoomOut} ?disabled=${z <= MIN_GRAPH_ZOOM} title="Zoom out">−</button>
           <span class="zoom-label">${this.zoomLabel}</span>
-          <button @click=${this.zoomIn} ?disabled=${z >= 2.0} title="Zoom in">+</button>
+          <button @click=${this.zoomIn} ?disabled=${z >= MAX_GRAPH_ZOOM} title="Zoom in">+</button>
         </div>
         ` : null}
         <div class="action-row">

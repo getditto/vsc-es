@@ -258,15 +258,39 @@ export class PeerListing extends LitElement {
     .page-title {
       font-size: 22px;
       font-weight: 700;
-      margin: 0 0 12px 0;
+      margin: 0;
       color: var(--vscode-foreground);
+      white-space: nowrap;
     }
 
     .header {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 16px;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+      min-height: 32px;
+      flex-wrap: wrap;
+    }
+
+    .header-leading,
+    .header-actions,
+    .sync-status {
+      display: flex;
+      align-items: center;
+    }
+    .header-leading {
+      gap: 14px;
+      min-width: 0;
+    }
+    .header-actions {
+      gap: 8px;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .sync-status {
+      gap: 8px;
+      white-space: nowrap;
     }
 
     .dot {
@@ -349,7 +373,7 @@ export class PeerListing extends LitElement {
     .graph-host {
       position: relative;
       width: 100%;
-      height: calc(100vh - 140px);
+      height: calc(100vh - 100px);
       min-height: 400px;
     }
     ditto-presence-graph { width: 100%; height: 100%; display: block; }
@@ -822,23 +846,28 @@ export class PeerListing extends LitElement {
 
   override render() {
     return html`
-      <h1 class="page-title">Presence</h1>
       <div class="header">
-        <div class="dot ${this.sync}"></div>
-        <span>${this.sync === 'active' ? 'Sync Active' : 'Sync Idle'}</span>
-        <span style="flex: 1"></span>
-        <button class="toolbar-button" @click=${this.toggleSync}>
-          ${this.sync === 'active' ? '⏸ Stop Sync' : '▶ Start Sync'}
-        </button>
-        <div class="popover-anchor">
-          <button class="toolbar-icon-button"
-                  title="Transport Configuration"
-                  aria-label="Transport Configuration"
-                  ?disabled=${!this.platformReceived}
-                  @click=${this.toggleTransportPopover}>
-            <i class="codicon codicon-gear"></i>
+        <div class="header-leading">
+          <h1 class="page-title">Presence</h1>
+          <div class="sync-status">
+            <div class="dot ${this.sync}"></div>
+            <span>${this.sync === 'active' ? 'Sync Active' : 'Sync Idle'}</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="toolbar-button" @click=${this.toggleSync}>
+            ${this.sync === 'active' ? '⏸ Stop Sync' : '▶ Start Sync'}
           </button>
-          ${this.showTransportPopover ? this.renderTransportPopover() : nothing}
+          <div class="popover-anchor">
+            <button class="toolbar-icon-button"
+                    title="Transport Configuration"
+                    aria-label="Transport Configuration"
+                    ?disabled=${!this.platformReceived}
+                    @click=${this.toggleTransportPopover}>
+              <i class="codicon codicon-gear"></i>
+            </button>
+            ${this.showTransportPopover ? this.renderTransportPopover() : nothing}
+          </div>
         </div>
       </div>
 

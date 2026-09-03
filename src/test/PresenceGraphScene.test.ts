@@ -35,6 +35,33 @@ test('PresenceGraphScene: Direct-mode selection focuses the selected peer and it
   assert.deepEqual(scene.focusForLine(unrelatedLine), { selected: false, alpha: 0.08 });
 });
 
+test('PresenceGraphScene: full-mesh selection dims unrelated peers and connections', () => {
+  const input = graphInput(['a', 'b', 'c']);
+  input.connections.push(
+    { from: 'a', to: 'b', type: 'Bluetooth' },
+    { from: 'b', to: 'c', type: 'P2PWiFi' },
+  );
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: false });
+  scene.applyInput(input);
+
+  scene.selectPeer('a');
+
+  assert.equal(scene.selectedPeerKey, 'a');
+  assert.deepEqual(scene.focusForPeer('a'), { selected: true, alpha: 1 });
+  assert.deepEqual(scene.focusForPeer('local'), { selected: false, alpha: 1 });
+  assert.deepEqual(scene.focusForPeer('b'), { selected: false, alpha: 1 });
+  assert.deepEqual(scene.focusForPeer('c'), { selected: false, alpha: 0.25 });
+
+  const selectedLine = [...scene.lines.values()].find(line =>
+    (line.fromKey === 'a' && line.toKey === 'b')
+    || (line.fromKey === 'b' && line.toKey === 'a'))!;
+  const unrelatedLine = [...scene.lines.values()].find(line =>
+    (line.fromKey === 'b' && line.toKey === 'c')
+    || (line.fromKey === 'c' && line.toKey === 'b'))!;
+  assert.deepEqual(scene.focusForLine(selectedLine), { selected: true, alpha: 1 });
+  assert.deepEqual(scene.focusForLine(unrelatedLine), { selected: false, alpha: 0.08 });
+});
+
 test('PresenceGraphScene: clicking the selected peer or empty canvas clears focus', () => {
   const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
   scene.applyInput(graphInput());
@@ -76,7 +103,7 @@ test('PresenceGraphScene: persistent selection takes precedence over hovering an
   assert.deepEqual(scene.focusForLine(hoveredLine), { selected: false, alpha: 0.08 });
 });
 
-test('PresenceGraphScene: selection is cleared outside Direct mode and after peer removal', () => {
+test('PresenceGraphScene: selection is cleared when graph mode changes and after peer removal', () => {
   const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
   scene.applyInput(graphInput());
   scene.selectPeer('a');
@@ -84,9 +111,10 @@ test('PresenceGraphScene: selection is cleared outside Direct mode and after pee
   scene.setShowDirectConnectedOnly(false);
   assert.equal(scene.selectedPeerKey, undefined);
   scene.selectPeer('a');
-  assert.equal(scene.selectedPeerKey, undefined);
+  assert.equal(scene.selectedPeerKey, 'a');
 
   scene.setShowDirectConnectedOnly(true);
+  assert.equal(scene.selectedPeerKey, undefined);
   scene.selectPeer('a');
   scene.applyInput(graphInput(['b']));
   assert.equal(scene.selectedPeerKey, undefined);
@@ -180,14 +208,14 @@ test('PresenceGraphScene: leaving Direct mode resets highlight flags, not just f
   assert.ok([...scene.lines.values()].every(l => !l.highlighted), 'line highlights cleared');
 });
 
-test('PresenceGraphScene: zoom snaps to whole percents at the clamp boundary', () => {
+test('PresenceGraphScene: zoom snaps to whole percents at the lower clamp boundary', () => {
   const scene = new PresenceGraphScene({});
-  for (let i = 0; i < 5; i += 1) { scene.setZoom(scene.zoom - 0.1); }
-  // 1 − 0.1 × 5 is 0.5000000000000001 in binary float; the zoom buttons
-  // disable at exactly 0.5, so the error would read as one dead click.
-  assert.equal(scene.zoom, 0.5);
+  for (let i = 0; i < 8; i += 1) { scene.setZoom(scene.zoom - 0.1); }
+  // 1 − 0.1 × 8 is 0.19999999999999996 in binary float; the zoom buttons
+  // disable at exactly 0.25, so the error would read as one dead click.
+  assert.equal(scene.zoom, 0.25);
   scene.setZoom(scene.zoom + 0.05);
-  assert.equal(scene.zoom, 0.55);
+  assert.equal(scene.zoom, 0.3);
 });
 
 test('PresenceGraphScene: hovered link emphasis survives a presence update', () => {

@@ -108,6 +108,10 @@ test('PeerListing: the sync dot, label and button follow peer.state sync', async
   assert.match(el.shadowRoot.textContent, /Sync Active/);
   assert.match(el.shadowRoot.textContent, /⏸ Stop Sync/);
   assert.ok(el.shadowRoot.querySelector('.dot.active'));
+  assert.equal(el.shadowRoot.querySelector('.header .page-title')?.textContent, 'Presence');
+  assert.ok(el.shadowRoot.querySelector('.header-leading .sync-status'));
+  assert.ok(el.shadowRoot.querySelector('.header-actions .toolbar-button'));
+  assert.ok(el.shadowRoot.querySelector('.header-actions .toolbar-icon-button'));
 
   posted.length = 0;
   const button = [...el.shadowRoot.querySelectorAll('.header button')]
