@@ -534,6 +534,7 @@ export class DatabaseEditor extends LitElement {
         <h2>Ditto Server (BigPeer) Information</h2>
         <label for="auth-url">URL</label>
         <input id="auth-url" type="text" .value=${c.authUrl} @input=${(e: Event) => this.update_('authUrl', (e.target as HTMLInputElement).value)} />
+        <div class="help">Paste the Ditto Server URL from the Portal, including <code>https://</code>.</div>
 
         <h2>Ditto Server — HTTP API (Optional)</h2>
         <label for="http-api-url">HTTP API URL</label>

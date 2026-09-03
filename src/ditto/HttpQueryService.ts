@@ -72,6 +72,44 @@ export function validateHttpApiUrl(value: string): string | null {
   return null;
 }
 
+/**
+ * Validate the Ditto Server URL used directly by the SDK. Portal now copies
+ * this value with its `https://` scheme, while older stored connections kept
+ * only the host. Accept both forms so existing connections keep working and
+ * new Portal values can be pasted without modification.
+ */
+export function validateDittoServerUrl(value: string): string | null {
+  const v = value.trim();
+  if (v.length === 0) { return null; }
+  if (v.includes('@')) {
+    return 'URLs must not contain a username or "@" — enter only the server URL.';
+  }
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(v);
+  let url: URL;
+  try {
+    url = new URL(hasScheme ? v : `https://${v}`);
+  } catch {
+    return 'Not a valid server URL — paste the URL from the Ditto Portal, e.g. https://example.ditto.live.';
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return 'Server URL must use http:// or https://.';
+  }
+  if (url.username || url.password) {
+    return 'URLs must not embed credentials — enter only the server URL.';
+  }
+  if (!url.hostname) {
+    return 'Not a valid server URL — paste the URL from the Ditto Portal, e.g. https://example.ditto.live.';
+  }
+  return null;
+}
+
+/** Convert legacy host-only server URLs into the absolute URL the SDK needs. */
+export function normalizeDittoServerUrl(value: string): string {
+  const v = value.trim();
+  if (v.length === 0 || /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(v)) { return v; }
+  return `https://${v}`;
+}
+
 /** A hung server must not leave the query panel in 'running' forever. */
 export const REQUEST_TIMEOUT_MS = 30_000;
 /** Responses are buffered fully in memory before parsing — cap them so a
