@@ -873,4 +873,3 @@ test('a failed connect clears the redaction set it never registered', async t =>
   assert.deepEqual(log.secrets, [], 'a failed connect never registers secrets');
   assert.ok(log.clearedSecrets >= 1, 'and clears the set defensively');
 });
-

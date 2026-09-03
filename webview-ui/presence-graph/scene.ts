@@ -59,6 +59,8 @@ const FOCUS_RING_GAP = 24;
 const FOCUS_NODE_HEIGHT = 22.5;
 const FOCUS_NODE_PADDING = 22.5;
 const FOCUS_ESTIMATED_CHAR_WIDTH = 7;
+const FOCUS_VIEW_PADDING_X = 64;
+const FOCUS_VIEW_PADDING_Y = 88;
 const DIRECT_RING_GAP = 24;
 const DIRECT_VIEW_PADDING = 48;
 // Keep unrelated links barely visible for topology context while making
@@ -136,6 +138,8 @@ export class PresenceGraphScene {
   private transitions = new Map<string, { from: Point; to: Point; tStart: number; duration: number }>();
   /** Focused-neighbourhood layout plus its lightweight opacity animation. */
   private focusAnimation: FocusAnimation | undefined;
+  /** Zoom owned by the focused neighbourhood; background zoom is preserved. */
+  private focusViewZoom: number | undefined;
   /** Set when entering Direct mode so the first rebuilt layout can fit the
    *  newly compacted graph without inheriting an unsafe full-mesh zoom. */
   private fitDirectLayoutOnNextRecalculate = false;
@@ -162,6 +166,12 @@ export class PresenceGraphScene {
   }
 
   get isFocusedView(): boolean { return this.focusedPeerKey !== undefined; }
+
+  /** Zoom currently visible to the user. Focus mode owns its zoom so the
+   *  dimmed full mesh does not consume the zoom controls. */
+  get activeZoom(): number {
+    return this.isFocusedView ? this.focusViewZoom ?? this.zoom : this.zoom;
+  }
 
   get focusedPeerLabel(): string | undefined {
     const key = this.focusedPeerKey;
@@ -512,8 +522,8 @@ export class PresenceGraphScene {
     const cx = canvasX - this.width / 2;
     const cy = canvasY - this.height / 2;
     return {
-      x: cx / this.zoom - this.camera.x,
-      y: cy / this.zoom - this.camera.y,
+      x: cx / this.activeZoom - this.camera.x,
+      y: cy / this.activeZoom - this.camera.y,
     };
   }
 
@@ -701,6 +711,10 @@ export class PresenceGraphScene {
 
   /** Reset magnification and place the actual local-node position at canvas centre. */
   resetViewToLocal(): void {
+    if (this.isFocusedView) {
+      this.focusViewZoom = 1;
+      return;
+    }
     this.zoom = 1;
     const local = this.peers.get(this.localKey)?.position ?? { x: 0, y: 0 };
     this.camera = { x: -local.x, y: -local.y };
@@ -768,6 +782,7 @@ export class PresenceGraphScene {
   private clearFocusView(): void {
     this.focusedPeerKey = undefined;
     this.focusAnimation = undefined;
+    this.focusViewZoom = undefined;
     this.selectedPeerKey = undefined;
   }
 
@@ -799,9 +814,14 @@ export class PresenceGraphScene {
     for (const [peerKey, position] of targetPositions) {
       fromPositions.set(peerKey, { ...position });
     }
-    const targetZoom = Math.max(this.zoom, FOCUS_ZOOM);
+    // The old fixed 125% focus zoom could push the outer pills beyond the
+    // canvas. Prefer a useful close-up, but never exceed the fit for the
+    // complete focused neighbourhood.
+    const fitZoom = this.fitZoomToFocusLayout(targetPositions);
+    const targetZoom = this.clampZoom(Math.min(Math.max(this.zoom, FOCUS_ZOOM), fitZoom));
     const fromAmount = refresh ? this.focusAmount() : 0;
     this.focusedPeerKey = key;
+    this.focusViewZoom = targetZoom;
     this.focusAnimation = {
       key,
       amount: fromAmount,
@@ -893,10 +913,30 @@ export class PresenceGraphScene {
   }
 
   private focusZoom(): number {
-    const animation = this.focusAnimation;
-    return animation
-      ? animation.fromZoom + (animation.toZoom - animation.fromZoom) * animation.amount
-      : this.zoom;
+    return this.activeZoom;
+  }
+
+  /** Fit every focused pill, including its measured width, inside the
+   *  canvas. The focused node is always at the world origin, so a centered
+   *  extent is sufficient for both axes. */
+  private fitZoomToFocusLayout(positions: Map<string, Point>): number {
+    let maxX = 0;
+    let maxY = 0;
+    for (const [key, position] of positions) {
+      maxX = Math.max(maxX, Math.abs(position.x) + this.estimatedFocusedNodeWidth(key) / 2);
+      maxY = Math.max(maxY, Math.abs(position.y) + FOCUS_NODE_HEIGHT / 2);
+    }
+    const availableWidth = Math.max(1, this.width / 2 - FOCUS_VIEW_PADDING_X);
+    const availableHeight = Math.max(1, this.height / 2 - FOCUS_VIEW_PADDING_Y);
+    return Math.min(
+      MAX_GRAPH_ZOOM,
+      availableWidth / Math.max(1, maxX),
+      availableHeight / Math.max(1, maxY),
+    );
+  }
+
+  private clampZoom(z: number): number {
+    return Math.round(Math.max(MIN_GRAPH_ZOOM, Math.min(MAX_GRAPH_ZOOM, z)) * 100) / 100;
   }
 
   /** Pin a peer's position (drag start) so transitions can't move it. */
@@ -923,15 +963,20 @@ export class PresenceGraphScene {
     // float error (1 − 0.1 × 8 = 0.19999999999999996), which defeats the
     // exact-boundary disabled state on the zoom buttons and shows up as a
     // dead final click.
-    this.zoom = Math.round(Math.max(MIN_GRAPH_ZOOM, Math.min(MAX_GRAPH_ZOOM, z)) * 100) / 100;
+    const next = this.clampZoom(z);
+    if (this.isFocusedView) {
+      this.focusViewZoom = next;
+    } else {
+      this.zoom = next;
+    }
   }
 
   /** Pan the camera by a delta in canvas (CSS) pixels. Adjust by zoom
    *  so panning feels 1:1 at any zoom level. */
   panBy(dxCanvas: number, dyCanvas: number): void {
     this.camera = {
-      x: this.camera.x + dxCanvas / this.zoom,
-      y: this.camera.y + dyCanvas / this.zoom,
+      x: this.camera.x + dxCanvas / this.activeZoom,
+      y: this.camera.y + dyCanvas / this.activeZoom,
     };
   }
 

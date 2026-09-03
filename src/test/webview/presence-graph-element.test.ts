@@ -526,6 +526,30 @@ test('PresenceGraphElement: full-mesh selection shows and exits focused node vie
   el.remove();
 });
 
+test('PresenceGraphElement: zoom controls operate on the focused neighbourhood', async () => {
+  const el = await mount({ directConnectedOnly: false });
+  clickPeer(el, 'alpha');
+  await el.updateComplete;
+
+  const backgroundZoom = el.scene.zoom;
+  const focusZoom = el.scene.activeZoom;
+  const canvas = el.shadowRoot.querySelector('canvas');
+  canvas.dispatchEvent(new (globalThis as any).WheelEvent('wheel', {
+    deltaY: -120,
+    bubbles: true,
+    cancelable: true,
+  }));
+  await el.updateComplete;
+
+  assert.ok(el.scene.activeZoom > focusZoom, 'wheel zooms the focused neighbourhood in');
+  assert.equal(el.scene.zoom, backgroundZoom, 'background zoom remains unchanged');
+  assert.equal(
+    el.shadowRoot.querySelector('.zoom-label').textContent,
+    `${Math.round(el.scene.activeZoom * 100)}%`,
+  );
+  el.remove();
+});
+
 test('PresenceGraphElement: a stale hover does not out-emphasize the selection', async () => {
   const el = await mount();
   const canvas = el.shadowRoot.querySelector('canvas');

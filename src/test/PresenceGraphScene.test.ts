@@ -90,6 +90,34 @@ test('PresenceGraphScene: full-mesh selection opens a focused direct-neighbour r
   assert.equal(scene.selectedPeerKey, undefined);
 });
 
+test('PresenceGraphScene: focus mode fits the neighbourhood and owns its zoom', () => {
+  const remoteKeys = Array.from({ length: 12 }, (_, i) => `peer-${i}`);
+  const longName = 'Cuttlefish arm64 phone 6';
+  const input: PresenceGraphInput = {
+    localPeerKey: 'local',
+    localDeviceName: 'Local device',
+    isLocalConnectedToCloud: false,
+    remotePeers: remoteKeys.map(peerKey => ({ peerKey, deviceName: longName })),
+    connections: [
+      { from: 'local', to: 'peer-0', type: 'AccessPoint' },
+      ...remoteKeys.slice(1).map(peerKey => ({
+        from: 'peer-0', to: peerKey, type: 'AccessPoint' as const,
+      })),
+    ],
+  };
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: false, zoom: 0.55 });
+  scene.setSize(800, 600);
+  scene.applyInput(input);
+  scene.selectPeer('peer-0');
+
+  assert.ok(scene.activeZoom < 1.25, `focus zoom should fit, got ${scene.activeZoom}`);
+  assert.equal(scene.zoom, 0.55, 'background zoom is preserved');
+  const before = scene.activeZoom;
+  scene.setZoom(before + 0.1);
+  assert.ok(scene.activeZoom > before, 'focus zoom responds to zoom controls');
+  assert.equal(scene.zoom, 0.55, 'zooming focus does not change the background zoom');
+});
+
 test('PresenceGraphScene: focused rings expand for long device names', () => {
   const longName = 'Cuttlefish arm64 phone 6';
   const remoteKeys = ['a', 'b', 'c', 'd', 'e', 'f'];

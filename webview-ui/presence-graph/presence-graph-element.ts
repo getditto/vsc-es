@@ -329,7 +329,7 @@ export class PresenceGraphElement extends LitElement {
     // Direct-mode entry may automatically lower an inherited full-mesh zoom
     // to keep the compact ring inside the viewport. Keep the overlay in sync
     // with the scene after that layout pass.
-    this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
     if (wasFocused !== this.scene.isFocusedView) { this.requestUpdate(); }
     this.wake();
   }
@@ -525,6 +525,7 @@ export class PresenceGraphElement extends LitElement {
     this.scene.endInteraction();
     if (commitClick && !moved) {
       this.scene.selectPeer(clickedKey);
+      this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
       this.requestUpdate();
     }
     // Hover is suppressed while dragging, so resolve it from the release
@@ -590,8 +591,8 @@ export class PresenceGraphElement extends LitElement {
     // events use the opposite sign convention by default; flip so the
     // muscle memory matches.
     const step = e.deltaY > 0 ? -0.05 : 0.05;
-    this.scene.setZoom(this.scene.zoom + step);
-    this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
+    this.scene.setZoom(this.scene.activeZoom + step);
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
   };
 
   // ─── Zoom buttons ─────────────────────────────────────────
@@ -599,14 +600,14 @@ export class PresenceGraphElement extends LitElement {
   private zoomIn(): void {
     if (!this.scene) { return; }
     this.wake();
-    this.scene.setZoom(this.scene.zoom + 0.1);
-    this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
+    this.scene.setZoom(this.scene.activeZoom + 0.1);
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
   }
   private zoomOut(): void {
     if (!this.scene) { return; }
     this.wake();
-    this.scene.setZoom(this.scene.zoom - 0.1);
-    this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
+    this.scene.setZoom(this.scene.activeZoom - 0.1);
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
   }
 
   private resetView(): void {
@@ -619,6 +620,7 @@ export class PresenceGraphElement extends LitElement {
   private exitFocusedView = (): void => {
     if (!this.scene) { return; }
     this.scene.exitFocusView();
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
     this.requestUpdate();
     this.wake();
   };
@@ -712,7 +714,7 @@ export class PresenceGraphElement extends LitElement {
   }
 
   private renderControls(): TemplateResult {
-    const z = this.scene?.zoom ?? 1;
+    const z = this.scene?.activeZoom ?? 1;
     return html`
       <div class="controls">
         ${this.controlsVisible ? html`
