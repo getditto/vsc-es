@@ -145,13 +145,13 @@ export class FloatingStars {
 
   /** Draw every star at its current position into the supplied
    *  canvas context. Caller is responsible for camera transform. */
-  draw(ctx: CanvasRenderingContext2D): void {
+  draw(ctx: CanvasRenderingContext2D, opacity = 1): void {
     for (const s of this.stars) {
       ctx.save();
       ctx.translate(s.x, s.y);
       ctx.rotate(s.rotation);
       ctx.scale(s.scale, s.scale);
-      ctx.globalAlpha = s.alpha;
+      ctx.globalAlpha = s.alpha * opacity;
       // Diamond = rotated square with corners on the axes.
       ctx.beginPath();
       ctx.moveTo(0, DIAMOND_HALF_SIZE);

@@ -35,6 +35,174 @@ test('PresenceGraphScene: Direct-mode selection focuses the selected peer and it
   assert.deepEqual(scene.focusForLine(unrelatedLine), { selected: false, alpha: 0.08 });
 });
 
+test('PresenceGraphScene: full-mesh selection dims unrelated peers and connections', () => {
+  const input = graphInput(['a', 'b', 'c']);
+  input.connections.push(
+    { from: 'a', to: 'b', type: 'Bluetooth' },
+    { from: 'b', to: 'c', type: 'P2PWiFi' },
+  );
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: false });
+  scene.applyInput(input);
+
+  scene.selectPeer('a');
+
+  assert.equal(scene.selectedPeerKey, 'a');
+  assert.deepEqual(scene.focusForPeer('a'), { selected: true, alpha: 1 });
+  assert.deepEqual(scene.focusForPeer('local'), { selected: false, alpha: 1 });
+  assert.deepEqual(scene.focusForPeer('b'), { selected: false, alpha: 1 });
+  assert.deepEqual(scene.focusForPeer('c'), { selected: false, alpha: 0.25 });
+
+  const selectedLine = [...scene.lines.values()].find(line =>
+    (line.fromKey === 'a' && line.toKey === 'b')
+    || (line.fromKey === 'b' && line.toKey === 'a'))!;
+  const unrelatedLine = [...scene.lines.values()].find(line =>
+    (line.fromKey === 'b' && line.toKey === 'c')
+    || (line.fromKey === 'c' && line.toKey === 'b'))!;
+  assert.deepEqual(scene.focusForLine(selectedLine), { selected: true, alpha: 1 });
+  assert.deepEqual(scene.focusForLine(unrelatedLine), { selected: false, alpha: 0.08 });
+});
+
+test('PresenceGraphScene: full-mesh selection opens a focused direct-neighbour ring', () => {
+  const input = graphInput(['a', 'b', 'c', 'd']);
+  input.connections.push(
+    { from: 'a', to: 'b', type: 'Bluetooth' },
+    { from: 'a', to: 'c', type: 'P2PWiFi' },
+    { from: 'b', to: 'd', type: 'AccessPoint' },
+  );
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: false });
+  scene.applyInput(input);
+
+  scene.selectPeer('a');
+
+  assert.equal(scene.isFocusedView, true);
+  assert.equal(scene.focusedPeerLabel, 'A');
+  assert.equal(scene.selectedPeerKey, 'a');
+  // Complete the camera/layout animation and inspect the isolated ring.
+  scene.tick(performance.now() + 700, 0);
+  const animation = (scene as any).focusAnimation;
+  assert.deepEqual(animation.toPositions.get('a'), { x: 0, y: 0 });
+  assert.deepEqual([...animation.toPositions.keys()].sort(), ['a', 'b', 'c', 'local']);
+  assert.equal(animation.toPositions.has('d'), false, 'multi-hop peers stay in the background');
+
+  scene.exitFocusView();
+  scene.tick(performance.now() + 700, 0);
+  assert.equal(scene.isFocusedView, false);
+  assert.equal(scene.selectedPeerKey, undefined);
+});
+
+test('PresenceGraphScene: focus mode fits the neighbourhood and owns its zoom', () => {
+  const remoteKeys = Array.from({ length: 12 }, (_, i) => `peer-${i}`);
+  const longName = 'Cuttlefish arm64 phone 6';
+  const input: PresenceGraphInput = {
+    localPeerKey: 'local',
+    localDeviceName: 'Local device',
+    isLocalConnectedToCloud: false,
+    remotePeers: remoteKeys.map(peerKey => ({ peerKey, deviceName: longName })),
+    connections: [
+      { from: 'local', to: 'peer-0', type: 'AccessPoint' },
+      ...remoteKeys.slice(1).map(peerKey => ({
+        from: 'peer-0', to: peerKey, type: 'AccessPoint' as const,
+      })),
+    ],
+  };
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: false, zoom: 0.55 });
+  scene.setSize(800, 600);
+  scene.applyInput(input);
+  scene.selectPeer('peer-0');
+
+  assert.ok(scene.activeZoom < 1.25, `focus zoom should fit, got ${scene.activeZoom}`);
+  assert.equal(scene.zoom, 0.55, 'background zoom is preserved');
+  const before = scene.activeZoom;
+  scene.setZoom(before + 0.1);
+  assert.ok(scene.activeZoom > before, 'focus zoom responds to zoom controls');
+  assert.equal(scene.zoom, 0.55, 'zooming focus does not change the background zoom');
+});
+
+test('PresenceGraphScene: focused rings expand for long device names', () => {
+  const longName = 'Cuttlefish arm64 phone 6';
+  const remoteKeys = ['a', 'b', 'c', 'd', 'e', 'f'];
+  const input: PresenceGraphInput = {
+    localPeerKey: 'local',
+    localDeviceName: 'Local device',
+    isLocalConnectedToCloud: false,
+    remotePeers: remoteKeys.map(peerKey => ({ peerKey, deviceName: longName })),
+    connections: [
+      { from: 'local', to: 'a', type: 'AccessPoint' as const },
+      ...remoteKeys.filter(peerKey => peerKey !== 'a').map(peerKey => ({
+        from: 'a', to: peerKey, type: 'AccessPoint' as const,
+      })),
+    ],
+  };
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: false });
+  scene.applyInput(input);
+  scene.selectPeer('a');
+
+  const positions = (scene as any).focusAnimation.toPositions as Map<string, { x: number; y: number }>;
+  const ring = ['local', 'b', 'c', 'd', 'e', 'f'];
+  const radius = Math.hypot(positions.get('b')!.x, positions.get('b')!.y);
+  assert.ok(radius > 200, `long labels should expand the ring, got radius ${radius}`);
+  for (let i = 0; i < ring.length; i += 1) {
+    const left = positions.get(ring[i]!)!;
+    const right = positions.get(ring[(i + 1) % ring.length]!)!;
+    assert.ok(
+      Math.hypot(left.x - right.x, left.y - right.y) > 180,
+      'adjacent long-name pills keep a visible gap',
+    );
+  }
+});
+
+test('PresenceGraphScene: entering Direct mode expands long-label rings and fits inherited zoom', () => {
+  const longName = 'Cuttlefish arm64 phone 6';
+  const remoteKeys = ['a', 'b', 'c', 'd', 'e', 'f'];
+  const input: PresenceGraphInput = {
+    localPeerKey: 'local',
+    localDeviceName: 'Local device',
+    isLocalConnectedToCloud: false,
+    remotePeers: remoteKeys.map(peerKey => ({ peerKey, deviceName: longName })),
+    connections: remoteKeys.map(peerKey => ({
+      from: 'local', to: peerKey, type: 'AccessPoint' as const,
+    })),
+  };
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: false, zoom: 1.65 });
+  scene.setSize(800, 600);
+  scene.applyInput(input);
+
+  scene.setShowDirectConnectedOnly(true);
+  scene.applyInput(input);
+
+  const ring = scene.layout?.ringAssignments.get(1) ?? [];
+  const positions = scene.layout?.positions;
+  assert.equal(ring.length, remoteKeys.length);
+  assert.ok((scene.layout?.ringRadii.get(1) ?? 0) > 200, 'Direct ring grows for long labels');
+  assert.ok(scene.zoom < 1.65, `inherited zoom should be fitted, got ${scene.zoom}`);
+  for (let i = 0; i < ring.length; i += 1) {
+    const left = positions?.get(ring[i]!);
+    const right = positions?.get(ring[(i + 1) % ring.length]!);
+    assert.ok(left && right);
+    assert.ok(
+      Math.hypot(left.x - right.x, left.y - right.y) > 215,
+      'adjacent long-name pills keep a separating gap',
+    );
+  }
+});
+
+test('PresenceGraphScene: a renamed peer triggers label-aware relayout', () => {
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
+  scene.applyInput(graphInput());
+  const before = scene.layout?.ringRadii.get(1) ?? 0;
+
+  scene.applyInput({
+    ...graphInput(),
+    remotePeers: ['a', 'b'].map(peerKey => ({
+      peerKey,
+      deviceName: 'A very very very very very very long device name',
+    })),
+  });
+
+  const after = scene.layout?.ringRadii.get(1) ?? 0;
+  assert.ok(after > before, `renaming peers should expand the ring (${before} → ${after})`);
+});
+
 test('PresenceGraphScene: clicking the selected peer or empty canvas clears focus', () => {
   const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
   scene.applyInput(graphInput());
@@ -76,7 +244,7 @@ test('PresenceGraphScene: persistent selection takes precedence over hovering an
   assert.deepEqual(scene.focusForLine(hoveredLine), { selected: false, alpha: 0.08 });
 });
 
-test('PresenceGraphScene: selection is cleared outside Direct mode and after peer removal', () => {
+test('PresenceGraphScene: selection is cleared when graph mode changes and after peer removal', () => {
   const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
   scene.applyInput(graphInput());
   scene.selectPeer('a');
@@ -84,9 +252,10 @@ test('PresenceGraphScene: selection is cleared outside Direct mode and after pee
   scene.setShowDirectConnectedOnly(false);
   assert.equal(scene.selectedPeerKey, undefined);
   scene.selectPeer('a');
-  assert.equal(scene.selectedPeerKey, undefined);
+  assert.equal(scene.selectedPeerKey, 'a');
 
   scene.setShowDirectConnectedOnly(true);
+  assert.equal(scene.selectedPeerKey, undefined);
   scene.selectPeer('a');
   scene.applyInput(graphInput(['b']));
   assert.equal(scene.selectedPeerKey, undefined);
@@ -180,14 +349,14 @@ test('PresenceGraphScene: leaving Direct mode resets highlight flags, not just f
   assert.ok([...scene.lines.values()].every(l => !l.highlighted), 'line highlights cleared');
 });
 
-test('PresenceGraphScene: zoom snaps to whole percents at the clamp boundary', () => {
+test('PresenceGraphScene: zoom snaps to whole percents at the lower clamp boundary', () => {
   const scene = new PresenceGraphScene({});
-  for (let i = 0; i < 5; i += 1) { scene.setZoom(scene.zoom - 0.1); }
-  // 1 − 0.1 × 5 is 0.5000000000000001 in binary float; the zoom buttons
-  // disable at exactly 0.5, so the error would read as one dead click.
-  assert.equal(scene.zoom, 0.5);
+  for (let i = 0; i < 8; i += 1) { scene.setZoom(scene.zoom - 0.1); }
+  // 1 − 0.1 × 8 is 0.19999999999999996 in binary float; the zoom buttons
+  // disable at exactly 0.25, so the error would read as one dead click.
+  assert.equal(scene.zoom, 0.25);
   scene.setZoom(scene.zoom + 0.05);
-  assert.equal(scene.zoom, 0.55);
+  assert.equal(scene.zoom, 0.3);
 });
 
 test('PresenceGraphScene: hovered link emphasis survives a presence update', () => {

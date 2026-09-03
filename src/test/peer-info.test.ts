@@ -47,8 +47,8 @@ function makeRemotePeer(
   });
 }
 
-function makeLocalPeer(): FakePresencePeer {
-  return makePeer({ peerKey: LOCAL });
+function makeLocalPeer(overrides: Partial<FakePresencePeer> = {}): FakePresencePeer {
+  return makePeer({ peerKey: LOCAL, ...overrides });
 }
 
 function makeConnection(type: any): ConnectionInfo {
@@ -112,6 +112,62 @@ test('mergePeerList: presenceGraph includes multi-hop peers that remote[] filter
     'A-B/AccessPoint',
     `${[LOCAL, 'A'].sort().join('-')}/AccessPoint`,
   ]);
+});
+
+test('mergePeerList preserves multicast edges in the full presence graph', () => {
+  const multicastPeer = makePeer({
+    peerKey: 'multicast-peer',
+    connections: [{
+      id: 'c-multicast',
+      connectionType: 'Multicast',
+      peer1: LOCAL,
+      peer2: 'multicast-peer',
+    }],
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [multicastPeer] },
+    new Map(),
+    null,
+    [],
+  );
+
+  assert.deepEqual(snapshot.presenceGraph?.connections, [{
+    peer1: LOCAL,
+    peer2: 'multicast-peer',
+    connectionType: 'Multicast',
+  }]);
+  assert.deepEqual(snapshot.presenceGraph?.remotePeers, [{
+    peerKey: 'multicast-peer',
+    deviceName: 'phone',
+  }]);
+});
+
+test('mergePeerList includes edges advertised only by the local presence peer', () => {
+  const localMulticast = {
+    id: 'c-local-multicast',
+    connectionType: 'Multicast',
+    peer1: LOCAL,
+    peer2: 'multicast-peer',
+  };
+  const snapshot = mergePeerList(
+    {
+      localPeer: makeLocalPeer({ connections: [localMulticast] }),
+      remotePeers: [makePeer({ peerKey: 'multicast-peer' })],
+    },
+    new Map(),
+    null,
+    [],
+  );
+
+  assert.deepEqual(snapshot.presenceGraph?.connections, [{
+    peer1: LOCAL,
+    peer2: 'multicast-peer',
+    connectionType: 'Multicast',
+  }]);
+  assert.deepEqual(snapshot.presenceGraph?.remotePeers, [{
+    peerKey: 'multicast-peer',
+    deviceName: 'phone',
+  }]);
 });
 
 test('mergePeerList: presenceGraph drops orphan peers (discovered but no edges) — regression for sync stop/start', () => {
@@ -298,6 +354,7 @@ test('dominantConnectionType priority: cloud > WebSocket > AccessPoint > P2PWiFi
   assert.equal(dominantConnectionType(makePeerInfo({ connections: [makeConnection('Bluetooth'), makeConnection('WebSocket')] })), 'WebSocket');
   assert.equal(dominantConnectionType(makePeerInfo({ connections: [makeConnection('Bluetooth'), makeConnection('AccessPoint')] })), 'AccessPoint');
   assert.equal(dominantConnectionType(makePeerInfo({ connections: [makeConnection('Bluetooth'), makeConnection('P2PWiFi')] })), 'P2PWiFi');
+  assert.equal(dominantConnectionType(makePeerInfo({ connections: [makeConnection('Multicast')] })), 'Multicast');
   assert.equal(dominantConnectionType(makePeerInfo({ connections: [makeConnection('Bluetooth')] })), 'Bluetooth');
   assert.equal(dominantConnectionType(makePeerInfo({ connections: [] })), 'unknown');
 });

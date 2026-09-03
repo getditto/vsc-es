@@ -118,7 +118,9 @@ export interface StoredSubscription {
 
 export type PeerOS = 'iOS' | 'Android' | 'macOS' | 'Linux' | 'Windows' | 'tvOS' | 'Generic';
 
-export type ConnectionType = 'P2PWiFi' | 'WebSocket' | 'AccessPoint' | 'Bluetooth';
+/** Transport reported by the Ditto presence graph. Multicast edges are
+ * learned from the mesh even though the Node SDK cannot configure them. */
+export type ConnectionType = 'P2PWiFi' | 'WebSocket' | 'AccessPoint' | 'Bluetooth' | 'Multicast';
 
 export type SyncSessionStatus = 'Connected' | 'Connecting' | 'Disconnected';
 
@@ -170,7 +172,7 @@ interface RawPresenceGraph {
   /** Undirected edges as the SDK reports them. Includes peer↔peer
    *  edges that don't involve local. Caller is responsible for the
    *  same (pair-sorted + type) dedupe the listing card does. */
-  connections: { peer1: string; peer2: string; connectionType: 'P2PWiFi' | 'WebSocket' | 'AccessPoint' | 'Bluetooth' }[];
+  connections: { peer1: string; peer2: string; connectionType: ConnectionType }[];
 }
 
 export interface PeerListSnapshot {

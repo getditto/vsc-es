@@ -328,6 +328,90 @@ test('layout: radiusScale > 1 spreads rings outward proportionally', () => {
   }
 });
 
+test('layout: expanded mode packs a crowded BFS layer into concentric rings', () => {
+  const direct = Array.from({ length: 12 }, (_, i) => `direct-${i}`);
+  const peers = ['local', ...direct, 'indirect'];
+  const cs: ConnectionInfo[] = direct.map(peer => ({ fromPeer: 'local', toPeer: peer }));
+  cs.push({ fromPeer: direct[0]!, toPeer: 'indirect' });
+
+  const r = calculateLayout('local', peers, cs, 1.75);
+  const ring1 = r.ringAssignments.get(1) ?? [];
+  const ring2 = r.ringAssignments.get(2) ?? [];
+  const ring3 = r.ringAssignments.get(3) ?? [];
+
+  // The direct layer fills the first visual rings before the multi-hop peer
+  // is placed outside them.
+  assert.ok(ring1.length > 0 && ring1.every(peer => direct.includes(peer)));
+  assert.ok(ring2.length > 0 && ring2.every(peer => direct.includes(peer)));
+  assert.deepEqual(ring3, ['indirect']);
+
+  const radii = [...r.ringRadii.entries()]
+    .filter(([ring]) => ring > 0)
+    .sort(([a], [b]) => a - b)
+    .map(([, radius]) => radius);
+  for (let i = 1; i < radii.length; i += 1) {
+    assert.ok(radii[i]! > radii[i - 1]!, 'visual rings must expand outward');
+  }
+
+  assert.equal(r.positions.size, peers.length);
+  for (const peer of peers) {
+    assert.ok(r.positions.has(peer), `missing position for ${peer}`);
+  }
+});
+
+test('layout: expanded mode evenly spaces peers within every visual ring', () => {
+  const peers = ['local', ...Array.from({ length: 30 }, (_, i) => `P${i}`)];
+  const cs: ConnectionInfo[] = peers.slice(1).map(peer => ({ fromPeer: 'local', toPeer: peer }));
+  const r = calculateLayout('local', peers, cs, 1.75);
+
+  for (const [ring, ringPeers] of r.ringAssignments) {
+    if (ring === 0 || ringPeers.length < 2) { continue; }
+    const angles = ringPeers.map(peer => {
+      const position = r.positions.get(peer)!;
+      let angle = Math.atan2(position.y, position.x);
+      if (angle < 0) { angle += 2 * Math.PI; }
+      return angle;
+    }).sort((a, b) => a - b);
+    const expectedGap = (2 * Math.PI) / ringPeers.length;
+    for (let i = 1; i < angles.length; i += 1) {
+      assert.ok(Math.abs((angles[i]! - angles[i - 1]!) - expectedGap) < 1e-6,
+        `ring ${ring} is not evenly spaced`);
+    }
+  }
+});
+
+test('layout: expanded mode uses supplied pill footprints when packing rings', () => {
+  const direct = Array.from({ length: 12 }, (_, i) => `P${i}`);
+  const peers = ['local', ...direct];
+  const cs: ConnectionInfo[] = direct.map(peer => ({ fromPeer: 'local', toPeer: peer }));
+  const footprints = new Map(direct.map(peer => [peer, 340]));
+  const r = calculateLayout('local', peers, cs, 1.75, footprints);
+
+  const ring1 = r.ringAssignments.get(1) ?? [];
+  assert.ok(ring1.length < direct.length, 'wide pills should reduce visual-ring capacity');
+  for (const [ring, ringPeers] of r.ringAssignments) {
+    if (ring === 0 || ringPeers.length < 2) { continue; }
+    const positions = ringPeers.map(peer => r.positions.get(peer)!);
+    for (let i = 0; i < positions.length; i += 1) {
+      const next = positions[(i + 1) % positions.length]!;
+      const distance = Math.hypot(positions[i]!.x - next.x, positions[i]!.y - next.y);
+      assert.ok(distance >= 340, `ring ${ring} chord is too short: ${distance}`);
+    }
+  }
+});
+
+test('layout: expanded mode continues outward beyond 100 peers', () => {
+  const peers = ['local', ...Array.from({ length: 101 }, (_, i) => `P${i}`)];
+  const cs: ConnectionInfo[] = peers.slice(1).map(peer => ({ fromPeer: 'local', toPeer: peer }));
+  const r = calculateLayout('local', peers, cs, 1.75);
+
+  const visualRings = [...r.ringAssignments.keys()].filter(ring => ring > 0);
+  assert.ok(visualRings.length >= 5, `expected at least 5 visual rings, got ${visualRings.length}`);
+  assert.equal(r.positions.size, peers.length);
+  assert.equal(new Set([...r.positions.values()].map(point => `${point.x},${point.y}`)).size, peers.length,
+    'large meshes must not reuse a position');
+});
+
 test('layout: radiusScale does not shrink rings below the crowding floor', () => {
   // 20 ring-1 peers — crowding pushes radius well above base. Scaling
   // DOWN with a tiny scale must NOT shrink the ring below the floor

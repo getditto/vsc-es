@@ -178,6 +178,36 @@ test('PresenceGraphElement: center action resets zoom label and camera', async (
   el.remove();
 });
 
+test('PresenceGraphElement: background effects default on and can be disabled', async () => {
+  const el = await mount();
+  const canvas = el.shadowRoot.querySelector('canvas');
+  const ctx = contextFor(canvas);
+  const toggle = el.shadowRoot.querySelector('[aria-label="Background effects"]') as HTMLButtonElement;
+
+  assert.equal(el.scene.backgroundEffectsEnabled, true);
+  assert.equal(el.hasAttribute('data-background-effects-off'), false);
+  assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+
+  ctx.__reset();
+  drawFrame();
+  const enabledFills = ctx.__ops.filter(op => op.op === 'fill').length;
+  assert.ok(enabledFills >= 160, `enabled background should paint the star field, got ${enabledFills} fills`);
+
+  toggle.click();
+  await el.updateComplete;
+
+  assert.equal(el.scene.backgroundEffectsEnabled, false);
+  assert.equal(el.hasAttribute('data-background-effects-off'), true);
+  assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+  assert.match(toggle.title, /Turn on/);
+
+  ctx.__reset();
+  drawFrame();
+  const disabledFills = ctx.__ops.filter(op => op.op === 'fill').length;
+  assert.ok(disabledFills < enabledFills - 100, 'disabled background should skip the star field');
+  el.remove();
+});
+
 // ─── Direct-mode round trip ──────────────────────────────────────
 
 test('PresenceGraphElement: Direct control emits and applies both directions', async () => {
@@ -455,6 +485,68 @@ test('PresenceGraphElement: selecting a peer dims unrelated peers and lines on c
   const strokes = ctx.__ops.filter(o => o.op === 'stroke');
   assert.ok(strokes.some(o => o.globalAlpha === 1 && o.lineWidth === 3), 'selected link emphasized');
   assert.ok(strokes.some(o => o.globalAlpha < 0.1 && o.lineWidth === 2), 'unrelated link receded');
+  el.remove();
+});
+
+test('PresenceGraphElement: full-mesh selection shows and exits focused node view', async () => {
+  const el = await mount({
+    directConnectedOnly: false,
+    input: {
+      ...structuredClone(INPUT),
+      remotePeers: [
+        { peerKey: 'alpha', deviceName: 'Alpha' },
+        { peerKey: 'beta', deviceName: 'Beta' },
+        { peerKey: 'gamma', deviceName: 'Gamma' },
+      ],
+      connections: [
+        { from: 'local', to: 'alpha', type: 'AccessPoint' as const },
+        { from: 'alpha', to: 'beta', type: 'Bluetooth' as const },
+        { from: 'alpha', to: 'gamma', type: 'P2PWiFi' as const },
+      ],
+    },
+  });
+  clickPeer(el, 'alpha');
+  await el.updateComplete;
+  assert.equal(el.scene.isFocusedView, true);
+  assert.ok(el.shadowRoot.querySelector('[aria-label="Exit focused node view and show full mesh"]'));
+
+  el.scene.tick(performance.now() + 700, 0);
+  const focusedAlpha = el.scene.focusAnimation.toPositions.get('alpha');
+  assert.deepEqual(focusedAlpha, { x: 0, y: 0 });
+  assert.equal(el.scene.focusAnimation.toPositions.has('beta'), true);
+  assert.equal(el.scene.focusAnimation.toPositions.has('local'), true);
+
+  el.shadowRoot.querySelector('[aria-label="Exit focused node view and show full mesh"]').click();
+  await el.updateComplete;
+  el.scene.tick(performance.now() + 700, 0);
+  el.requestUpdate();
+  await el.updateComplete;
+  assert.equal(el.scene.isFocusedView, false);
+  assert.equal(el.shadowRoot.querySelector('[aria-label="Exit focused node view and show full mesh"]'), null);
+  el.remove();
+});
+
+test('PresenceGraphElement: zoom controls operate on the focused neighbourhood', async () => {
+  const el = await mount({ directConnectedOnly: false });
+  clickPeer(el, 'alpha');
+  await el.updateComplete;
+
+  const backgroundZoom = el.scene.zoom;
+  const focusZoom = el.scene.activeZoom;
+  const canvas = el.shadowRoot.querySelector('canvas');
+  canvas.dispatchEvent(new (globalThis as any).WheelEvent('wheel', {
+    deltaY: -120,
+    bubbles: true,
+    cancelable: true,
+  }));
+  await el.updateComplete;
+
+  assert.ok(el.scene.activeZoom > focusZoom, 'wheel zooms the focused neighbourhood in');
+  assert.equal(el.scene.zoom, backgroundZoom, 'background zoom remains unchanged');
+  assert.equal(
+    el.shadowRoot.querySelector('.zoom-label').textContent,
+    `${Math.round(el.scene.activeZoom * 100)}%`,
+  );
   el.remove();
 });
 

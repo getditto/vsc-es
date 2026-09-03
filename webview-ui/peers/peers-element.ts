@@ -8,7 +8,7 @@ import type { PresenceGraphInput } from '../presence-graph/scene.js';
 // ─── Types (mirror src/models/DittoConfig.ts; can't import from ext host) ──
 
 type PeerOS = 'iOS' | 'Android' | 'macOS' | 'Linux' | 'Windows' | 'tvOS' | 'Generic';
-type ConnectionType = 'P2PWiFi' | 'WebSocket' | 'AccessPoint' | 'Bluetooth';
+type ConnectionType = 'P2PWiFi' | 'WebSocket' | 'AccessPoint' | 'Bluetooth' | 'Multicast';
 type SyncSessionStatus = 'Connected' | 'Connecting' | 'Disconnected';
 
 interface LocalNetworkInterface {
@@ -85,13 +85,14 @@ type In =
 
 // ─── Visual mappings ─────────────────────────────────────────────
 
-type DominantType = 'cloud' | 'WebSocket' | 'AccessPoint' | 'P2PWiFi' | 'Bluetooth' | 'unknown';
+type DominantType = 'cloud' | 'WebSocket' | 'AccessPoint' | 'P2PWiFi' | 'Multicast' | 'Bluetooth' | 'unknown';
 
 const GRADIENTS: Record<DominantType, [string, string]> = {
   cloud:       ['rgb(115, 38, 184)', 'rgb(71, 18, 122)'],
   WebSocket:   ['rgb(217, 122, 0)',  'rgb(153, 77, 0)'],
   AccessPoint: ['rgb(13, 133, 64)',  'rgb(5, 82, 36)'],
   P2PWiFi:     ['rgb(199, 26, 56)',  'rgb(128, 10, 31)'],
+  Multicast:   ['rgb(255, 214, 10)', 'rgb(170, 125, 0)'],
   Bluetooth:   ['rgb(0, 102, 217)',  'rgb(0, 51, 153)'],
   unknown:     ['rgb(89, 89, 102)',  'rgb(51, 51, 64)'],
 };
@@ -126,7 +127,7 @@ const INTERFACE_KIND_LABEL: Record<LocalNetworkInterface['kind'], string> = {
 
 function dominantType(peer: PeerInfo): DominantType {
   if (peer.isDittoServer) { return 'cloud'; }
-  for (const t of ['WebSocket', 'AccessPoint', 'P2PWiFi', 'Bluetooth'] as const) {
+  for (const t of ['WebSocket', 'AccessPoint', 'P2PWiFi', 'Multicast', 'Bluetooth'] as const) {
     if (peer.connections.some(c => c.connectionType === t)) { return t; }
   }
   return 'unknown';
@@ -151,6 +152,7 @@ function connectionIcon(type: ConnectionType): string {
     case 'AccessPoint': return 'codicon-broadcast';
     case 'P2PWiFi': return 'codicon-circuit-board';
     case 'WebSocket': return 'codicon-cloud';
+    case 'Multicast': return 'codicon-broadcast';
   }
 }
 
@@ -160,6 +162,7 @@ function connectionDisplay(type: ConnectionType): string {
     case 'AccessPoint': return 'WiFi AP';
     case 'P2PWiFi': return 'P2P WiFi';
     case 'WebSocket': return 'WebSocket';
+    case 'Multicast': return 'Multicast';
   }
 }
 
@@ -258,15 +261,39 @@ export class PeerListing extends LitElement {
     .page-title {
       font-size: 22px;
       font-weight: 700;
-      margin: 0 0 12px 0;
+      margin: 0;
       color: var(--vscode-foreground);
+      white-space: nowrap;
     }
 
     .header {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 16px;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+      min-height: 32px;
+      flex-wrap: wrap;
+    }
+
+    .header-leading,
+    .header-actions,
+    .sync-status {
+      display: flex;
+      align-items: center;
+    }
+    .header-leading {
+      gap: 14px;
+      min-width: 0;
+    }
+    .header-actions {
+      gap: 8px;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .sync-status {
+      gap: 8px;
+      white-space: nowrap;
     }
 
     .dot {
@@ -349,7 +376,7 @@ export class PeerListing extends LitElement {
     .graph-host {
       position: relative;
       width: 100%;
-      height: calc(100vh - 140px);
+      height: calc(100vh - 100px);
       min-height: 400px;
     }
     ditto-presence-graph { width: 100%; height: 100%; display: block; }
@@ -822,23 +849,28 @@ export class PeerListing extends LitElement {
 
   override render() {
     return html`
-      <h1 class="page-title">Presence</h1>
       <div class="header">
-        <div class="dot ${this.sync}"></div>
-        <span>${this.sync === 'active' ? 'Sync Active' : 'Sync Idle'}</span>
-        <span style="flex: 1"></span>
-        <button class="toolbar-button" @click=${this.toggleSync}>
-          ${this.sync === 'active' ? '⏸ Stop Sync' : '▶ Start Sync'}
-        </button>
-        <div class="popover-anchor">
-          <button class="toolbar-icon-button"
-                  title="Transport Configuration"
-                  aria-label="Transport Configuration"
-                  ?disabled=${!this.platformReceived}
-                  @click=${this.toggleTransportPopover}>
-            <i class="codicon codicon-gear"></i>
+        <div class="header-leading">
+          <h1 class="page-title">Presence</h1>
+          <div class="sync-status">
+            <div class="dot ${this.sync}"></div>
+            <span>${this.sync === 'active' ? 'Sync Active' : 'Sync Idle'}</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="toolbar-button" @click=${this.toggleSync}>
+            ${this.sync === 'active' ? '⏸ Stop Sync' : '▶ Start Sync'}
           </button>
-          ${this.showTransportPopover ? this.renderTransportPopover() : nothing}
+          <div class="popover-anchor">
+            <button class="toolbar-icon-button"
+                    title="Transport Configuration"
+                    aria-label="Transport Configuration"
+                    ?disabled=${!this.platformReceived}
+                    @click=${this.toggleTransportPopover}>
+              <i class="codicon codicon-gear"></i>
+            </button>
+            ${this.showTransportPopover ? this.renderTransportPopover() : nothing}
+          </div>
         </div>
       </div>
 
@@ -1152,15 +1184,11 @@ export class PeerListing extends LitElement {
     if (!local || !local.peerKey) { return undefined; }
     const isCloud = this.snapshot.remote.some(p => p.isDittoServer);
 
-    // Two sources depending on the toggle:
-    // - Direct only ON  → use the pre-filtered snapshot.remote.
-    //   The host already filtered to peers whose connections involve
-    //   local AND dropped peer↔peer chord edges. Result: a clean
-    //   spoke-from-local view.
-    // - Direct only OFF → use snapshot.presenceGraph, which carries
-    //   the unfiltered SDK presence graph (multi-hop peers + every
-    //   peer↔peer edge). This is the "chaos lines" SwiftUI view.
-    if (this.directConnectedOnly) {
+    const pg = this.snapshot.presenceGraph;
+    if (!pg) {
+      // Synthetic snapshots from before the first Presence emission do not
+      // have the complete graph. Preserve the old direct-only fallback until
+      // the host supplies one.
       const seen = new Set<string>();
       const connections: PresenceGraphInput['connections'] = [];
       for (const peer of this.snapshot.remote) {
@@ -1179,37 +1207,32 @@ export class PeerListing extends LitElement {
         remotePeers: this.snapshot.remote
           .filter(p => !p.isDittoServer)
           .map(p => ({ peerKey: p.id, deviceName: p.deviceName })),
-        connections,
+        connections: this.directConnectedOnly ? connections : [],
       };
     }
 
-    // Direct only OFF → use the full presence graph if the host sent
-    // one. If not (synthetic empty snapshot), fall back to whatever
-    // direct-only data we have so the panel doesn't blank out.
-    const pg = this.snapshot.presenceGraph;
-    if (!pg) {
-      return {
-        localPeerKey: local.peerKey,
-        localDeviceName: local.deviceName,
-        isLocalConnectedToCloud: isCloud,
-        remotePeers: this.snapshot.remote
-          .filter(p => !p.isDittoServer)
-          .map(p => ({ peerKey: p.id, deviceName: p.deviceName })),
-        connections: [],
-      };
+    // Both modes start with the same complete SDK graph. Direct mode then
+    // filters to edges touching local; this avoids depending on the host's
+    // separate card-oriented `remote` projection and keeps multicast edges
+    // consistent between the two views.
+    const graphConnections = pg.connections.map(c => ({
+      from: c.peer1, to: c.peer2, type: c.connectionType,
+    }));
+    const visibleConnections = this.directConnectedOnly
+      ? graphConnections.filter(c => c.from === local.peerKey || c.to === local.peerKey)
+      : graphConnections;
+    const visiblePeerKeys = new Set<string>();
+    for (const c of visibleConnections) {
+      if (c.from !== local.peerKey) { visiblePeerKeys.add(c.from); }
+      if (c.to !== local.peerKey) { visiblePeerKeys.add(c.to); }
     }
-    // The cloud peer is synthesised in the scene from
-    // isLocalConnectedToCloud and lives under the well-known
-    // 'ditto-cloud-node' key — the presence graph from the SDK
-    // doesn't contain it, so no special filtering needed.
+
     return {
       localPeerKey: local.peerKey,
       localDeviceName: local.deviceName,
       isLocalConnectedToCloud: isCloud,
-      remotePeers: pg.remotePeers,
-      connections: pg.connections.map(c => ({
-        from: c.peer1, to: c.peer2, type: c.connectionType,
-      })),
+      remotePeers: pg.remotePeers.filter(p => !this.directConnectedOnly || visiblePeerKeys.has(p.peerKey)),
+      connections: visibleConnections,
     };
   }
 }

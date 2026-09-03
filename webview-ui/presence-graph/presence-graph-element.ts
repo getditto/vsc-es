@@ -6,7 +6,12 @@
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { CONNECTION_STYLES, type ConnectionTypeName } from './colors.js';
-import { PresenceGraphScene, type PresenceGraphInput } from './scene.js';
+import {
+  MAX_GRAPH_ZOOM,
+  MIN_GRAPH_ZOOM,
+  PresenceGraphScene,
+  type PresenceGraphInput,
+} from './scene.js';
 
 @customElement('ditto-presence-graph')
 export class PresenceGraphElement extends LitElement {
@@ -31,6 +36,9 @@ export class PresenceGraphElement extends LitElement {
   /** Also parent-owned, for the same reason: the element is torn down on
    *  every tab switch, so element-local state would not survive one. */
   @property({ attribute: false }) controlsVisible = true;
+
+  /** Decorative effects default to on and stay local to this graph element. */
+  @state() private backgroundEffectsEnabled = true;
 
   /** Surfaced state for the zoom indicator overlay. */
   @state() private zoomLabel = '100%';
@@ -79,6 +87,9 @@ export class PresenceGraphElement extends LitElement {
       background:
         radial-gradient(circle at 50% 35%, rgba(40, 60, 90, 0.4) 0%, transparent 60%),
         var(--vscode-editor-background, #1e1e1e);
+    }
+    :host([data-background-effects-off]) {
+      background: var(--vscode-editor-background, #1e1e1e);
     }
     canvas {
       width: 100%;
@@ -204,6 +215,45 @@ export class PresenceGraphElement extends LitElement {
       height: 100%;
       fill: currentColor;
     }
+    .focus-banner {
+      position: absolute;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px 6px 12px;
+      background: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.9));
+      border: 1px solid var(--vscode-focusBorder, rgba(120, 180, 255, 0.65));
+      border-radius: 999px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+      color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+      font-size: 11px;
+      pointer-events: auto;
+      z-index: 1;
+    }
+    .focus-banner strong { font-weight: 600; }
+    .focus-banner button {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      padding: 4px;
+      border: 0;
+      border-radius: 50%;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      cursor: pointer;
+    }
+    .focus-banner button:hover {
+      background: var(--vscode-toolbar-hoverBackground);
+    }
+    .focus-banner button:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: 2px;
+    }
+    .focus-banner svg { width: 100%; height: 100%; fill: currentColor; }
   `;
 
   override disconnectedCallback(): void {
@@ -241,7 +291,10 @@ export class PresenceGraphElement extends LitElement {
   }
 
   private setupScene(): void {
-    this.scene = new PresenceGraphScene({ showDirectConnectedOnly: this.directConnectedOnly });
+    this.scene = new PresenceGraphScene({
+      showDirectConnectedOnly: this.directConnectedOnly,
+      backgroundEffectsEnabled: this.backgroundEffectsEnabled,
+    });
     this.fitCanvasToHost();
     this.resizeObserver = new ResizeObserver(() => { this.fitCanvasToHost(); });
     this.resizeObserver.observe(this);
@@ -251,9 +304,11 @@ export class PresenceGraphElement extends LitElement {
   protected override updated(changed: Map<string, unknown>): void {
     if (!this.scene) { return; }
     const modeChanged = changed.has('directConnectedOnly');
+    const wasFocused = this.scene.isFocusedView;
     if (modeChanged) {
       this.scene.setShowDirectConnectedOnly(this.directConnectedOnly);
     }
+    if (wasFocused !== this.scene.isFocusedView) { this.requestUpdate(); }
     if (changed.has('input')) {
       this.applyInputAndStartRaf();
     } else if (modeChanged) {
@@ -268,7 +323,14 @@ export class PresenceGraphElement extends LitElement {
 
   private applyInputAndStartRaf(): void {
     if (!this.scene || !this.input) { return; }
+    this.scene.setMeasurementContext(this.canvasEl?.getContext('2d') ?? undefined);
+    const wasFocused = this.scene.isFocusedView;
     this.scene.applyInput(this.input);
+    // Direct-mode entry may automatically lower an inherited full-mesh zoom
+    // to keep the compact ring inside the viewport. Keep the overlay in sync
+    // with the scene after that layout pass.
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
+    if (wasFocused !== this.scene.isFocusedView) { this.requestUpdate(); }
     this.wake();
   }
 
@@ -327,7 +389,9 @@ export class PresenceGraphElement extends LitElement {
       const dt = Math.min(100, now - this.lastFrameTime); // clamp huge gaps
       this.lastFrameTime = now;
       if (!this.scene) { this.rafHandle = undefined; return; }
+      const wasFocused = this.scene.isFocusedView;
       const stillAnimating = this.scene.tick(now, dt);
+      if (wasFocused !== this.scene.isFocusedView) { this.requestUpdate(); }
       this.renderScene();
       if (stillAnimating) {
         // Layout transitions in flight (or a live drag): the loop must stay
@@ -461,6 +525,8 @@ export class PresenceGraphElement extends LitElement {
     this.scene.endInteraction();
     if (commitClick && !moved) {
       this.scene.selectPeer(clickedKey);
+      this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
+      this.requestUpdate();
     }
     // Hover is suppressed while dragging, so resolve it from the release
     // point: a drag that ends off-canvas must not leave the graph dimmed,
@@ -525,8 +591,8 @@ export class PresenceGraphElement extends LitElement {
     // events use the opposite sign convention by default; flip so the
     // muscle memory matches.
     const step = e.deltaY > 0 ? -0.05 : 0.05;
-    this.scene.setZoom(this.scene.zoom + step);
-    this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
+    this.scene.setZoom(this.scene.activeZoom + step);
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
   };
 
   // ─── Zoom buttons ─────────────────────────────────────────
@@ -534,14 +600,14 @@ export class PresenceGraphElement extends LitElement {
   private zoomIn(): void {
     if (!this.scene) { return; }
     this.wake();
-    this.scene.setZoom(this.scene.zoom + 0.1);
-    this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
+    this.scene.setZoom(this.scene.activeZoom + 0.1);
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
   }
   private zoomOut(): void {
     if (!this.scene) { return; }
     this.wake();
-    this.scene.setZoom(this.scene.zoom - 0.1);
-    this.zoomLabel = `${Math.round(this.scene.zoom * 100)}%`;
+    this.scene.setZoom(this.scene.activeZoom - 0.1);
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
   }
 
   private resetView(): void {
@@ -550,6 +616,14 @@ export class PresenceGraphElement extends LitElement {
     this.scene.resetViewToLocal();
     this.zoomLabel = '100%';
   }
+
+  private exitFocusedView = (): void => {
+    if (!this.scene) { return; }
+    this.scene.exitFocusView();
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
+    this.requestUpdate();
+    this.wake();
+  };
 
   private toggleControls(): void {
     // Update locally as well as notifying the owner: the control must stay
@@ -561,6 +635,13 @@ export class PresenceGraphElement extends LitElement {
       bubbles: true,
       composed: true,
     }));
+  }
+
+  private toggleBackgroundEffects(): void {
+    this.backgroundEffectsEnabled = !this.backgroundEffectsEnabled;
+    this.scene?.setBackgroundEffectsEnabled(this.backgroundEffectsEnabled);
+    this.toggleAttribute('data-background-effects-off', !this.backgroundEffectsEnabled);
+    this.wake();
   }
 
   private onDirectConnectedOnlyChange(e: Event): void {
@@ -585,9 +666,28 @@ export class PresenceGraphElement extends LitElement {
         @mouseout=${this.onMouseOut}
         @wheel=${this.onWheel}
       ></canvas>
+      ${this.scene?.isFocusedView ? this.renderFocusBanner() : null}
       ${this.controlsVisible ? this.renderLegend() : null}
       ${this.renderControls()}
     `;
+  }
+
+  private renderFocusBanner(): TemplateResult {
+    const label = this.scene?.focusedPeerLabel ?? 'selected device';
+    return html`
+      <div class="focus-banner" role="status">
+        <span>Focused on <strong>${label}</strong></span>
+        <button
+          @click=${this.exitFocusedView}
+          title="Show full mesh"
+          aria-label="Exit focused node view and show full mesh"
+        >${this.focusExitIcon()}</button>
+      </div>
+    `;
+  }
+
+  private focusExitIcon(): TemplateResult {
+    return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 9.6 6.4 14.2 11H3v2h11.2l-4.6 4.6L11 19l7-7-7-7Zm7.5-2H21v18h-2.5V3Z"/></svg>`;
   }
 
   private renderLegend(): TemplateResult {
@@ -595,6 +695,7 @@ export class PresenceGraphElement extends LitElement {
       { type: 'Bluetooth',   label: 'Bluetooth',  pattern: '— — — —' },
       { type: 'AccessPoint', label: 'LAN',        pattern: '———— ————' },
       { type: 'P2PWiFi',     label: 'P2P WiFi',   pattern: '—— —— ——' },
+      { type: 'Multicast',   label: 'Multicast',  pattern: '· · · · · ·' },
       { type: 'WebSocket',   label: 'WebSocket',  pattern: '——— · ———' },
       { type: 'Cloud',       label: 'Cloud',      pattern: '——— ○ ———' },
     ];
@@ -613,7 +714,7 @@ export class PresenceGraphElement extends LitElement {
   }
 
   private renderControls(): TemplateResult {
-    const z = this.scene?.zoom ?? 1;
+    const z = this.scene?.activeZoom ?? 1;
     return html`
       <div class="controls">
         ${this.controlsVisible ? html`
@@ -626,15 +727,22 @@ export class PresenceGraphElement extends LitElement {
           />
         </label>
         <div class="control-group" aria-label="Zoom controls">
-          <button @click=${this.zoomOut} ?disabled=${z <= 0.5} title="Zoom out">−</button>
+          <button @click=${this.zoomOut} ?disabled=${z <= MIN_GRAPH_ZOOM} title="Zoom out">−</button>
           <span class="zoom-label">${this.zoomLabel}</span>
-          <button @click=${this.zoomIn} ?disabled=${z >= 2.0} title="Zoom in">+</button>
+          <button @click=${this.zoomIn} ?disabled=${z >= MAX_GRAPH_ZOOM} title="Zoom in">+</button>
         </div>
         ` : null}
         <div class="action-row">
           <button class="icon-button" @click=${this.resetView} title="Reset zoom and center local device" aria-label="Reset zoom and center local device">
             ${this.centerIcon()}
           </button>
+          <button
+            class="icon-button"
+            @click=${this.toggleBackgroundEffects}
+            title=${this.backgroundEffectsEnabled ? 'Turn off background animation and gradient' : 'Turn on background animation and gradient'}
+            aria-label="Background effects"
+            aria-pressed=${this.backgroundEffectsEnabled}
+          >${this.backgroundEffectsIcon()}</button>
           <!-- The accessible name states the action and flips with the
                state, so no aria-pressed: pairing a flipping label with a
                pressed state announces "Show graph controls, pressed" while
@@ -652,6 +760,12 @@ export class PresenceGraphElement extends LitElement {
 
   private centerIcon(): TemplateResult {
     return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3H3v6h2V5h4V3Zm6 0v2h4v4h2V3h-6ZM5 15H3v6h6v-2H5v-4Zm16 0h-2v4h-4v2h6v-6Zm-9-5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>`;
+  }
+
+  private backgroundEffectsIcon(): TemplateResult {
+    return this.backgroundEffectsEnabled
+      ? html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2Zm7 13 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15ZM5 15l.6 1.4L7 17l-1.4.6L5 19l-.6-1.4L3 17l1.4-.6L5 15Z"/></svg>`
+      : html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2Zm7 13 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15ZM3.7 2.3 2.3 3.7l18 18 1.4-1.4-18-18Z"/></svg>`;
   }
 
   private eyeIcon(): TemplateResult {

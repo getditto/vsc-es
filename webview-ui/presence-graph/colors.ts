@@ -13,6 +13,7 @@ export type ConnectionTypeName =
   | 'Bluetooth'
   | 'AccessPoint'    // LAN
   | 'P2PWiFi'
+  | 'Multicast'
   | 'WebSocket'
   | 'Cloud';
 
@@ -30,6 +31,9 @@ export const CONNECTION_STYLES: Record<ConnectionTypeName, ConnectionStyle> = {
   AccessPoint: { color: '#34C759', dash: [16, 3] },
   // Peer-to-peer WiFi — saturated red, mid-length dashes.
   P2PWiFi:     { color: '#C71939', dash: [6, 3] },
+  // Multicast — bright golden-yellow dotted line so it stands apart from
+  // the red P2P WiFi, blue Bluetooth, green LAN, and orange WebSocket lines.
+  Multicast:   { color: '#FFD60A', dash: [2, 3] },
   // WebSocket — dash-dot pattern, system orange.
   WebSocket:   { color: '#FF9500', dash: [10, 3, 2, 3] },
   // Cloud is rendered with the WebSocket-shaped dash plus a row of

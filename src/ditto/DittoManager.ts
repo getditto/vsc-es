@@ -1047,11 +1047,7 @@ export class DittoManager {
     }
     if (this.latestPresence) {
       const snap = mergePeerList(
-        // PresenceGraphLike (peer-info.ts) keys connections on the app's
-        // models/DittoConfig ConnectionType, which lacks the SDK's newer
-        // 'Multicast' variant — a one-variant widening mismatch in the type
-        // defs, not a shape mismatch, so a narrow cast is appropriate here.
-        this.latestPresence as unknown as Parameters<typeof mergePeerList>[0],
+        this.latestPresence,
         this.syncStatusByPeerKey,
         this.localPeerInfo,
         this.previousOrder,
