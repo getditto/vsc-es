@@ -1,4 +1,3 @@
-import { constants as fsConstants } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
@@ -185,7 +184,7 @@ export class FileSink {
     file: string, target: number, chunkSize: number, out: string[],
   ): Promise<void> {
     let handle;
-    try { handle = await fs.open(file, fsConstants.O_RDONLY); }
+    try { handle = await fs.open(file, 'r'); }
     catch { return; } // rotated away or never created
     try {
       const { size } = await handle.stat();

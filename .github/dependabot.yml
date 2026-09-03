@@ -38,9 +38,6 @@ updates:
     # compromised action runs inside CI with this repo's token.
     cooldown:
       default-days: 7
-      semver-major-days: 30
-      semver-minor-days: 7
-      semver-patch-days: 7
     groups:
       actions:
         patterns:

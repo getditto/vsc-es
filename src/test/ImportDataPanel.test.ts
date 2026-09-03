@@ -183,10 +183,10 @@ test('ImportDataPanel: bounded reader refuses content appended after the initial
   try {
     const file = path.join(dir, 'docs.json');
     fs.writeFileSync(file, 'a');
-    const handle = await fs.promises.open(file, 'r');
+    const handle = await fs.promises.open(file, 'r+');
     try {
       assert.equal((await handle.stat()).size, 1);
-      fs.appendFileSync(file, 'b'.repeat(11));
+      await handle.write('b'.repeat(11), 1, 'utf8');
       const result = await readUtf8AtMost(handle, 1);
       assert.equal(result.tooLarge, true);
     } finally {
