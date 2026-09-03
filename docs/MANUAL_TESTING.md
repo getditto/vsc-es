@@ -263,11 +263,15 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
     - That peer, the local peer, and every connection between them stay at full opacity.
     - Unrelated peers and connections become semi-transparent.
     - Clicking the selected peer again or clicking open canvas space restores normal opacity everywhere.
-    - Turn **Direct** off and click a remote peer in the full mesh:
-      - The selected peer and every peer connected to it stay prominent.
-      - Connections not touching the selected peer dim while retaining their connection-type colours.
-      - Clicking the selected peer again or clicking open canvas space clears the full-mesh focus.
-12. Verify interaction and live-update edge cases:
+12. Turn **Direct** off and click a remote peer in the full mesh:
+    - A focused-neighbourhood view places that peer at the centre and fades the focused ring in.
+    - Only its directly connected peers are arranged in a clean BFS ring with extra spacing for long device names.
+    - The rest of the mesh remains visible as a lightweight dimmed context layer.
+    - The focused-view exit button immediately returns to the full mesh.
+    - Clicking the selected peer again or clicking open canvas space also exits the focused view.
+    - If any Android peers use the Multicast beta, multicast-connected peers and
+      peer-to-peer edges still render; multicast edges use the bright-yellow dotted legend style.
+13. Verify interaction and live-update edge cases:
     - Dragging a peer moves it without being mistaken for a selection click.
     - Turning **Direct** off clears any selection and shows the full graph normally.
     - Removing a selected peer clears focus without leaving other peers dimmed.
@@ -308,6 +312,10 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
       staying dimmed — the overlay container must not swallow those events.
     - Every control in that cluster is still clickable: Direct, both zoom
       buttons, center, and eye.
+    - Click the background-effects button beside the center button:
+      background stars and the gradient disappear, leaving a solid editor
+      background; click it again and both effects return. Confirm this while
+      entering focused-node view to compare interaction smoothness.
 16. Switch VS Code to a **light** theme and reopen the Presence Graph:
     - The legend, Direct/zoom groups, and the center/eye buttons are all legible
       against their own backgrounds — check especially with the controls hidden,

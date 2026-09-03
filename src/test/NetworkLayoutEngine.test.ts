@@ -380,6 +380,26 @@ test('layout: expanded mode evenly spaces peers within every visual ring', () =>
   }
 });
 
+test('layout: expanded mode uses supplied pill footprints when packing rings', () => {
+  const direct = Array.from({ length: 12 }, (_, i) => `P${i}`);
+  const peers = ['local', ...direct];
+  const cs: ConnectionInfo[] = direct.map(peer => ({ fromPeer: 'local', toPeer: peer }));
+  const footprints = new Map(direct.map(peer => [peer, 340]));
+  const r = calculateLayout('local', peers, cs, 1.75, footprints);
+
+  const ring1 = r.ringAssignments.get(1) ?? [];
+  assert.ok(ring1.length < direct.length, 'wide pills should reduce visual-ring capacity');
+  for (const [ring, ringPeers] of r.ringAssignments) {
+    if (ring === 0 || ringPeers.length < 2) { continue; }
+    const positions = ringPeers.map(peer => r.positions.get(peer)!);
+    for (let i = 0; i < positions.length; i += 1) {
+      const next = positions[(i + 1) % positions.length]!;
+      const distance = Math.hypot(positions[i]!.x - next.x, positions[i]!.y - next.y);
+      assert.ok(distance >= 340, `ring ${ring} chord is too short: ${distance}`);
+    }
+  }
+});
+
 test('layout: expanded mode continues outward beyond 100 peers', () => {
   const peers = ['local', ...Array.from({ length: 101 }, (_, i) => `P${i}`)];
   const cs: ConnectionInfo[] = peers.slice(1).map(peer => ({ fromPeer: 'local', toPeer: peer }));

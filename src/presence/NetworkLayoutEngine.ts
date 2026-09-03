@@ -50,6 +50,11 @@ export interface LayoutResult {
   ringRadii: Map<number, number>;
 }
 
+/** Optional renderer-provided pill widths, in the same coordinate space as
+ * the layout. The engine stays DOM-free while callers with real label
+ * measurements can prevent long pills from being packed too tightly. */
+export type PeerFootprints = ReadonlyMap<string, number>;
+
 /**
  * Tunables ported verbatim from SwiftUI. The exact magnitudes (220,
  * 180, 0.75, etc.) come from a few rounds of design iteration in the
@@ -91,6 +96,7 @@ export function calculateLayout(
   allPeerKeys: readonly string[],
   connections: readonly ConnectionInfo[],
   radiusScale: number = 1,
+  peerFootprints?: PeerFootprints,
 ): LayoutResult {
   const adjacency = buildAdjacencyGraph(connections);
   const { ringAssignments: bfsRings, parentMap } = performBFS(localPeerKey, adjacency, allPeerKeys);
@@ -104,9 +110,9 @@ export function calculateLayout(
     }
   }
   const ringAssignments = expanded
-    ? packBfsRings(bfsRings, radiusScale)
+    ? packBfsRings(bfsRings, radiusScale, peerFootprints)
     : bfsRings;
-  const ringRadii = calculateRingRadii(ringAssignments, radiusScale);
+  const ringRadii = calculateRingRadii(ringAssignments, radiusScale, peerFootprints);
   const positions = calculatePositions(
     ringAssignments,
     ringRadii,
@@ -194,6 +200,7 @@ function performBFS(
 function packBfsRings(
   bfsRings: Map<number, string[]>,
   radiusScale: number,
+  peerFootprints?: PeerFootprints,
 ): Map<number, string[]> {
   const packed = new Map<number, string[]>();
   packed.set(0, [...(bfsRings.get(0) ?? [])]);
@@ -206,7 +213,7 @@ function packBfsRings(
     const peers = bfsRings.get(logicalRing) ?? [];
     let offset = 0;
     while (offset < peers.length) {
-      const capacity = peersPerExpandedRing(visualRing, radiusScale);
+      const capacity = peersPerExpandedRing(visualRing, radiusScale, peers.slice(offset), peerFootprints);
       packed.set(visualRing, peers.slice(offset, offset + capacity));
       offset += capacity;
       visualRing += 1;
@@ -215,9 +222,26 @@ function packBfsRings(
   return packed;
 }
 
-function peersPerExpandedRing(ring: number, radiusScale: number): number {
+function peersPerExpandedRing(
+  ring: number,
+  radiusScale: number,
+  peers: readonly string[],
+  peerFootprints?: PeerFootprints,
+): number {
   const radius = (BASE_RADIUS + (ring - 1) * RADIUS_INCREMENT) * radiusScale;
-  return Math.max(1, Math.floor((2 * Math.PI * radius) / EXPANDED_NODE_FOOTPRINT));
+  const widestPill = peers.reduce(
+    (widest, peer) => Math.max(widest, peerFootprints?.get(peer) ?? 0),
+    0,
+  );
+  const footprint = Math.max(EXPANDED_NODE_FOOTPRINT, widestPill + PEER_SPACING);
+  let capacity = Math.max(1, Math.floor((2 * Math.PI * radius) / footprint));
+  // Arc length is a useful first approximation, but equal-angle points are
+  // separated by a chord. Reduce the capacity until the shortest chord in
+  // the ring can contain the widest pill plus its gap.
+  while (capacity > 1 && 2 * radius * Math.sin(Math.PI / capacity) < footprint) {
+    capacity -= 1;
+  }
+  return capacity;
 }
 
 // ─── Stage 3a: ring radii (may expand when crowded) ────────────
@@ -225,19 +249,24 @@ function peersPerExpandedRing(ring: number, radiusScale: number): number {
 function calculateRingRadii(
   ringAssignments: Map<number, string[]>,
   radiusScale: number,
+  peerFootprints?: PeerFootprints,
 ): Map<number, number> {
   const radii = new Map<number, number>();
   radii.set(0, 0);
   const sortedRings = [...ringAssignments.keys()].filter(r => r > 0).sort((a, b) => a - b);
   for (const ring of sortedRings) {
     const peers = ringAssignments.get(ring) ?? [];
-    const peerCount = peers.length;
     const baseForRing = (BASE_RADIUS + (ring - 1) * RADIUS_INCREMENT) * radiusScale;
     // Minimum circumference required to fit `peerCount` pills with
     // PEER_SPACING gaps between them — same heuristic SwiftUI uses.
     // NOT scaled by radiusScale: pill sizes are fixed, so this floor
     // represents physical crowding, not visual breathing room.
-    const minimumCircumference = peerCount * (PEER_DIAMETER + PEER_SPACING);
+    const minimumCircumference = peers.reduce(
+      (circumference, peer) => circumference
+        + Math.max(PEER_DIAMETER, peerFootprints?.get(peer) ?? 0)
+        + PEER_SPACING,
+      0,
+    );
     const minimumRadius = minimumCircumference / (2 * Math.PI);
     radii.set(ring, Math.max(baseForRing, minimumRadius));
   }

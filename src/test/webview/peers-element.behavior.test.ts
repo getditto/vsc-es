@@ -703,7 +703,7 @@ test('PeerListing: with Direct off the graph consumes the unfiltered presenceGra
       ],
       connections: [
         { peer1: 'local', peer2: 'alpha', connectionType: 'AccessPoint' },
-        { peer1: 'alpha', peer2: 'hop', connectionType: 'Bluetooth' },
+        { peer1: 'alpha', peer2: 'hop', connectionType: 'Multicast' },
       ],
     },
   });
@@ -723,8 +723,50 @@ test('PeerListing: with Direct off the graph consumes the unfiltered presenceGra
     'multi-hop peers arrive with Direct off');
   assert.deepEqual(
     after.input.connections.map((c: any) => `${c.from}>${c.to}:${c.type}`),
-    ['local>alpha:AccessPoint', 'alpha>hop:Bluetooth'],
+    ['local>alpha:AccessPoint', 'alpha>hop:Multicast'],
     'peer↔peer chord edges survive in the unfiltered view',
   );
   assert.equal(after.input.isLocalConnectedToCloud, false, 'no server in this snapshot');
+});
+
+test('PeerListing: the real Direct checkbox swaps from direct to full graph input', async t => {
+  const el = await mount(t);
+  sendState({
+    local: LOCAL,
+    remote: [peer({
+      id: 'alpha',
+      connections: [{ id: 'c1', connectionType: 'AccessPoint', peer1: 'local', peer2: 'alpha' }],
+    })],
+    presenceGraph: {
+      remotePeers: [
+        { peerKey: 'alpha', deviceName: 'Alpha' },
+        { peerKey: 'hop', deviceName: 'Multi-hop' },
+      ],
+      connections: [
+        { peer1: 'local', peer2: 'alpha', connectionType: 'AccessPoint' },
+        { peer1: 'alpha', peer2: 'hop', connectionType: 'Multicast' },
+      ],
+    },
+  });
+  await el.updateComplete;
+  await switchToGraphTab(el);
+
+  const direct = el.shadowRoot.querySelector('ditto-presence-graph');
+  assert.equal(direct.directConnectedOnly, true);
+  assert.deepEqual(direct.input.remotePeers.map((p: any) => p.peerKey), ['alpha']);
+  assert.deepEqual(direct.input.connections.map((c: any) => c.type), ['AccessPoint']);
+
+  const checkbox = direct.shadowRoot.querySelector('.direct-control input') as HTMLInputElement;
+  checkbox.checked = false;
+  checkbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await el.updateComplete;
+  await direct.updateComplete;
+
+  const full = el.shadowRoot.querySelector('ditto-presence-graph');
+  assert.equal(full.directConnectedOnly, false);
+  assert.deepEqual(full.input.remotePeers.map((p: any) => p.peerKey), ['alpha', 'hop']);
+  assert.deepEqual(
+    full.input.connections.map((c: any) => `${c.from}>${c.to}:${c.type}`),
+    ['local>alpha:AccessPoint', 'alpha>hop:Multicast'],
+  );
 });

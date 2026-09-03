@@ -251,7 +251,11 @@ function buildPresenceGraphView(
     connectionType: ConnectionType;
   }> = [];
   const peersInAnyEdge = new Set<string>();
-  for (const peer of presence.remotePeers) {
+  // Ditto reports the same undirected edge from both endpoints in the usual
+  // case, but the local peer is the authoritative source for edges currently
+  // attached to this process. Aggregate it too so a transport (notably
+  // multicast) is not lost when only the local side advertises the edge.
+  for (const peer of [presence.localPeer, ...presence.remotePeers]) {
     for (const c of peer.connections) {
       if (!c.peer1 || !c.peer2) { continue; }
       const pair = [c.peer1, c.peer2].sort().join('|');
@@ -285,9 +289,9 @@ function buildPresenceGraphView(
 
 // ─── Connection-type priority (drives card gradient) ─────────────
 
-export type DominantType = 'cloud' | 'WebSocket' | 'AccessPoint' | 'P2PWiFi' | 'Bluetooth' | 'unknown';
+export type DominantType = 'cloud' | 'WebSocket' | 'AccessPoint' | 'P2PWiFi' | 'Multicast' | 'Bluetooth' | 'unknown';
 
-const TYPE_PRIORITY: ConnectionType[] = ['WebSocket', 'AccessPoint', 'P2PWiFi', 'Bluetooth'];
+const TYPE_PRIORITY: ConnectionType[] = ['WebSocket', 'AccessPoint', 'P2PWiFi', 'Multicast', 'Bluetooth'];
 
 export function dominantConnectionType(peer: PeerInfo): DominantType {
   if (peer.isDittoServer) { return 'cloud'; }
