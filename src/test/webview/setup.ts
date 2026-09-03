@@ -20,7 +20,28 @@ g.ShadowRoot = dom.window.ShadowRoot;
 g.Document = dom.window.Document;
 g.CSSStyleSheet = dom.window.CSSStyleSheet;
 g.CustomEvent = dom.window.CustomEvent;
-g.MessageEvent = dom.window.MessageEvent;
+// Host messages in a real webview always carry an origin — VS Code serves the
+// content from `vscode-webview://<uuid>` (or an https origin when the editor
+// itself runs in a browser), and `onHostMessage` rejects anything else. jsdom
+// defaults `origin` to '', so without this every dispatched test message would
+// be discarded as untrusted. Defaulting it here keeps the 40-odd existing
+// dispatch sites modelling the real environment; a test that cares about the
+// check passes `origin` explicitly and this shim gets out of the way.
+// Patched on BOTH the global and the jsdom window: tests construct these
+// either way (`new MessageEvent(…)` and `new window.MessageEvent(…)` are both
+// used across the suite), and a shim on only one of them would silently leave
+// half the suite dispatching untrusted-origin messages.
+// Erased to a plain constructor signature: the DOM lib types MessageEvent as
+// generic (`MessageEvent<T>`), which a bare `extends` can't satisfy.
+const JsdomMessageEvent = dom.window.MessageEvent as unknown as
+  new (type: string, init?: MessageEventInit) => MessageEvent;
+class TrustedOriginMessageEvent extends JsdomMessageEvent {
+  constructor(type: string, init?: MessageEventInit) {
+    super(type, { origin: 'vscode-webview://test', ...init });
+  }
+}
+g.MessageEvent = TrustedOriginMessageEvent;
+(dom.window as unknown as { MessageEvent: unknown }).MessageEvent = TrustedOriginMessageEvent;
 g.KeyboardEvent = dom.window.KeyboardEvent;
 g.Event = dom.window.Event;
 g.MouseEvent = dom.window.MouseEvent;

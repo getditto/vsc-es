@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ImportDataPanel, MAX_IMPORT_BYTES } from '../panels/ImportDataPanel.js';
+import { ImportDataPanel, MAX_IMPORT_BYTES, readUtf8AtMost } from '../panels/ImportDataPanel.js';
 import type { Logger, LogLevel } from '../logging/types.js';
 
 /**
@@ -173,6 +173,25 @@ test('ImportDataPanel: a file over the 100 MB cap is refused by stat, before any
       postedOfType(panel.webview.posted, 'importData.fileSelected').length, 0,
       'an over-cap file never reaches the parsed state',
     );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('ImportDataPanel: bounded reader refuses content appended after the initial size check', async () => {
+  const dir = tmpDir('import-growth-');
+  try {
+    const file = path.join(dir, 'docs.json');
+    fs.writeFileSync(file, 'a');
+    const handle = await fs.promises.open(file, 'r');
+    try {
+      assert.equal((await handle.stat()).size, 1);
+      fs.appendFileSync(file, 'b'.repeat(11));
+      const result = await readUtf8AtMost(handle, 1);
+      assert.equal(result.tooLarge, true);
+    } finally {
+      await handle.close();
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

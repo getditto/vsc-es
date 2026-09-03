@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
+import { constants as fsConstants } from 'node:fs';
 import * as fs from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { panelHtml, webviewMessageHandler } from './webview-utils.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
@@ -16,6 +18,29 @@ import {
  *  synchronously, so an unbounded read blocks the shared extension host
  *  for seconds and can OOM it on a pathological file. Exported for tests. */
 export const MAX_IMPORT_BYTES = 100 * 1024 * 1024;
+
+const IMPORT_READ_CHUNK_BYTES = 64 * 1024;
+
+export async function readUtf8AtMost(
+  handle: FileHandle,
+  maxBytes: number,
+): Promise<{ tooLarge: boolean; text?: string }> {
+  if (maxBytes < 0) { throw new RangeError('maxBytes must be non-negative'); }
+  const chunks: Buffer[] = [];
+  let bytesReadTotal = 0;
+
+  while (bytesReadTotal <= maxBytes) {
+    const remaining = maxBytes + 1 - bytesReadTotal;
+    const chunk = Buffer.alloc(Math.min(IMPORT_READ_CHUNK_BYTES, remaining));
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, bytesReadTotal);
+    if (bytesRead === 0) { break; }
+    bytesReadTotal += bytesRead;
+    chunks.push(chunk.subarray(0, bytesRead));
+    if (bytesReadTotal > maxBytes) { return { tooLarge: true }; }
+  }
+
+  return { tooLarge: false, text: Buffer.concat(chunks, bytesReadTotal).toString('utf8') };
+}
 
 /**
  * Webview panel that walks the user through importing a JSON file into
@@ -171,11 +196,29 @@ export class ImportDataPanel {
     if (!file) { return; }
     log.info('User selected import file', { path: file.fsPath });
 
-    // Size gate BEFORE readFile: the file is read whole and parsed
+    // Size gate BEFORE the read: the file is read whole and parsed
     // synchronously below, so an unbounded read would block (or OOM) the
-    // shared extension host. stat is nearly free even for huge files.
+    // shared extension host. fstat is nearly free even for huge files.
+    //
+    // The size check and the read go through ONE open handle rather than
+    // stat(path) followed by readFile(path). Two path-based calls describe
+    // two separate lookups, so whatever the second one resolves to need not
+    // be what the first one measured — swap the file (or the directory it
+    // sits in) in between and an arbitrarily large file sails past a cap
+    // that was measured against a small one. Holding the descriptor pins
+    // the check to the bytes actually read.
+    let raw: string;
+    let handle;
     try {
-      const stat = await fs.stat(file.fsPath);
+      handle = await fs.open(file.fsPath, fsConstants.O_RDONLY);
+    } catch (err) {
+      const message = `Could not read file: ${err instanceof Error ? err.message : String(err)}`;
+      log.warn('File open failed', { path: file.fsPath, err: message });
+      this.post({ type: 'importData.error', message });
+      return;
+    }
+    try {
+      const stat = await handle.stat();
       if (stat.size > MAX_IMPORT_BYTES) {
         const actualMb = (stat.size / (1024 * 1024)).toFixed(1);
         const capMb = MAX_IMPORT_BYTES / (1024 * 1024);
@@ -184,21 +227,26 @@ export class ImportDataPanel {
         this.post({ type: 'importData.error', message });
         return;
       }
-    } catch (err) {
-      const message = `Could not read file: ${err instanceof Error ? err.message : String(err)}`;
-      log.warn('File stat failed', { path: file.fsPath, err: message });
-      this.post({ type: 'importData.error', message });
-      return;
-    }
-
-    let raw: string;
-    try {
-      raw = await fs.readFile(file.fsPath, 'utf8');
+      const bounded = await readUtf8AtMost(handle, MAX_IMPORT_BYTES);
+      const finalSize = (await handle.stat()).size;
+      if (bounded.tooLarge || finalSize > MAX_IMPORT_BYTES) {
+        const capMb = MAX_IMPORT_BYTES / (1024 * 1024);
+        const message = `File exceeds the ${capMb} MB JSON import limit. Split the file into smaller chunks and import them one at a time.`;
+        log.warn('Import file refused: file grew beyond the size cap', {
+          path: file.fsPath,
+          size: Math.max(finalSize, MAX_IMPORT_BYTES + 1),
+        });
+        this.post({ type: 'importData.error', message });
+        return;
+      }
+      raw = bounded.text ?? '';
     } catch (err) {
       const message = `Could not read file: ${err instanceof Error ? err.message : String(err)}`;
       log.warn('File read failed', { path: file.fsPath, err: message });
       this.post({ type: 'importData.error', message });
       return;
+    } finally {
+      await handle.close().catch(() => { /* already closed or gone */ });
     }
 
     try {

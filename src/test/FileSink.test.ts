@@ -52,6 +52,23 @@ test('FileSink: writes header on first creation', async () => {
   await sink.dispose();
 });
 
+test('FileSink: hardens permissions on an existing log directory and file', async (t) => {
+  if (process.platform === 'win32') { t.skip('Unix mode bits are not enforced on Windows'); return; }
+  const dir = await tmpdir();
+  const active = path.join(dir, 'ditto-edge-studio.log');
+  await fs.chmod(dir, 0o755);
+  await fs.writeFile(active, 'old\n', { mode: 0o644 });
+  await fs.chmod(active, 0o644);
+
+  const sink = new FileSink(dir, { maxBytes: 1024, retain: 3 });
+  await sink.write('new\n');
+  await sink.flush();
+
+  assert.equal((await fs.stat(dir)).mode & 0o777, 0o700);
+  assert.equal((await fs.stat(active)).mode & 0o777, 0o600);
+  await sink.dispose();
+});
+
 test('FileSink: readAllChronological returns rotations oldest→newest then active', async () => {
   const dir = await tmpdir();
   const sink = new FileSink(dir, { maxBytes: 10, retain: 3 });
