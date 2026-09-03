@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import { panelHtml, webviewMessageHandler } from './webview-utils.js';
-import { validateHttpApiUrl } from '../ditto/HttpQueryService.js';
+import {
+  normalizeDittoServerUrl,
+  validateDittoServerUrl,
+  validateHttpApiUrl,
+} from '../ditto/HttpQueryService.js';
 import { randomId } from '../util/id.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
@@ -217,6 +221,12 @@ export class DatabaseEditorPanel {
         && !systemSettingsEqual(previousSettings, systemSettings);
       const normalizedConfig: StoredDittoConfig = {
         ...msg.config,
+        // Portal now supplies an absolute URL. Persist that form and migrate
+        // older host-only configs while retaining manager-side compatibility
+        // for configs that have not been edited yet.
+        authUrl: msg.config.mode === 'server'
+          ? normalizeDittoServerUrl(msg.config.authUrl)
+          : msg.config.authUrl,
         advancedConfig: {
           ...msg.config.advancedConfig,
           collectionSyncScopes: scopes,
@@ -313,11 +323,10 @@ function validate(
   }
   if (!secrets.token.trim()) { return { message: 'Token is required.' }; }
   if (config.mode === 'server' && !config.authUrl.trim()) { return { message: 'URL is required for Server mode.' }; }
-  // Both URLs are glued into `https://${value}` later with the bearer key
-  // attached — a `good.com@evil.com`-style value would send the credential
-  // to the wrong host. The validator refuses `@`, credentials-in-URL user
-  // info, and anything that doesn't parse as scheme-less host[:port][/path].
-  const authUrlError = validateHttpApiUrl(config.authUrl);
+  // The SDK consumes authUrl directly and now requires an absolute URL. Keep
+  // accepting legacy host-only values so old saved connections can be opened;
+  // the manager upgrades them before constructing DittoConfig.
+  const authUrlError = validateDittoServerUrl(config.authUrl);
   if (authUrlError) { return { message: `Auth URL: ${authUrlError}` }; }
   const httpApiUrlError = validateHttpApiUrl(config.httpApiUrl);
   if (httpApiUrlError) { return { message: `HTTP API URL: ${httpApiUrlError}` }; }

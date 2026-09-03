@@ -667,6 +667,20 @@ test('DatabaseEditorPanel: host validation rejects credential-smuggling and sche
   teardown();
 });
 
+test('DatabaseEditorPanel: accepts and persists the Portal https auth URL', async () => {
+  teardown();
+  const world = makeWorld();
+  const panel = await showExistingEditor(world, validConfig('a'));
+
+  fireSave(panel, 'a', { authUrl: 'https://6b1b5999.cloud.dittolive.app' });
+  await settle(20);
+
+  assert.deepEqual(validationErrors(panel), []);
+  assert.equal(world.configs.get('a')?.authUrl, 'https://6b1b5999.cloud.dittolive.app');
+  assert.equal(panel.disposed, true);
+  teardown();
+});
+
 test('DatabaseEditorPanel: advanced configuration must be an object when present', async () => {
   teardown();
   const world = makeWorld();

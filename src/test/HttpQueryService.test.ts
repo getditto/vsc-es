@@ -4,6 +4,8 @@ import {
   createBodyAccumulator,
   createSettleOnce,
   interpretResponse,
+  normalizeDittoServerUrl,
+  validateDittoServerUrl,
   validateHttpApiUrl,
   executeRemoteQuery,
   HttpQueryError,
@@ -170,6 +172,24 @@ test('validateHttpApiUrl: a pasted scheme is refused with an actionable message'
 test('validateHttpApiUrl: unparseable or hostless values are refused', () => {
   assert.match(validateHttpApiUrl('not a host') ?? '', /Not a valid host/);
   assert.match(validateHttpApiUrl(':8080') ?? '', /Not a valid/);
+});
+
+test('validateDittoServerUrl: accepts Portal URLs and legacy host-only values', () => {
+  for (const ok of [
+    'https://example.ditto.live',
+    'http://localhost:8080',
+    'example.ditto.live',
+  ]) {
+    assert.equal(validateDittoServerUrl(ok), null, ok);
+  }
+  assert.equal(normalizeDittoServerUrl('https://example.ditto.live'), 'https://example.ditto.live');
+  assert.equal(normalizeDittoServerUrl(' example.ditto.live '), 'https://example.ditto.live');
+});
+
+test('validateDittoServerUrl: refuses unsafe or malformed values', () => {
+  assert.match(validateDittoServerUrl('https://good.com@evil.com') ?? '', /must not contain a username/);
+  assert.match(validateDittoServerUrl('ftp://example.ditto.live') ?? '', /must use http/);
+  assert.match(validateDittoServerUrl('not a host') ?? '', /Not a valid server URL/);
 });
 
 test('executeRemoteQuery: refuses to send the bearer key to an `@`-trapped URL', async () => {

@@ -28,6 +28,7 @@ import type {
 import type { DatabaseStatus } from '../tree/DatabaseTreeProvider.js';
 import { mergePeerList, parseSyncStatusRow, type SyncStatusRow } from './peer-info.js';
 import type { Logger } from '../logging/types.js';
+import { normalizeDittoServerUrl } from './HttpQueryService.js';
 import {
   reduceLifecycle,
   isSwitchInProgress as reducerIsSwitchInProgress,
@@ -177,7 +178,7 @@ export class DittoManager {
       const dittoCfg = new DittoConfig(
         config.databaseId,
         config.mode === 'server'
-          ? { mode: 'server', url: config.authUrl }
+          ? { mode: 'server', url: normalizeDittoServerUrl(config.authUrl) }
           : {
               mode: 'smallPeersOnly' as const,
               // Shared secret for peer-to-peer encryption. SDK accepts
