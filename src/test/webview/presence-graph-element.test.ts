@@ -178,33 +178,33 @@ test('PresenceGraphElement: center action resets zoom label and camera', async (
   el.remove();
 });
 
-test('PresenceGraphElement: background effects default on and can be disabled', async () => {
+test('PresenceGraphElement: background effects default off and can be enabled', async () => {
   const el = await mount();
   const canvas = el.shadowRoot.querySelector('canvas');
   const ctx = contextFor(canvas);
   const toggle = el.shadowRoot.querySelector('[aria-label="Background effects"]') as HTMLButtonElement;
 
+  assert.equal(el.scene.backgroundEffectsEnabled, false);
+  assert.equal(el.hasAttribute('data-background-effects-on'), false);
+  assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+
+  ctx.__reset();
+  drawFrame();
+  const disabledFills = ctx.__ops.filter(op => op.op === 'fill').length;
+  assert.ok(disabledFills < 60, `disabled background should skip the star field, got ${disabledFills} fills`);
+
+  toggle.click();
+  await el.updateComplete;
+
   assert.equal(el.scene.backgroundEffectsEnabled, true);
-  assert.equal(el.hasAttribute('data-background-effects-off'), false);
+  assert.equal(el.hasAttribute('data-background-effects-on'), true);
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+  assert.match(toggle.title, /Turn off/);
 
   ctx.__reset();
   drawFrame();
   const enabledFills = ctx.__ops.filter(op => op.op === 'fill').length;
   assert.ok(enabledFills >= 160, `enabled background should paint the star field, got ${enabledFills} fills`);
-
-  toggle.click();
-  await el.updateComplete;
-
-  assert.equal(el.scene.backgroundEffectsEnabled, false);
-  assert.equal(el.hasAttribute('data-background-effects-off'), true);
-  assert.equal(toggle.getAttribute('aria-pressed'), 'false');
-  assert.match(toggle.title, /Turn on/);
-
-  ctx.__reset();
-  drawFrame();
-  const disabledFills = ctx.__ops.filter(op => op.op === 'fill').length;
-  assert.ok(disabledFills < enabledFills - 100, 'disabled background should skip the star field');
   el.remove();
 });
 
@@ -760,7 +760,7 @@ test('PresenceGraphElement: the pill hit area covers the pill, not just its cent
 });
 
 test('PresenceGraphElement: the star field is painted behind the graph', async () => {
-  const el = await mount();
+  const el = await mount({ backgroundEffectsEnabled: true });
   const ctx = contextFor(el.shadowRoot.querySelector('canvas'));
   ctx.__reset();
   drawFrame();

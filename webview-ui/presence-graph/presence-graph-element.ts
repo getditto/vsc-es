@@ -37,8 +37,8 @@ export class PresenceGraphElement extends LitElement {
    *  every tab switch, so element-local state would not survive one. */
   @property({ attribute: false }) controlsVisible = true;
 
-  /** Decorative effects default to on and stay local to this graph element. */
-  @state() private backgroundEffectsEnabled = true;
+  /** Decorative effects default to off for a lightweight presence view. */
+  @state() private backgroundEffectsEnabled = false;
 
   /** Surfaced state for the zoom indicator overlay. */
   @state() private zoomLabel = '100%';
@@ -84,12 +84,12 @@ export class PresenceGraphElement extends LitElement {
       position: relative;
       width: 100%;
       height: 100%;
+      background: var(--vscode-editor-background, #1e1e1e);
+    }
+    :host([data-background-effects-on]) {
       background:
         radial-gradient(circle at 50% 35%, rgba(40, 60, 90, 0.4) 0%, transparent 60%),
         var(--vscode-editor-background, #1e1e1e);
-    }
-    :host([data-background-effects-off]) {
-      background: var(--vscode-editor-background, #1e1e1e);
     }
     canvas {
       width: 100%;
@@ -295,6 +295,7 @@ export class PresenceGraphElement extends LitElement {
       showDirectConnectedOnly: this.directConnectedOnly,
       backgroundEffectsEnabled: this.backgroundEffectsEnabled,
     });
+    this.toggleAttribute('data-background-effects-on', this.backgroundEffectsEnabled);
     this.fitCanvasToHost();
     this.resizeObserver = new ResizeObserver(() => { this.fitCanvasToHost(); });
     this.resizeObserver.observe(this);
@@ -640,7 +641,7 @@ export class PresenceGraphElement extends LitElement {
   private toggleBackgroundEffects(): void {
     this.backgroundEffectsEnabled = !this.backgroundEffectsEnabled;
     this.scene?.setBackgroundEffectsEnabled(this.backgroundEffectsEnabled);
-    this.toggleAttribute('data-background-effects-off', !this.backgroundEffectsEnabled);
+    this.toggleAttribute('data-background-effects-on', this.backgroundEffectsEnabled);
     this.wake();
   }
 

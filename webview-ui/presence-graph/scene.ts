@@ -108,7 +108,7 @@ export class PresenceGraphScene {
   /** Camera offset — (0,0) puts the world origin at canvas centre. */
   camera: Point;
   showDirectConnectedOnly: boolean;
-  /** Ambient gradient/stars are opt-out because they are decorative. */
+  /** Ambient gradient/stars are opt-in because they are decorative. */
   backgroundEffectsEnabled: boolean;
   /** Canvas used to measure the renderer's actual pill font before layout. */
   private measurementContext: CanvasRenderingContext2D | undefined;
@@ -161,7 +161,7 @@ export class PresenceGraphScene {
     this.zoom = opts.zoom ?? 1.0;
     this.camera = opts.cameraOffset ?? { x: 0, y: 0 };
     this.showDirectConnectedOnly = opts.showDirectConnectedOnly ?? true;
-    this.backgroundEffectsEnabled = opts.backgroundEffectsEnabled ?? true;
+    this.backgroundEffectsEnabled = opts.backgroundEffectsEnabled ?? false;
     this.stars = new FloatingStars();
   }
 
