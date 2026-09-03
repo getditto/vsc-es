@@ -42,9 +42,9 @@ export interface ImportResult {
 /** Query executor signature. We accept this as a function rather than
  *  pulling DittoManager so the test suite can pass a fake — same trick
  *  the InspectorController + ImportSubscriptionsPanel use elsewhere. */
-export type ExecuteRaw = (query: string, args?: Record<string, unknown>) => Promise<unknown>;
+type ExecuteRaw = (query: string, args?: Record<string, unknown>) => Promise<unknown>;
 
-export const DEFAULT_BATCH_SIZE = 50;
+const DEFAULT_BATCH_SIZE = 50;
 
 export class ImportValidationError extends Error {
   constructor(message: string, readonly kind: 'invalidJson' | 'missingId' | 'invalidCollectionName' | 'encoding') {

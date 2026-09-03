@@ -28,9 +28,11 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -52,6 +54,35 @@ jobs:
       - name: Unit tests
         if: always()
         run: npm test
+
+      # Dependabot alerts lag a PR by hours; this fails same-day on any
+      # dependency the PR itself introduces or bumps into a known-high/
+      # critical CVE. --omit=dev matches what actually ships in the VSIX
+      # (esbuild bundles everything except @dittolive/ditto).
+      - name: Dependency audit
+        if: always()
+        run: npm run audit
+
+      # Unused files/exports/dependencies — the codebase equivalent of the
+      # coverage gate below, but for dead weight instead of untested code.
+      - name: Knip
+        if: always()
+        run: npm run knip
+
+      # Fails if a production dependency's license isn't on the allow-list —
+      # catches a copyleft license riding in transitively before it ships in
+      # a proprietary VSIX.
+      - name: License check
+        if: always()
+        run: npm run license-check
+
+      # The coverage gate reconciles node's loaded-files-only report against
+      # the real source tree (never-loaded files count as 0%) and enforces
+      # ≥85% lines over all runtime files; exclusions are documented in
+      # scripts/check-coverage.mjs. Re-runs the suite with V8 coverage on.
+      - name: Coverage gate
+        if: always()
+        run: npm run coverage
 
       # Catches the failures typechecking cannot: a missing entry point, a
       # bundler-resolution error, an asset the build script expects to copy.

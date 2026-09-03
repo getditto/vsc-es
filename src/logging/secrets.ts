@@ -23,7 +23,7 @@ const QUERY_REDACT = new RegExp(`([?&](?:${QUERY_PARAM_ALT})=)[^\\s&"']+`, 'gi')
 
 /** The placeholder every redaction path uses, so exports look uniform no
  *  matter which path scrubbed the line. */
-export const REDACTION_PLACEHOLDER = '[redacted]';
+const REDACTION_PLACEHOLDER = '[redacted]';
 
 /** True if the given formatted log string appears to contain a secret. */
 export function containsSecret(formatted: string): boolean {

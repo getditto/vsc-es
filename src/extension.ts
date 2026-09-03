@@ -15,6 +15,7 @@ import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { QueryMetricsPanel } from './panels/QueryMetricsPanel.js';
 import { DatabaseMetricsPanel } from './panels/DatabaseMetricsPanel.js';
+import { DebugConsolePanel } from './panels/DebugConsolePanel.js';
 import { ImportDataPanel } from './panels/ImportDataPanel.js';
 import { WelcomePanel } from './panels/WelcomePanel.js';
 import { SubscriptionEditorPanel } from './panels/SubscriptionEditorPanel.js';
@@ -801,6 +802,11 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     vscode.commands.registerCommand('dittoVsce.openDatabaseMetrics', (databaseId: string) => {
       if (!databaseId) { return; }
       DatabaseMetricsPanel.show(context, configStore, manager, databaseId, inspectorController, logger);
+    }),
+    vscode.commands.registerCommand('dittoVsce.openDebugConsole', () => {
+      // Standalone by design: the debug socket belongs to a RUNNING APP's
+      // SDK, so no extension-side Ditto connection is needed (or consulted).
+      DebugConsolePanel.show(context, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.openWelcome', () => {
       WelcomePanel.show(context, configStore, logger);

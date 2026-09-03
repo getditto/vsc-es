@@ -10,7 +10,7 @@ import type { DittoManager } from '../ditto/DittoManager.js';
  * over-the-wire sync payload for that collection (NOT raw disk
  * usage; the SQLite store + WAL adds overhead on top).
  */
-export interface CollectionStats {
+interface CollectionStats {
   name: string;
   documentCount: number;
   cborPayloadBytes: number;
@@ -145,7 +145,7 @@ export function categorizeFiles(
  *      into a JS object — at million-row collections that's a real
  *      memory savings.
  */
-export async function computeCollectionBreakdown(
+async function computeCollectionBreakdown(
   manager: DittoManager,
 ): Promise<CollectionStats[]> {
   const collections = await manager.executeRaw('SELECT * FROM system:collections');

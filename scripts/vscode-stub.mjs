@@ -23,6 +23,10 @@ export class TreeItem {
 export const TreeItemCollapsibleState = { None: 0, Collapsed: 1, Expanded: 2 };
 
 export class ThemeIcon {
+  constructor(id, color) { this.id = id; this.color = color; }
+}
+
+export class ThemeColor {
   constructor(id) { this.id = id; }
 }
 
@@ -57,11 +61,18 @@ export const Uri = {
 
 // Default-only configuration surface used by tree/provider unit tests. Tests
 // that need explicit values should supply their own seam rather than teaching
-// this shared stub about product settings.
+// this shared stub about product settings. For the few production call sites
+// that read a setting directly (no seam), `configValues` is a generic
+// per-section override map — it names no product setting itself, and
+// __resetStub() clears it so overrides never leak between tests.
 export const workspace = {
-  getConfiguration() {
+  configValues: {},
+  getConfiguration(section) {
+    const values = workspace.configValues[section] ?? {};
     return {
-      get(_key, defaultValue) { return defaultValue; },
+      get(key, defaultValue) {
+        return Object.hasOwn(values, key) ? values[key] : defaultValue;
+      },
     };
   },
   onDidChangeConfiguration() { return { dispose() {} }; },
@@ -225,8 +236,15 @@ export const window = {
 
 export const commands = {
   executed: [],
+  /** Tests set commands.executeCommandError to an Error to make the next (and
+   *  subsequent, until cleared) executeCommand calls reject with it — the
+   *  failure path of command fan-outs. __resetStub() clears it. */
+  executeCommandError: undefined,
   executeCommand(command, ...args) {
     commands.executed.push({ command, args });
+    if (commands.executeCommandError) {
+      return Promise.reject(commands.executeCommandError);
+    }
     return Promise.resolve(undefined);
   },
   registerCommand() { return { dispose() {} }; },
@@ -247,5 +265,7 @@ export function __resetStub() {
   window.warningResponse = undefined;
   window.lastInputBoxValidate = undefined;
   workspace.fsStatSize = 0;
+  workspace.configValues = {};
   commands.executed.length = 0;
+  commands.executeCommandError = undefined;
 }

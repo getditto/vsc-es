@@ -1,5 +1,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import security from 'eslint-plugin-security';
+import noUnsanitized from 'eslint-plugin-no-unsanitized';
 
 /**
  * Lint config for the extension host (`src/`) and the Lit webviews
@@ -34,6 +36,36 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
+  security.configs.recommended,
+  {
+    // eslint-plugin-security's remaining rules — detect-eval-with-expression,
+    // detect-child-process, detect-pseudoRandomBytes, detect-new-buffer,
+    // detect-possible-timing-attacks, detect-bidi-characters, etc. — target
+    // specific dangerous APIs and stay on; none currently fire.
+    //
+    // These four are heuristic "this argument isn't a literal" checks with no
+    // way to tell attacker-controlled input from an internally-computed
+    // value. Auditing every hit at rollout time found only the latter:
+    //
+    //   - detect-object-injection: fires on ordinary `obj[key]` indexing,
+    //     which TypeScript's own indexed-access typing already covers.
+    //   - detect-non-literal-fs-filename: every hit is either a config/log
+    //     path assembled internally or a path the user picked via a native
+    //     file dialog — the local user already has full disk access at that
+    //     point, so there's no privilege boundary being crossed.
+    //   - detect-non-literal-regexp: the one non-test hit (logging/secrets.ts)
+    //     builds a pattern from a fixed, hardcoded key list, not runtime
+    //     input; the genuinely dynamic case (secret VALUES) is handled with
+    //     literal split/join specifically to avoid regex injection.
+    //   - detect-unsafe-regex: fires on a fixed pattern applied only to this
+    //     repo's own source text in a test, not to any external input.
+    rules: {
+      'security/detect-object-injection': 'off',
+      'security/detect-non-literal-fs-filename': 'off',
+      'security/detect-non-literal-regexp': 'off',
+      'security/detect-unsafe-regex': 'off',
+    },
+  },
   {
     languageOptions: {
       parserOptions: {
@@ -42,7 +74,7 @@ export default tseslint.config(
           // project service has no program for them. Linted against the default
           // project instead of being excluded — a syntax error in the build
           // script should still fail lint.
-          allowDefaultProject: ['*.mjs'],
+          allowDefaultProject: ['*.mjs', 'knip.config.js'],
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -100,6 +132,15 @@ export default tseslint.config(
     files: ['src/**/*.ts', 'webview-ui/**/*.ts'],
     ignores: ['src/test/**'],
     rules: { 'no-console': 'error' },
+  },
+  {
+    // DOM-sink rules only mean something where a real `document`/DOM API
+    // exists — the extension host has neither. Scoped to webview-ui rather
+    // than repo-wide so a rule that can never fire elsewhere doesn't imply
+    // it was checked there.
+    files: ['webview-ui/**/*.ts'],
+    plugins: { 'no-unsanitized': noUnsanitized },
+    rules: noUnsanitized.configs.recommended.rules,
   },
   {
     // Webviews run in the browser; there is no Node global surface there, and

@@ -12,43 +12,43 @@ export interface FromActive {
   name: string;
 }
 
-export interface SwitchManager {
+interface SwitchManager {
   connect(config: StoredDittoConfig, secrets: SecretSet, initialSubs?: StoredSubscription[]): Promise<void>;
   disconnect(): Promise<void>;
   isSwitchInProgress(): boolean;
   getCurrentLifecycleState(): LifecycleState;
 }
 
-export interface SwitchConfigStore {
+interface SwitchConfigStore {
   get(id: string): StoredDittoConfig | undefined;
 }
 
-export interface SwitchSecretStore {
+interface SwitchSecretStore {
   read(id: string): Promise<SecretSet>;
 }
 
-export interface SwitchSubStore {
+interface SwitchSubStore {
   list(id: string): StoredSubscription[];
 }
 
-export interface ProgressNotifier {
+interface ProgressNotifier {
   report(o: { message: string }): void;
 }
 
-export interface StatusBarHandle {
+interface StatusBarHandle {
   setText(text: string): void;
   show(): void;
   dispose(): void;
 }
 
-export interface SwitchUi {
+interface SwitchUi {
   showModalWarn(opts: { message: string; buttons: string[] }): Promise<string | undefined>;
   showError(message: string): void;
   withProgress<T>(title: string, work: (notif: ProgressNotifier) => Promise<T>): Promise<T>;
   statusBarItem(): StatusBarHandle;
 }
 
-export interface SwitchPanels {
+interface SwitchPanels {
   closeQuery(): void;
   closePeers(): void;
   closeSubscription(): void;
@@ -291,7 +291,7 @@ export async function rollbackSwitch(
   });
 }
 
-export async function restorePanels(deps: SwitchDeps, databaseId: string): Promise<void> {
+async function restorePanels(deps: SwitchDeps, databaseId: string): Promise<void> {
   const { tracker, panels } = deps;
   // Snapshot the saved state, then wipe the query slate before
   // recreating panels — each restored panel re-registers itself with

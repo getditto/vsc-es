@@ -39,6 +39,12 @@ function drawFrame(advanceMs = 16): void {
 }
 
 await import('../../../webview-ui/presence-graph/presence-graph-element.js');
+import { drawConnectionLine, type ConnectionLineData } from '../../../webview-ui/presence-graph/connection-line.js';
+import { CONNECTION_STYLES, type ConnectionTypeName } from '../../../webview-ui/presence-graph/colors.js';
+import {
+  perpendicularControlPoint,
+  outwardControlPoint,
+} from '../../../src/presence/NetworkLayoutEngine.js';
 
 const INPUT = {
   localPeerKey: 'local',
@@ -768,4 +774,227 @@ test('PresenceGraphElement: a renamed peer gets a fresh pill width in a new scen
 
   assert.equal(el.scene.selectedPeerKey, 'alpha', 'hit box reflects the new name');
   el.remove();
+});
+
+// ─── connection-line unit tests ────────────────────────────────
+// The scene tests above drive drawConnectionLine only along the happy
+// path (AccessPoint spokes, offset 0, no cloud edge). These tests call
+// it directly with a context that ALSO records path-building calls
+// (the shared canvas stub drops moveTo/quadraticCurveTo/arc as noise),
+// so the offset maths, control-point flavour, alpha clamping, and the
+// cloud-circle decoration are assertable rather than merely reached.
+
+interface PathOp {
+  op: string;
+  args: unknown[];
+  globalAlpha: number;
+  strokeStyle: string;
+  fillStyle: string;
+  lineWidth: number;
+}
+
+function createPathContext(): { ctx: CanvasRenderingContext2D; ops: PathOp[] } {
+  const ops: PathOp[] = [];
+  const ctx = {
+    globalAlpha: 1,
+    strokeStyle: '#000',
+    fillStyle: '#000',
+    lineWidth: 1,
+    lineCap: 'butt',
+    lineJoin: 'miter',
+    save(): void {},
+    restore(): void {},
+    beginPath(): void {},
+  } as Record<string, unknown>;
+  const record = (op: string) => (...args: unknown[]): void => {
+    ops.push({
+      op,
+      args,
+      globalAlpha: ctx.globalAlpha as number,
+      strokeStyle: ctx.strokeStyle as string,
+      fillStyle: ctx.fillStyle as string,
+      lineWidth: ctx.lineWidth as number,
+    });
+  };
+  for (const name of ['moveTo', 'quadraticCurveTo', 'arc', 'stroke', 'fill', 'setLineDash']) {
+    ctx[name] = record(name);
+  }
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, ops };
+}
+
+function makeLine(partial: Partial<ConnectionLineData> = {}): ConnectionLineData {
+  return {
+    fromKey: 'a', toKey: 'b', type: 'AccessPoint',
+    isCloud: false, offset: 0, arcOutward: false, alpha: 1,
+    ...partial,
+  };
+}
+
+function closeTo(actual: unknown, expected: number, label: string): void {
+  assert.ok(
+    Math.abs((actual as number) - expected) < 1e-9,
+    `${label}: expected ${expected}, got ${String(actual)}`,
+  );
+}
+
+test('ConnectionLine: every connection type strokes with its table colour and dash, then resets the dash', () => {
+  for (const [type, style] of Object.entries(CONNECTION_STYLES)) {
+    const { ctx, ops } = createPathContext();
+    drawConnectionLine(
+      ctx,
+      makeLine({ type: type as ConnectionTypeName, isCloud: type === 'Cloud' }),
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+    );
+    const stroke = ops.find(o => o.op === 'stroke');
+    assert.ok(stroke, `${type} strokes a path`);
+    assert.equal(stroke.strokeStyle, style.color, `${type} colour`);
+    const dashes = ops.filter(o => o.op === 'setLineDash');
+    assert.deepEqual(dashes[0]!.args[0], style.dash, `${type} dash pattern`);
+    assert.deepEqual(dashes[dashes.length - 1]!.args[0], [], `${type} dash reset after the stroke`);
+  }
+});
+
+test('ConnectionLine: only a selected line or a full-opacity hover gets the emphasized stroke', () => {
+  const widthFor = (line: Partial<ConnectionLineData>, focusAlpha = 1, selected = false): number => {
+    const { ctx, ops } = createPathContext();
+    drawConnectionLine(ctx, makeLine(line), { x: 0, y: 0 }, { x: 100, y: 0 }, focusAlpha, selected);
+    return ops.find(o => o.op === 'stroke')!.lineWidth;
+  };
+
+  assert.equal(widthFor({}), 2, 'plain line');
+  assert.equal(widthFor({}, 1, true), 3, 'selected peer line');
+  assert.equal(widthFor({ highlighted: true }), 3, 'full-opacity hovered line');
+  assert.equal(widthFor({ highlighted: true }, 0.4), 2,
+    'a stale/transient hover must not compete with persistent peer focus');
+});
+
+test('ConnectionLine: alpha is clamped to [0,1] and multiplied by focusAlpha', () => {
+  const alphaFor = (alpha: number, focusAlpha = 1): number => {
+    const { ctx, ops } = createPathContext();
+    drawConnectionLine(ctx, makeLine({ alpha }), { x: 0, y: 0 }, { x: 100, y: 0 }, focusAlpha);
+    return ops.find(o => o.op === 'stroke')!.globalAlpha;
+  };
+
+  assert.equal(alphaFor(1.4), 1, 'over-full alpha clamps to 1');
+  assert.equal(alphaFor(-0.2), 0, 'negative alpha clamps to 0');
+  assert.equal(alphaFor(0.5, 0.5), 0.25, 'line alpha × focus alpha');
+});
+
+test('ConnectionLine: a non-zero offset shifts the whole path perpendicular to the chord', () => {
+  const { ctx, ops } = createPathContext();
+  // Horizontal chord: the perpendicular is vertical, so a +10 offset
+  // moves both endpoints to y=10 and the control point follows.
+  const from = { x: 0, y: 0 };
+  const to = { x: 100, y: 0 };
+  drawConnectionLine(ctx, makeLine({ offset: 10 }), from, to);
+
+  const move = ops.find(o => o.op === 'moveTo')!;
+  closeTo(move.args[0], 0, 'offset from.x');
+  closeTo(move.args[1], 10, 'offset from.y');
+  const curve = ops.find(o => o.op === 'quadraticCurveTo')!;
+  const expectedControl = perpendicularControlPoint({ x: 0, y: 10 }, { x: 100, y: 10 });
+  closeTo(curve.args[0], expectedControl.x, 'control.x follows the offset');
+  closeTo(curve.args[1], expectedControl.y, 'control.y follows the offset');
+  closeTo(curve.args[2], 100, 'offset to.x');
+  closeTo(curve.args[3], 10, 'offset to.y');
+});
+
+test('ConnectionLine: the offset is skipped for a degenerate near-zero-length chord', () => {
+  const { ctx, ops } = createPathContext();
+  const from = { x: 0, y: 0 };
+  const to = { x: 0.05, y: 0 };
+  drawConnectionLine(ctx, makeLine({ offset: 10 }), from, to);
+
+  const move = ops.find(o => o.op === 'moveTo')!;
+  closeTo(move.args[0], from.x, 'unshifted from.x');
+  closeTo(move.args[1], from.y, 'unshifted from.y');
+  const curve = ops.find(o => o.op === 'quadraticCurveTo')!;
+  const expected = perpendicularControlPoint(from, to);
+  closeTo(curve.args[0], expected.x, 'control.x');
+  closeTo(curve.args[1], expected.y, 'control.y');
+});
+
+test('ConnectionLine: arcOutward picks the radial control point; spokes pick the perpendicular one', () => {
+  const from = { x: 100, y: 0 };
+  const to = { x: 0, y: 100 };
+
+  const outward = createPathContext();
+  drawConnectionLine(outward.ctx, makeLine({ arcOutward: true }), from, to);
+  const outwardCurve = outward.ops.find(o => o.op === 'quadraticCurveTo')!;
+  const expectedOutward = outwardControlPoint(from, to);
+  closeTo(outwardCurve.args[0], expectedOutward.x, 'arcOutward control.x');
+  closeTo(outwardCurve.args[1], expectedOutward.y, 'arcOutward control.y');
+
+  const spoke = createPathContext();
+  drawConnectionLine(spoke.ctx, makeLine({ arcOutward: false }), from, to);
+  const spokeCurve = spoke.ops.find(o => o.op === 'quadraticCurveTo')!;
+  const expectedPerp = perpendicularControlPoint(from, to);
+  closeTo(spokeCurve.args[0], expectedPerp.x, 'spoke control.x');
+  closeTo(spokeCurve.args[1], expectedPerp.y, 'spoke control.y');
+
+  assert.notDeepEqual(
+    outwardCurve.args.slice(0, 2), spokeCurve.args.slice(0, 2),
+    'the two flavours genuinely disagree on this chord',
+  );
+});
+
+test('ConnectionLine: a cloud line draws evenly spaced circles along the Bézier', () => {
+  const { ctx, ops } = createPathContext();
+  const from = { x: 0, y: 0 };
+  const to = { x: 200, y: 0 };
+  drawConnectionLine(ctx, makeLine({ type: 'Cloud', isCloud: true }), from, to);
+
+  const fills = ops.filter(o => o.op === 'fill');
+  // 200px chord → floor(200/40) = 5 slots → circles at s = 1/5 … 4/5.
+  assert.equal(fills.length, 4, 'one circle per interior 40px slot');
+  const control = perpendicularControlPoint(from, to);
+  for (let i = 1; i <= 4; i += 1) {
+    const s = i / 5;
+    const u = 1 - s;
+    const expectedX = u * u * from.x + 2 * u * s * control.x + s * s * to.x;
+    const expectedY = u * u * from.y + 2 * u * s * control.y + s * s * to.y;
+    const arc = ops.filter(o => o.op === 'arc')[i - 1]!;
+    closeTo(arc.args[0], expectedX, `circle ${i} sits on the curve (x)`);
+    closeTo(arc.args[1], expectedY, `circle ${i} sits on the curve (y)`);
+    assert.equal(arc.args[2], 3, 'circle radius');
+  }
+  const cloudColor = CONNECTION_STYLES.Cloud.color;
+  assert.ok(fills.every(f => f.fillStyle === cloudColor), 'circles use the Cloud colour');
+  assert.ok(fills.every(f => Math.abs(f.globalAlpha - 0.8) < 1e-9),
+    'circles render at 80% of the line alpha');
+});
+
+test('ConnectionLine: cloud-circle alpha inherits the faded line alpha', () => {
+  const { ctx, ops } = createPathContext();
+  drawConnectionLine(
+    ctx,
+    makeLine({ type: 'Cloud', isCloud: true, alpha: 0.5 }),
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+  );
+  const fills = ops.filter(o => o.op === 'fill');
+  assert.ok(fills.length > 0);
+  assert.ok(fills.every(f => Math.abs(f.globalAlpha - 0.4) < 1e-9), '0.5 line alpha → 0.4 circle alpha');
+});
+
+test('ConnectionLine: short cloud lines draw no circles but still stroke', () => {
+  // 50px → floor(50/40) = 1 slot, which the interior-only loop skips.
+  const short = createPathContext();
+  drawConnectionLine(short.ctx, makeLine({ type: 'Cloud', isCloud: true }), { x: 0, y: 0 }, { x: 50, y: 0 });
+  assert.equal(short.ops.filter(o => o.op === 'fill').length, 0, '1 slot → no interior circles');
+  assert.ok(short.ops.some(o => o.op === 'stroke'), 'the line itself still paints');
+
+  // 30px → 0 slots → the decoration block is skipped entirely.
+  const tiny = createPathContext();
+  drawConnectionLine(tiny.ctx, makeLine({ type: 'Cloud', isCloud: true }), { x: 0, y: 0 }, { x: 30, y: 0 });
+  assert.equal(tiny.ops.filter(o => o.op === 'fill').length, 0);
+  assert.ok(tiny.ops.some(o => o.op === 'stroke'));
+});
+
+test('ConnectionLine: a non-cloud line never draws circles', () => {
+  const { ctx, ops } = createPathContext();
+  drawConnectionLine(ctx, makeLine({ type: 'Bluetooth' }), { x: 0, y: 0 }, { x: 400, y: 0 });
+  assert.equal(ops.filter(o => o.op === 'fill').length, 0);
+  assert.equal(ops.find(o => o.op === 'stroke')!.strokeStyle, CONNECTION_STYLES.Bluetooth.color);
 });

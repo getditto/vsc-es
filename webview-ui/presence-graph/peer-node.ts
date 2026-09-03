@@ -38,7 +38,7 @@ const widthCache = new Map<string, number>();
 
 /** Measure (or look up cached) pill width for `node`. The scene is
  *  responsible for invalidating the cache on label rename. */
-export function measurePillWidth(ctx: CanvasRenderingContext2D, node: PeerNodeData): number {
+function measurePillWidth(ctx: CanvasRenderingContext2D, node: PeerNodeData): number {
   const cached = widthCache.get(node.key);
   if (cached !== undefined) { return cached; }
   ctx.save();
@@ -56,7 +56,7 @@ export function invalidatePillWidth(key: string): void {
 
 /** Half-width / half-height for hit-testing — used by the scene's
  *  `nodeAt(point)`. */
-export function getPillBounds(
+function getPillBounds(
   ctx: CanvasRenderingContext2D,
   node: PeerNodeData,
 ): { halfWidth: number; halfHeight: number } {

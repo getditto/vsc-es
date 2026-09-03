@@ -65,7 +65,7 @@ export type InspectorContent =
  *  never matched real data and silently broke fetch.
  *  See node_modules/@dittolive/ditto/types/ditto.d.ts → fetchAttachment
  *  for the canonical shape. */
-export interface AttachmentTokenShape {
+interface AttachmentTokenShape {
   id: string;
   len: number;
   metadata: Record<string, string>;

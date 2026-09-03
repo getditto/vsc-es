@@ -22,8 +22,36 @@ export function postToHost<T>(msg: T): void {
  * live handler holding a reference to the old element — every subsequent
  * host message is then processed once per past mount.
  */
-export function onHostMessage<T>(handler: (msg: T) => void): () => void {
-  const listener = (e: MessageEvent): void => { handler(e.data as T); };
+/**
+ * Schemes a host message may legitimately arrive from.
+ *
+ * VS Code serves webview content from `vscode-webview://<uuid>` on the
+ * desktop, but from an https origin when the editor is itself running in a
+ * browser (Codespaces, a remote workspace opened over the web). Both are the
+ * editor talking to its own webview, so both are trusted; the check exists to
+ * reject everything else — `file:`, `http:`, `data:`, a null origin.
+ *
+ * Deliberately matched by scheme rather than by full origin: the uuid host is
+ * generated per webview and the browser-hosted origin varies by deployment,
+ * so pinning an exact value would break panels in exactly the environments
+ * hardest to test in.
+ *
+ * This is defence in depth, not the primary control. The panels' CSP is
+ * `default-src 'none'` with nonce-gated scripts and no `frame-src`, so there
+ * is no way to embed a frame or run injected script that could post here in
+ * the first place — see `panelHtml` in src/panels/webview-utils.ts.
+ */
+const TRUSTED_ORIGIN_SCHEMES = ['vscode-webview:', 'https:'];
+
+export function isTrustedHostOrigin(origin: string): boolean {
+  return TRUSTED_ORIGIN_SCHEMES.some(scheme => origin.startsWith(scheme));
+}
+
+function onHostMessage<T>(handler: (msg: T) => void): () => void {
+  const listener = (e: MessageEvent): void => {
+    if (!isTrustedHostOrigin(e.origin)) { return; }
+    handler(e.data as T);
+  };
   window.addEventListener('message', listener);
   return () => { window.removeEventListener('message', listener); };
 }

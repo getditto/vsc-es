@@ -1,0 +1,13 @@
+# Code owners for getditto/vsc-es
+#
+# Every file in the repo is owned jointly by the three owners below. GitHub
+# requests a review from all of them on each pull request; when branch
+# protection requires one approving review, an approval from any one of them
+# satisfies it.
+#
+# NOTE: a team listed here must have write access to this repository or
+# GitHub silently ignores the entry. Check with:
+#   gh api repos/getditto/vsc-es/teams --jq '.[] | "\(.slug) \(.permission)"'
+#   gh api repos/getditto/vsc-es/codeowners/errors
+
+* @biozal @getditto/product @getditto/sdk-engineers

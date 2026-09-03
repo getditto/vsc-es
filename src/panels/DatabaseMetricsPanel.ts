@@ -7,16 +7,25 @@ import type { InspectorController } from '../inspector/InspectorController.js';
 import type { DbMetricsIn, DbMetricsOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import { snapshot } from '../storage/DatabaseMetricsService.js';
+import { SystemMetricsService } from '../ditto/SystemMetricsService.js';
 
 /**
  * Webview panel surfacing the SwiftUI Edge Studio's Storage view as
- * "Database Metrics" — on-demand only. The panel is empty until the
- * user clicks Refresh (the very first auto-fetch counts as that).
+ * "Database Metrics", plus (SDK 5.1) a "System metrics" section fed by
+ * `system:metrics`. Storage numbers stay on-demand only — the
+ * filesystem walk + collection scans are expensive, so the user picks
+ * when fresh numbers matter via Refresh.
+ *
+ * System metrics are the inverse: `system:metrics` reads FLUSH the SDK's
+ * registry and return per-read deltas, so the value is in a continuous
+ * time series, not a point snapshot. SystemMetricsService polls every
+ * {@link DEFAULT_POLL_INTERVAL_MS} while the panel is visible and
+ * accumulates since-connect totals. Because reads flush, polling is tied
+ * strictly to panel visibility — an invisible panel poll would still
+ * flush counters while producing numbers nobody sees.
+ *
  * Per-DB scope: singleton, opening on a different DB disposes the
  * previous panel (matches PeerListingPanel / QueryMetricsPanel).
- *
- * Computation is expensive (filesystem walk + N collection scans).
- * Nothing here polls — the user picks when fresh numbers matter.
  */
 export class DatabaseMetricsPanel {
   private static current: DatabaseMetricsPanel | undefined;
@@ -52,6 +61,7 @@ export class DatabaseMetricsPanel {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly dataDir: string;
+  private readonly systemMetrics: SystemMetricsService;
   private inFlight = false;
 
   private constructor(
@@ -104,13 +114,33 @@ export class DatabaseMetricsPanel {
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 
+    // The service polls ONLY while this panel is visible for its own
+    // connection: `isExpectedActive` guards against accumulating the wrong
+    // database's deltas after a mid-poll switch, and the view-state
+    // listener below ties the timer to visibility.
+    this.systemMetrics = new SystemMetricsService(this.manager, this.logger, {
+      isExpectedActive: () => this.manager.getActiveConfigId() === this.databaseId,
+      onStatus: (status) => this.post({ type: 'dbMetrics.systemMetrics', status }),
+    });
+
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {
-        if (e.webviewPanel.active) {
+        const p = e.webviewPanel;
+        if (p.visible) {
+          this.systemMetrics.start();
+        } else {
+          this.systemMetrics.stop();
+        }
+        if (p.active) {
           this.inspector.setActiveFeature({ kind: 'databaseMetrics', databaseId: this.databaseId });
         }
       }),
     );
+
+    // The panel opens visible (creation doesn't fire onDidChangeViewState).
+    if (this.panel.visible) {
+      this.systemMetrics.start();
+    }
 
     // Auto-fetch the first snapshot on open so the user doesn't see a
     // blank panel. Subsequent refreshes are explicit (Refresh button).
@@ -130,11 +160,18 @@ export class DatabaseMetricsPanel {
    * Compute a fresh snapshot. Guarded against concurrent refreshes
    * (the button is disabled in the UI while in-flight, but a
    * misbehaving keybinding or test could race it).
+   *
+   * Also forces one immediate system-metrics poll so a single Refresh
+   * click updates both sections (publish happens via the service's
+   * onStatus, so this promise only needs to be observed, not awaited
+   * here — and a hanging store must not extend the storage-refresh
+   * inFlight guard's lifetime).
    */
   private async refresh(): Promise<void> {
     if (this.inFlight) { return; }
     this.inFlight = true;
     const log = this.logger.withTag('ext:DatabaseMetrics');
+    void this.systemMetrics.refreshNow();
     this.post({ type: 'dbMetrics.loading' });
     try {
       const snap = await snapshot(this.manager, this.dataDir);
@@ -161,6 +198,7 @@ export class DatabaseMetricsPanel {
 
   private dispose() {
     DatabaseMetricsPanel.current = undefined;
+    this.systemMetrics.stop();
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }

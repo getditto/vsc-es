@@ -84,13 +84,13 @@
     "viewsWelcome": [
       {
         "view": "dittoDatabases",
-        "contents": "No Ditto connections yet.\n\nNew to Ditto? Take the guided tour to set up your first connection.\n[Open Welcome](command:dittoVsce.openWelcome)\n\nAlready have Portal credentials?\n[Register Connection\u2026](command:dittoVsce.registerDatabase)"
+        "contents": "No Ditto connections yet.\n\nNew to Ditto? Take the guided tour to set up your first connection.\n[Open Welcome](command:dittoVsce.openWelcome)\n\nAlready have Portal credentials?\n[Register Connection…](command:dittoVsce.registerDatabase)"
       }
     ],
     "commands": [
       {
         "command": "dittoVsce.registerDatabase",
-        "title": "Ditto: Register Connection\u2026",
+        "title": "Ditto: Register Connection…",
         "icon": "$(add)"
       },
       {
@@ -117,7 +117,7 @@
       },
       {
         "command": "dittoVsce.newSubscription",
-        "title": "Ditto: New Subscription\u2026",
+        "title": "Ditto: New Subscription…",
         "icon": "$(add)"
       },
       {
@@ -132,7 +132,7 @@
       },
       {
         "command": "dittoVsce.newObserver",
-        "title": "Ditto: New Observer\u2026",
+        "title": "Ditto: New Observer…",
         "icon": "$(add)"
       },
       {
@@ -150,7 +150,7 @@
       },
       {
         "command": "dittoVsce.importSubscriptionsFromServer",
-        "title": "Ditto: Import Subscriptions from Server\u2026",
+        "title": "Ditto: Import Subscriptions from Server…",
         "icon": "$(cloud-download)"
       },
       {
@@ -169,8 +169,13 @@
       },
       {
         "command": "dittoVsce.openImportData",
-        "title": "Import Data\u2026",
+        "title": "Import Data…",
         "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "dittoVsce.openDebugConsole",
+        "title": "Ditto: Open Debug Console",
+        "icon": "$(terminal)"
       },
       {
         "command": "dittoVsce.openWelcome",
@@ -179,7 +184,7 @@
       },
       {
         "command": "dittoVsce.getQuickstarts",
-        "title": "Ditto: Get Quickstarts\u2026",
+        "title": "Ditto: Get Quickstarts…",
         "category": "Ditto"
       },
       {
@@ -201,7 +206,7 @@
       },
       {
         "command": "dittoVsce.exportLogs",
-        "title": "Ditto: Export Logs for Bug Report\u2026"
+        "title": "Ditto: Export Logs for Bug Report…"
       },
       {
         "command": "dittoVsce.showLogFile",
@@ -219,11 +224,11 @@
       },
       {
         "command": "dittoVsce.queryAllInCollection",
-        "title": "SELECT * FROM \u2026"
+        "title": "SELECT * FROM …"
       },
       {
         "command": "dittoVsce.addIndex",
-        "title": "Add Index\u2026",
+        "title": "Add Index…",
         "icon": "$(add)"
       },
       {
@@ -474,6 +479,11 @@
           "default": true,
           "description": "Capture EXPLAIN plans and duration metrics for queries. When off, the Metrics tab in the Inspector and the Query Metrics panel are hidden, and queries run without the EXPLAIN side-trip (no metrics overhead)."
         },
+        "dittoVsce.collectSystemMetrics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Ditto's startup-gated system:metrics virtual collection for connections this extension opens (sets DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED around Ditto.open) and show the System metrics section in the Database Metrics panel. Changes apply at the NEXT connect — the SDK parameter is startup-only."
+        },
         "dittoVsce.logAnalyzer.customPatternsFile": {
           "type": "string",
           "default": "",
@@ -497,6 +507,7 @@
     }
   },
   "scripts": {
+    "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
     "build": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
@@ -505,17 +516,27 @@
     "build:integration": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/*.test.ts' 'src/test/webview/*.test.ts'",
+    "injector:generate": "node scripts/test-injector/generate-data.mjs",
+    "injector:run": "node scripts/test-injector/injector.mjs",
     "test:integration:load": "DITTO_CI_DEPTH=load node dist/test/integration/runTests.js",
     "test:integration:e2e": "DITTO_CI_DEPTH=e2e DITTO_CI_MODE=1 node dist/test/integration/runTests.js",
     "vscode:prepublish": "npm run build",
-    "package": "vsce package --target ${TARGET:?TARGET env var must be set, e.g. darwin-arm64}"
+    "package": "vsce package --target ${TARGET:?TARGET env var must be set, e.g. darwin-arm64}",
+    "coverage": "node scripts/check-coverage.mjs",
+    "audit": "npm audit --omit=dev --audit-level=high",
+    "knip": "knip",
+    "license-check": "license-checker --production --onlyAllow \"MIT;MIT*;Apache-2.0;ISC;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;Unlicense\"",
+    "sbom": "cyclonedx-npm --output-file sbom.json",
+    "security": "node scripts/security-check.mjs"
   },
   "devDependencies": {
     "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.9",
+    "@cyclonedx/cyclonedx-npm": "^6.0.1",
     "@eslint/js": "^10.0.1",
-    "@types/glob": "^8.1.0",
+    "@lezer/highlight": "^1.2.3",
     "@types/jsdom": "^30.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^26.2.0",
@@ -523,11 +544,14 @@
     "@vscode/codicons": "^0.0.45",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
-    "codemirror": "^6.0.2",
     "esbuild": "^0.28.2",
     "eslint": "^10.8.1",
+    "eslint-plugin-no-unsanitized": "^4.1.5",
+    "eslint-plugin-security": "^4.0.1",
     "glob": "^13.0.6",
     "jsdom": "^30.0.1",
+    "knip": "^6.33.0",
+    "license-checker": "^25.0.1",
     "lit": "^3.3.2",
     "markdown-it": "^15.0.0",
     "mocha": "^11.8.0",
@@ -547,10 +571,10 @@
     "fast-uri": "3.1.5",
     "form-data": "4.0.6",
     "js-yaml": "4.3.1",
-     "linkify-it": "5.0.2",
-     "markdown-it@^15.0.0": {
-       "linkify-it": "6.1.0"
-     },
+    "linkify-it": "5.0.2",
+    "markdown-it@^15.0.0": {
+      "linkify-it": "6.1.0"
+    },
     "serialize-javascript": "^7.0.5",
     "tmp": "0.2.7",
     "undici": "7.29.0"

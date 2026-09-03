@@ -1,0 +1,16 @@
+title = "ditto-vsc-es gitleaks config"
+
+# Use gitleaks' own default rule set (secret patterns, provider keys, high-
+# entropy generic strings) rather than redefining it here.
+[extend]
+useDefault = true
+
+[allowlist]
+  description = "Known-fake fixture values, not live secrets"
+  regexes = [
+    # src/test/inspector-state.test.ts — a fabricated attachment token ID used
+    # to assert the SDK's fetchAttachment token round-trips. High-entropy
+    # opaque string trips the generic-api-key heuristic; it isn't tied to any
+    # real account or service.
+    '''RUHqxmQe-CdOGbUU3GRvB_Im3HUMMgO25K85NPQ5c2wHqg''',
+  ]

@@ -67,7 +67,7 @@ export type ImportSubsOut =
 /** Insert mode mirrors SwiftUI's InsertType — `'regular'` does an
  *  upsert (ON ID CONFLICT DO UPDATE), `'initial'` uses Ditto's
  *  INITIAL DOCUMENTS bulk-import optimisation (first-load only). */
-export type ImportDataInsertType = 'regular' | 'initial';
+type ImportDataInsertType = 'regular' | 'initial';
 
 export type ImportDataIn =
   // User clicked "Choose File…" — host opens an OS file picker, reads
@@ -189,6 +189,28 @@ export type PeerOut =
  *  via `/api/v5/store/execute` against the connection's httpApiUrl. */
 export type QueryMode = 'local' | 'http';
 
+// ─── ADVISE (SDK 5.1) — Query Editor index advice ─────────────
+/** One entry of ADVISE's `suggestedIndexes[]`. `statement` is the
+ *  ready-to-run `CREATE INDEX IF NOT EXISTS …` Ditto emits; running it
+ *  is always user-confirmed (modal in the host) — the extension never
+ *  runs `ADVISE AND PROVISION` silently, and never surfaces one. */
+export interface QueryIndexSuggestion {
+  collection: string;
+  reason: string;
+  statement: string;
+}
+
+/** Extracted `advice` payload from an `ADVISE <SELECT …>` result row.
+ *  Ditto emits a single row of the form
+ *  `{ advice: { statement, suggestedIndexes?, outcome? } }`:
+ *  `suggestedIndexes` is absent when there's nothing to advise on
+ *  (`outcome` then says why, e.g. "no keys to advise on"). */
+export interface QueryAdvice {
+  statement: string;
+  outcome?: string;
+  suggestions: QueryIndexSuggestion[];
+}
+
 export type QueryIn =
   | { type: 'query.run'; query: string; mode: QueryMode }
   | { type: 'query.rowSelected'; rowJson: string | null }
@@ -213,7 +235,12 @@ export type QueryIn =
   // shows a save dialog and writes the file. `rowCount` is surfaced
   // for the success message; deriving it from the string by re-parsing
   // would defeat the point of the webview serialising once.
-  | { type: 'query.exportRows'; json: string; rowCount: number };
+  | { type: 'query.exportRows'; json: string; rowCount: number }
+  // User clicked "Create index" on an ADVISE suggestion. `statement` is
+  // the exact CREATE INDEX text Ditto proposed; the host confirms via a
+  // modal, re-checks the active connection (mid-switch guard), runs it
+  // through executeRaw, then refreshes the index tree.
+  | { type: 'query.createSuggestedIndex'; statement: string; collection: string };
 
 export type QueryOut =
   | {
@@ -226,8 +253,21 @@ export type QueryOut =
        *  was captured — webview consumers read `metadata.profile`
        *  rather than a hoisted field to keep one source of truth. */
       metadata: QueryResultMetadata;
+      /** ADVISE advice extracted from the rows host-side (the Advice block
+       *  in the webview). Absent/null for non-ADVISE queries and for ADVISE
+       *  results whose rows carried no advice object. */
+      advice?: QueryAdvice | null;
     }
   | { type: 'query.error'; message: string }
+  // Per-suggestion feedback for `query.createSuggestedIndex`, keyed by the
+  // advice statement so the webview can track buttons independently.
+  // 'declined' = the user dismissed the confirmation modal (button re-arms).
+  | {
+      type: 'query.adviseFeedback';
+      statement: string;
+      outcome: 'created' | 'declined' | 'failed';
+      message?: string;
+    }
   // Available run-locations for this connection. `['local']` when the
   // connection has no HTTP creds; `['local','http']` when both
   // httpApiUrl and httpApiKey are configured. The webview hides the
@@ -280,7 +320,7 @@ export type ObserverOut =
 // ─── Query Metrics panel ───────────────────────────────────────
 /** A single record in the Query Metrics history. The shape is the
  *  same as QueryResultMetadata with a stable id minted by the store. */
-export interface QueryMetricsRecord extends QueryResultMetadata {
+interface QueryMetricsRecord extends QueryResultMetadata {
   id: string;
 }
 
@@ -290,14 +330,76 @@ export type MetricsIn =
 export type MetricsOut =
   | { type: 'metrics.state'; records: QueryMetricsRecord[] };
 
+// ─── system:metrics (SDK 5.1) — System metrics section of the
+//     Database Metrics panel. Host side: src/ditto/SystemMetricsService.ts.
+//
+// `system:metrics` is a DQL virtual collection whose reads FLUSH the
+// underlying registry: every SELECT returns deltas since the previous
+// read (row shape: `{ key, labels, level, unit, description, …kind fields }`,
+// counters carry `current`/`updates`/`delta`, histograms carry
+// `count`/`sum`/`abs_max` + `dcount`/`dsum`/`dabs_max`). The host service
+// therefore accumulates per-read deltas into since-connect running totals,
+// and the wire shape below carries the accumulated picture rather than a
+// last-read dump.
+export interface SystemMetricSample {
+  /** Bare metric name, e.g. `ditto.network.dsoq.connection.opened`. */
+  key: string;
+  /** Label map — sqlite metrics label by `db` role, recovery by `cause`, etc. */
+  labels: Record<string, string>;
+  description: string;
+  unit: string;
+  /** `histogram` when the row carries `count`/`dcount`; otherwise `counter`.
+   *  (Counters and gauges share one row shape — `current`/`updates`/`delta`
+   *  — and no gauge-key metric is surfaced on the dashboard today.) */
+  kind: 'counter' | 'histogram';
+  /** Running total since this extension host connected: counters accumulate
+   *  `delta`, histograms accumulate `dcount`. */
+  sinceConnect: number;
+  /** The most recent read's delta alone (counters: `delta`; histograms:
+   *  `dcount`) — "what happened in the last poll interval". */
+  periodDelta: number;
+  /** Histograms only: accumulated `dsum` since connect (unit per metric:
+   *  seconds for durations, pages for wal_size_pages). */
+  sumSinceConnect?: number;
+  /** Histograms only: latest cumulative absolute max reported by the store. */
+  absMax?: number;
+}
+
+export interface SystemMetricsSnapshot {
+  samples: SystemMetricSample[];
+  /** epoch ms of the first successful accumulation — the "since connect"
+   *  zero point, surfaced so the user knows what the totals cover. */
+  sinceMs: number;
+  /** epoch ms of the read that produced this snapshot. */
+  polledAtMs: number;
+  pollIntervalMs: number;
+}
+
+/** Explicit state machine for the System metrics section — the webview
+ *  renders guidance per kind instead of a dead table. */
+export type SystemMetricsStatus =
+  /** Polling and accumulating. */
+  | { kind: 'working'; snapshot: SystemMetricsSnapshot }
+  /** `dittoVsce.collectSystemMetrics` is off; nothing was enabled at
+   *  startup and polling isn't running. */
+  | { kind: 'settingDisabled' }
+  /** `system:metrics` answered with its disabled placeholder row — the
+   *  exporter parameter is startup-only, so the setting must be on BEFORE
+   *  the connection opens; the fix is reconnecting with the setting on. */
+  | { kind: 'exporterDisabled' }
+  /** No active SDK session for this panel's connection. */
+  | { kind: 'noConnection' }
+  /** The query itself failed (e.g. an SDK without the virtual collection). */
+  | { kind: 'unavailable'; message: string };
+
 // ─── Database Metrics panel ────────────────────────────────────
-export interface DbMetricsCollectionStats {
+interface DbMetricsCollectionStats {
   name: string;
   documentCount: number;
   cborPayloadBytes: number;
 }
 
-export interface DbMetricsSnapshot {
+interface DbMetricsSnapshot {
   storeBytes: number;
   replicationBytes: number;
   attachmentsBytes: number;
@@ -320,7 +422,10 @@ export type DbMetricsIn =
 export type DbMetricsOut =
   | { type: 'dbMetrics.loading' }
   | { type: 'dbMetrics.snapshot'; snapshot: DbMetricsSnapshot }
-  | { type: 'dbMetrics.error'; message: string };
+  | { type: 'dbMetrics.error'; message: string }
+  /** System metrics (SDK 5.1 `system:metrics`) status + accumulated snapshot.
+   *  Pushed on every poll while the panel is visible. */
+  | { type: 'dbMetrics.systemMetrics'; status: SystemMetricsStatus };
 
 // ─── Inspector view (auxiliary bar) ────────────────────────────
 export type InspectorIn =
@@ -407,6 +512,59 @@ export type AnalyzerIn =
       requestId: string;
     }
   | { type: 'analyzer.requestLineDetail'; lineId: number; requestId: string };
+
+// ─── Debug console (SDK 5.1 `debug_socket`) ─────────────────
+// The Debug Console is the CLIENT side of the SDK's debug socket
+// (crates/ditto-peer/src/subsystems/debug_socket.rs): when a running app has
+// `ALTER SYSTEM SET debug_socket = '/path/to.sock'` applied, the SDK listens
+// on that Unix socket and serves newline-delimited DQL — one statement per
+// line, one reply line per statement (a JSON array of result items, or a
+// line starting with `ERROR:`). Host side: src/ditto/DebugSocketClient.ts +
+// src/panels/DebugConsolePanel.ts. It is deliberately INDEPENDENT of the
+// extension's own Ditto connection — no connection needs to be open, and the
+// socket serves full DQL (mutations, ALTER SYSTEM) by default, which is why
+// the webview carries a persistent live-mutation warning.
+
+type DebugConsoleConnectionState = 'disconnected' | 'connecting' | 'connected';
+
+/** One executed statement + its outcome, appended to the webview's
+ *  bounded in-session history (never persisted). */
+interface DebugConsoleRun {
+  statement: string;
+  ok: boolean;
+  /** Server-side error (`ERROR:` line) or client-side failure (timeout,
+   *  disconnect, malformed reply, queue full). Set iff `ok === false`. */
+  error?: string;
+  /** Result items, capped host-side at MAX_QUERY_ROWS (mirrors the Query
+   *  Editor convention — the debug socket bypasses the service-layer
+   *  10 MiB remote-query cap, so the client must cap for display). */
+  rows?: unknown[];
+  /** Uncapped item count actually returned by the socket. */
+  totalRowCount: number;
+  /** True when `totalRowCount > rows.length`. */
+  truncated: boolean;
+  durationMs: number;
+}
+
+export type DebugConsoleIn =
+  | { type: 'debugConsole.connect'; path: string }
+  | { type: 'debugConsole.disconnect' }
+  | { type: 'debugConsole.run'; statement: string };
+
+export type DebugConsoleOut =
+  /** Pushed in response to debugConsole.connect/disconnect and whenever the
+   *  socket drops on its own (remote close, timeout teardown).
+   *  `path` is echoed on connected; `error` carries the failure message on
+   *  disconnected; `pathWarning` is the non-blocking darwin 104-byte Unix
+   *  socket path limit notice, computed at connect time. */
+  | {
+      type: 'debugConsole.state';
+      state: DebugConsoleConnectionState;
+      path?: string;
+      error?: string;
+      pathWarning?: string;
+    }
+  | { type: 'debugConsole.runResult'; run: DebugConsoleRun };
 
 // ─── Pattern Editor panel ──────────────────────────────────────
 /** Host → webview: pattern catalog snapshot + save results.

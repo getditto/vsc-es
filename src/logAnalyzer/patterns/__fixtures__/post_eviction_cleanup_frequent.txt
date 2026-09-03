@@ -1,0 +1,1 @@
+2026-08-20T10:22:05.789Z  INFO   [sdk]  post-eviction session cleanup is running too frequently, which may cause excessive local overhead  {"run_count":3,"window_ms":30000,"debounce_ms":10000,"suggestion":"if these are all from one collection consider batching evictions or increasing the `replication_gc_debounce_ms` system parameter"}

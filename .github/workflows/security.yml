@@ -1,0 +1,93 @@
+name: security
+
+# The checks in validate.yml are pure npm (audit, knip, license-check) and
+# stay there since they need nothing beyond `npm ci`. These three need an
+# external toolchain (Python, a Go binary, a GitHub Action), so they're
+# split out rather than adding non-Node setup steps to the PR fast-path.
+#
+# Also runs on a weekly schedule, independent of any code change — a new
+# semgrep rule or zizmor audit can turn up a finding in code that hasn't
+# been touched in months.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * 1' # Monday 06:17 UTC — off the hour, avoids the
+                          # scheduler's every-hour stampede.
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - run: pipx install semgrep
+
+      # Same free registry rulesets used by `npm run security` locally —
+      # --metrics=off so this doesn't require a semgrep.dev login.
+      - name: Semgrep
+        run: |
+          semgrep \
+            --config p/security-audit --config p/typescript \
+            --config p/javascript --config p/owasp-top-ten \
+            --metrics=off --error src/ webview-ui/
+
+  actionlint:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # The release binary, verified against the checksum published with it,
+      # rather than reviewdog/action-actionlint. Reviewdog wants the PR diff
+      # to scope its annotations, and gets it either from the API or by
+      # re-fetching with persisted git credentials — but `persist-credentials:
+      # false` above (the artipacked hardening) removes the second path, and
+      # a security gate shouldn't need write-ish PR scopes to lint a YAML
+      # file. Running the binary directly also lints EVERY workflow, not just
+      # the ones this PR touched, which is what a gate should do, and it is
+      # the same invocation `npm run security` uses locally.
+      - name: Install actionlint
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          TARBALL="actionlint_${VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$TARBALL" \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${TARBALL}"
+          echo "${SHA256}  ${TARBALL}" | sha256sum --check --strict
+          tar -xzf "$TARBALL" actionlint
+          sudo install -m 0755 actionlint /usr/local/bin/actionlint
+
+      - name: Actionlint
+        run: actionlint -color
+
+  zizmor:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write # uploads SARIF findings to the Security tab
+      actions: read # upload-sarif reads workflow-run metadata; required on private repos
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        with:
+          min-severity: medium

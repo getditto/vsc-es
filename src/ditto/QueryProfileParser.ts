@@ -33,6 +33,22 @@ export function alreadyHasProfilePrefix(query: string): boolean {
   return /\s/.test(next);
 }
 
+/** Whole-word, case-insensitive `ADVISE` gate — mirrors `isSelectStatement`.
+ *  Used to skip the `EXPLAIN` side-trip in `DittoManager.executeQuery`:
+ *  `EXPLAIN ADVISE <SELECT…>` is not valid syntax, so the metrics capture
+ *  would burn a doomed SDK call. (The PROFILE prefix gate never fires for
+ *  ADVISE already — the first word isn't SELECT.) Rejects `ADVISORY` /
+ *  `ADVISED` by requiring a whitespace boundary, like the SELECT gate. */
+export function isAdviseStatement(query: string): boolean {
+  const trimmed = query.trim();
+  if (trimmed.length === 0) { return false; }
+  const upper = trimmed.toUpperCase();
+  if (!upper.startsWith('ADVISE')) { return false; }
+  if (upper.length === 'ADVISE'.length) { return true; }
+  const next = upper.charAt('ADVISE'.length);
+  return /\s/.test(next);
+}
+
 /** Returns true iff the statement is a SELECT *or* a PROFILE-wrapped
  *  SELECT — i.e. anything that would produce a `~request_profile`
  *  envelope in the result when profiling is enabled. Used as the
@@ -54,7 +70,7 @@ export function isProfilableSelect(query: string): boolean {
 /** Profile envelope key Ditto emits as the trailing item. Exported
  *  so the host's "did we get a profile back?" check uses the same
  *  literal as the parser. */
-export const PROFILE_ENVELOPE_KEY = '~request_profile';
+const PROFILE_ENVELOPE_KEY = '~request_profile';
 
 /** Forgiving parser for the `~request_profile` envelope. Returns null
  *  if the input doesn't look like a profile (no `~request_profile` key,

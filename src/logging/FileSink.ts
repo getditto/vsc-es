@@ -82,18 +82,29 @@ export class FileSink {
     this.bufferBytes = 0;
     if (toWrite.length === 0) return;
 
-    await fs.mkdir(this.dir, { recursive: true });
+    // 0700 dir / 0600 files: these logs carry query text, collection names,
+    // and document contents from the user's database, and on a shared or
+    // multi-user host the process umask alone would otherwise leave them
+    // world-readable. Owner-only is the correct posture for something the
+    // user is later invited to export and attach to a bug report.
+    // (No-op on Windows, which ignores the mode bits.)
+    await fs.mkdir(this.dir, { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') {
+      await fs.chmod(this.dir, 0o700);
+    }
 
     const active = path.join(this.dir, FILENAME);
     let needsHeader = false;
     try {
       await fs.access(active);
-    } catch {
-      needsHeader = true;
+    } catch { needsHeader = true; }
+
+    if (!needsHeader && process.platform !== 'win32') {
+      await fs.chmod(active, 0o600);
     }
 
     if (needsHeader && this.opts.headerLines.length > 0) {
-      await fs.writeFile(active, this.opts.headerLines.join('\n') + '\n', 'utf8');
+      await fs.writeFile(active, this.opts.headerLines.join('\n') + '\n', { encoding: 'utf8', mode: 0o600 });
     }
 
     const payload = toWrite.join('');
@@ -107,7 +118,9 @@ export class FileSink {
       const didRotate = await this.rotate(active);
       if (!didRotate) break;
     }
-    await fs.appendFile(active, payload, 'utf8');
+    // `mode` applies only when appendFile has to create the file (the common
+    // case right after a rotate); it does not widen an existing file.
+    await fs.appendFile(active, payload, { encoding: 'utf8', mode: 0o600 });
   }
 
   private async rotate(active: string): Promise<boolean> {

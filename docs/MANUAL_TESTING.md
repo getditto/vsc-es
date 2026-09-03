@@ -489,6 +489,60 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 9. Disconnect, then reconnect. Verify the SDK level reverts to the per-DB config default (not the live `verbose` we set).
 10. Lower channel level back to `info` via Logging panel; subsequent `debug`/`trace` lines stop appearing in the channel but **still appear in the file**.
 
+### T23 · Debug Socket Console (SDK 5.1 `debug_socket`)
+
+**Pre-conditions:** macOS or Linux (no debug socket on Windows). You need an app
+running Ditto **SDK 5.1+** with the debug socket enabled. The repo ships a
+ready-made one — the test injector (`scripts/test-injector/`):
+
+```sh
+npm run injector:generate -- --collection=tasks --count=200
+npm run injector:run -- --collection=tasks --debug-socket=/tmp/my-app-ditto-debug.sock
+```
+
+Any other 5.1+ app works too — e.g. a quickstart app with this added after
+opening Ditto:
+
+```text
+ALTER SYSTEM SET debug_socket = '/tmp/my-app-ditto-debug.sock'
+```
+
+(The socket path must be absolute, the parent directory must exist, and the path
+must be ≤ 104 bytes on macOS.) The extension's own Ditto connection is irrelevant —
+this console attaches to the APP's SDK, so test it with nothing connected in the
+extension.
+
+The offline unit suite covers the client protocol against a fake server
+(`src/test/DebugSocketClient.test.ts`) and panel message traffic (ditto
+`DebugConsolePanel.test.ts`), but only a real app exercises the SDK-side listener,
+so this recipe cannot be automated locally.
+
+**Steps:**
+
+1. Command Palette → `Ditto: Open Debug Console` → panel opens with:
+   the warning banner ("Statements run live … not a sandbox"), a `Disconnected`
+   pill, and an empty-state history area.
+2. Enter a relative path (`tmp/app.sock`) → Connect → error appears in the panel
+   ("must be an absolute path"); no error dialog.
+3. Enter the app's socket path (`/tmp/my-app-ditto-debug.sock`) → Connect →
+   pill flips to `Connected`.
+4. Run `SELECT * FROM system:data_sync_info` (press Enter) → run card appears:
+   statement, `N items · M ms`, and a table with the sync-info row.
+5. Run a mutation to prove full DQL is live, e.g.
+   `INSERT INTO cars DOCUMENTS ({"_id":"dbg1","make":"Test"})` → ok card; then
+   `SELECT * FROM cars` shows the document (and it is visible in the app itself).
+6. Run `SELECT *** FROM cars` → error run card shows the SDK's
+   `ERROR: Parse error…` line in the panel (no dialog).
+7. Run several statements quickly — cards stack newest-first; the input clears
+   after each run. Shift+Enter does NOT run.
+8. Disconnect via the button → pill `Disconnected`; Run is disabled. Re-run →
+   "Not connected" run card.
+9. Kill the app while connected (or `ALTER SYSTEM RESET debug_socket` in the app)
+   → pill flips to `Disconnected` with a socket-closed error; Run re-arms after
+   reconnecting (no stuck "Running…").
+10. Try a path longer than 104 bytes → the in-panel path warning appears; on
+    macOS the app itself will have failed to bind, so connect fails too.
+
 ## What is covered automatically
 
 Before adding a recipe here, check whether it belongs in `npm test` instead —

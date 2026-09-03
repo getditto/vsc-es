@@ -621,3 +621,126 @@ The Observers feature lets users register a DQL query and watch it fire in real 
 - **Payload cap:** the host ships at most `OBSERVER_ROW_CAP` (1000) rows per event (`data`), with the uncapped count in `totalRows`; the webview shows a "showing first N of M" banner when capped. The DQL subscription and the `Differ` still see the full result set — only the shipped payload is capped.
 - **UI reuse:** the bottom-pane detail view uses the existing `<json-viewer>` and the new shared `<ditto-result-table>` (also consumed by the Query Editor). No bespoke detail-view code.
 - **Help:** `resources/help/observe.md` → rendered to `dist/webview-ui/help/observe.html` → loaded into the Inspector via `inspector.helpHtml`.
+
+---
+
+## 14. SDK 5.1: system:metrics and ADVISE
+
+### 14.1 System metrics (system:metrics)
+
+The Database Metrics panel has a second section, "System metrics", fed by SDK 5.1's `system:metrics` DQL virtual collection.
+
+- **Startup-gated exporter.** The `metrics_exporter_virtual_collection_enabled` system parameter defaults to false and runtime `ALTER SYSTEM` changes are ignored — it's read once at open. The extension enables it for its own instances via the `DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED` env var, set only around `Ditto.open` and restored afterwards (`withSystemMetricsEnv` in `src/ditto/SystemMetricsService.ts`). Setting: `dittoVsce.collectSystemMetrics` (default **on**, mirroring `collectProfiling`/`collectMetrics` — this is a dev tool and Info-level metrics are cheap). Two accepted caveats, documented at the helper: the env var is process-wide (harmless when we're the only SDK host in the process), and the exporter is itself a process-wide `OnceLock`, so once enabled it stays enabled for later opens in the same process.
+- **Flush-on-read.** Every `SELECT * FROM system:metrics` FLUSHES the registry: counter rows carry per-read `delta`, histogram rows `dcount`/`dsum`. Last-read rendering is therefore meaningless — `SystemMetricsService` polls (5 s) only while the panel is visible and accumulates deltas into since-connect running totals keyed by metric + sorted labels. Rows with no `key` are the exporter's `{status: "disabled"}` placeholder — `isExporterDisabledRows` detects it so the webview shows "enable the setting and reconnect" guidance instead of a dead table. Server-side GC can drop idle series; our accumulated totals simply stop growing for them.
+- **Wire shape.** `DbMetricsOut` gains `dbMetrics.systemMetrics` carrying an explicit `SystemMetricsStatus` union (`working` / `settingDisabled` / `exporterDisabled` / `noConnection` / `unavailable`) — see `src/ipc/messages.ts`. A mid-switch guard (`isExpectedActive`) discards polls that span a connection switch so another database's deltas never land in this panel's totals.
+- **Dashboard** (`webview-ui/databaseMetrics/database-metrics-element.ts`): DSOQ network counters (with an opened-vs-closed divergence alert and a TLV unknown_type interop note), SQLite metrics broken down by `labels.db`, and replication recovery counters by `labels.cause`.
+
+### 14.2 ADVISE in the Query Editor
+
+SDK 5.1's `ADVISE <SELECT …>` returns one row with an `advice` object: `{ statement, suggestedIndexes?: [{ collection, reason, statement }] }` where each suggestion's `statement` is a ready-to-run `CREATE INDEX IF NOT EXISTS …`; with nothing to advise on, `suggestedIndexes` is absent and a free-text `outcome` explains why (proved live in `src/test/advise-live.test.ts`).
+
+- **Gating.** `isAdviseStatement` (`src/ditto/QueryProfileParser.ts`) keeps ADVISE out of the EXPLAIN side-trips in `DittoManager.executeQuery` and the Query Editor's HTTP explain path (`EXPLAIN ADVISE …` is not valid syntax). The auto-PROFILE prefix never applies anyway — ADVISE doesn't start with SELECT.
+- **Extraction.** `extractQueryAdvice` (`src/ditto/advise.ts`) hoists the advice out of the rows onto `query.result.advice`, forgiving of forward-compatible shapes.
+
+### 14.3 Debug Socket Console (`debug_socket`)
+
+SDK 5.1's `debug_socket` system parameter makes a RUNNING APP's SDK listen on a
+Unix domain socket for DQL (`ALTER SYSTEM SET debug_socket = '/path/to.sock'`).
+The extension is the client of that socket — the Debug Console
+(`Ditto: Open Debug Console`, `src/panels/DebugConsolePanel.ts`) is deliberately
+independent of the extension's own Ditto connection: nothing needs to be
+connected, or even registered.
+
+- **Wire protocol** (per the SDK's `debug_socket` subsystem docs): newline-delimited
+  text over the Unix socket. One DQL statement per line client → server; exactly one
+  reply line per statement in order — either a single-line JSON array of result items
+  (empty result = `[]`) or a line starting with `ERROR: <message>`. Blank lines are
+  ignored; one connection stays open for many queries. `src/ditto/DebugSocketClient.ts`
+  pairs replies with requests through a pending FIFO, since replies are positional.
+- **Full DQL by default.** `dql_enable_remote_full_syntax` defaults true in 5.1, so
+  mutations and `ALTER SYSTEM` run over the socket. The webview therefore renders a
+  persistent live-mutation warning banner (not a dismissable tip — do not weaken it).
+- **Client-side caps.** The socket bypasses the service-layer 10 MiB remote-query
+  cap, so the client caps defensively: replies > 64 MiB close the connection, the
+  pending queue is capped at 10, requests time out after 30 s (a timeout closes the
+  connection — with positional replies there is no way to realign the FIFO), and the
+  panel caps displayed rows at `MAX_QUERY_ROWS` with a truncation indicator, mirroring
+  the Query Editor.
+- **Path handling.** Absolute paths only. macOS limits Unix socket paths to 104 bytes
+  (Linux 108) — the extension cannot fix that from the client side, so an over-long
+  path earns a persistent in-panel warning, not a refusal (the bind happens in the
+  app, possibly on another platform/container).
+- **History is session-only.** The last 50 runs are kept in the webview, newest first;
+  nothing is persisted.
+
+---
+
+## 15. Security
+
+Vulnerability reports go to security@ditto.com — see [`SECURITY.md`](../SECURITY.md)
+for the disclosure policy. This section is for contributors: the tooling that
+checks this codebase, and what to run before cutting a release.
+
+### 15.1 Tooling overview
+
+| Tool | Catches | Runs |
+|---|---|---|
+| `npm audit` | Known CVEs in production dependencies | `validate.yml` (every PR), local |
+| ESLint + `eslint-plugin-security` + `eslint-plugin-no-unsanitized` | Unsafe regex/fs patterns, DOM-sink XSS in `webview-ui/` | `npm run lint` (every PR), local |
+| Knip | Unused files, exports, and dependencies | `validate.yml` (every PR), local |
+| `license-checker` | Non-allow-listed licenses in production dependencies | `validate.yml` (every PR), local |
+| gitleaks | Secrets in a commit | pre-commit hook (staged diff), local full-history scan |
+| Semgrep | OWASP Top 10 / security-audit rule packs | `security.yml` (PR + push + weekly), local |
+| actionlint | GitHub Actions workflow syntax/logic errors | `security.yml` (PR + push + weekly), local |
+| zizmor | GitHub Actions supply-chain issues (unpinned actions, excessive secrets, template injection, cache poisoning) | `security.yml` (PR + push + weekly), local |
+| CodeQL (`security-extended`) | Broader static-analysis vulnerability classes | GitHub default setup, weekly |
+| Dependabot | CVE alerts (always) + routine version drift (`.github/dependabot.yml`) | GitHub-native |
+
+Config lives in `knip.config.js`, `.gitleaks.toml`, and `eslint.config.mjs`.
+Each has inline comments explaining every suppression — if you add one, explain
+*why* the finding doesn't apply, the same way the existing ones do.
+
+### 15.2 Running it locally
+
+```sh
+npm run security
+```
+
+Runs everything from the table above against your working tree in one pass.
+The npm-native checks (audit, lint, knip, license-check) always run. The
+external-binary checks (gitleaks, semgrep, actionlint, zizmor) run if
+installed, and print an install hint and skip otherwise — install what you're
+missing:
+
+```sh
+brew install gitleaks semgrep actionlint uv   # zizmor runs via `uvx`, from uv
+```
+
+Each check also has its own script if you want to run just one:
+`npm run audit`, `npm run lint`, `npm run knip`, `npm run license-check`.
+
+The gitleaks pre-commit hook (`.githooks/pre-commit`, wired up automatically
+by `npm install` via the `prepare` script) only scans your *staged* diff, so
+it stays fast — `npm run security` runs gitleaks against full history instead.
+
+### 15.3 Security release checklist
+
+Run before tagging a release (in addition to the existing steps in
+[`docs/releases/TEMPLATE.md`](releases/TEMPLATE.md)):
+
+1. `npm run security` passes clean on `main` at the commit you're about to tag.
+2. Check for open [Dependabot alerts](https://github.com/getditto/vsc-es/security/dependabot)
+   and [code scanning alerts](https://github.com/getditto/vsc-es/security/code-scanning) —
+   both should read zero-open before a release, not just at some earlier point.
+3. If `allowUntrustedCerts`, secret redaction (`src/logging/secrets.ts`), or
+   anything under `src/storage/SecretStore.ts` changed since the last release,
+   re-read the diff adversarially — these are the paths where a subtle bug
+   becomes a credential leak, not just a wrong query result.
+4. Skim the CycloneDX SBOM the release workflow attaches
+   (`ditto-vsce-<tag>.cdx.json`) if a new production dependency was added —
+   confirm it was intentional.
+5. New GitHub Actions steps or third-party actions since the last release?
+   Confirm they're pinned to a commit SHA (`npm run security`'s zizmor/
+   actionlint steps catch this, but a human read of the diff is cheap
+   insurance on the workflow that publishes the release itself).
+- **Apply.** The webview's advisory card renders reason + statement per suggestion with a "Create index" button → `query.createSuggestedIndex` → the host shows a modal confirm, re-checks the active connection after the modal (mid-switch guard, same shape as `CollectionsRepository.createIndex`), runs the statement verbatim through `executeRaw`, then refreshes the index tree via the `dittoVsce.refreshCollections` command (so the panel keeps its existing dependency set). `ADVISE AND PROVISION` is deliberately not surfaced anywhere — nothing runs CREATE INDEX without the modal.

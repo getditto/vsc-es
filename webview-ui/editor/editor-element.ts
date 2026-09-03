@@ -131,6 +131,9 @@ export class DatabaseEditor extends LitElement {
       this.integerDrafts = {};
       this.saving = false;
       this.initError = null;
+      // A banner from the previously edited config must not survive a re-init —
+      // it named THAT config's problem, not this one's.
+      this.validationError = null;
       this.advancedOpen = this.scopeError() !== null || this.systemSettingsError() !== null;
     }
     if (msg.type === 'editor.initError') { this.initError = msg.message; }

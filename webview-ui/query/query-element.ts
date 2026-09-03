@@ -5,7 +5,7 @@ import { assertNever } from '../shared/assert-never.js';
 import '../shared/json-viewer.js';
 import '../shared/result-table-element.js';
 import type { QueryProfile } from '../../src/ditto/QueryProfile.js';
-import type { QueryOut, QueryMode } from '../../src/ipc/messages.js';
+import type { QueryOut, QueryMode, QueryAdvice } from '../../src/ipc/messages.js';
 // Note: <ditto-profile-viewer> is registered by webview-ui/query/main.ts's
 // side-import, not here — keeping component registration in one place
 // (the entrypoint) avoids accidental double-imports.
@@ -66,6 +66,12 @@ export class QueryEditor extends LitElement {
   // Cog popover open/closed state. Anchored to the cog button; clicks
   // outside the popover close it (handled at document level).
   @state() private settingsMenuOpen = false;
+  // ADVISE (SDK 5.1): index advice hoisted out of the last result by the
+  // host. `applyState` tracks, per suggestion statement, the outcome of a
+  // "Create index" click (pending while the host's confirm modal is up,
+  // created/declined/failed per the host's adviseFeedback).
+  @state() private advice: QueryAdvice | null = null;
+  @state() private adviseStates: Record<string, { state: 'pending' | 'created' | 'declined' | 'failed'; message?: string }> = {};
 
   static override styles = css`
     :host {
@@ -360,6 +366,54 @@ export class QueryEditor extends LitElement {
       font-size: 12px;
       white-space: pre-wrap;
     }
+
+    /* ─── ADVISE advisory block (SDK 5.1) ────────────────────── */
+    .advice-card {
+      border: 1px solid var(--vscode-panel-border);
+      border-left: 3px solid var(--vscode-charts-blue, var(--vscode-textLink-foreground));
+      border-radius: 4px;
+      padding: 10px 12px;
+      background: var(--vscode-editorWidget-background);
+      font-size: 12px;
+    }
+    .advice-card h3 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--vscode-descriptionForeground);
+    }
+    .advice-suggestion {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      border-top: 1px solid var(--vscode-panel-border);
+    }
+    .advice-suggestion .advice-body { flex: 1; min-width: 0; }
+    .advice-suggestion .reason { color: var(--vscode-descriptionForeground); }
+    .advice-suggestion code {
+      display: block;
+      margin-top: 2px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .advice-suggestion button {
+      padding: 4px 12px;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 2px;
+      font: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .advice-suggestion button[disabled] { opacity: 0.5; cursor: not-allowed; }
+    .advice-status-created { color: var(--vscode-testing-iconPassed, var(--vscode-charts-green)); }
+    .advice-status-failed { color: var(--vscode-errorForeground); }
   `;
 
   /** Page sizes available given the current result count. Show every
@@ -408,6 +462,10 @@ export class QueryEditor extends LitElement {
         this.columns = msg.columns;
         this.durationMs = msg.durationMs;
         this.profile = msg.metadata.profile ?? null;
+        this.advice = msg.advice ?? null;
+        // A fresh result invalidates per-suggestion button state from any
+        // previous ADVISE run (the statements may no longer be on screen).
+        this.adviseStates = {};
         this.truncated = msg.metadata.truncated
           ? (msg.metadata.totalResultCount ?? null)
           : null;
@@ -427,8 +485,19 @@ export class QueryEditor extends LitElement {
         this.errorMessage = msg.message;
         this.rows = [];
         this.columns = [];
+        this.advice = null;
+        this.adviseStates = {};
         this.state = 'error';
         this.selectedRowIndex = null;
+        break;
+      case 'query.adviseFeedback':
+        this.adviseStates = {
+          ...this.adviseStates,
+          [msg.statement]: {
+            state: msg.outcome,
+            ...(msg.message !== undefined ? { message: msg.message } : {}),
+          },
+        };
         break;
       case 'query.setText':
         this.query = msg.text;
@@ -734,6 +803,49 @@ export class QueryEditor extends LitElement {
     postToHost({ type: 'query.exportRows', json, rowCount: this.rows.length });
   }
 
+  /** ADVISE (SDK 5.1) advisory card. Shows the advice statement and one row
+   *  per suggested index; "Create index" asks the HOST to run the exact
+   *  CREATE INDEX statement Ditto proposed (the host confirms with a modal
+   *  and re-checks the active connection first). */
+  private renderAdvice() {
+    if (!this.advice) { return nothing; }
+    const a = this.advice;
+    return html`
+      <div class="advice-card">
+        <h3>Index advice</h3>
+        ${a.suggestions.length === 0
+          ? html`<div class="reason">No index suggestions${a.outcome ? ` — ${a.outcome}` : ''}.</div>`
+          : a.suggestions.map(s => this.renderAdviceSuggestion(s))}
+      </div>
+    `;
+  }
+
+  private renderAdviceSuggestion(s: { collection: string; reason: string; statement: string }) {
+    const st = this.adviseStates[s.statement];
+    const busy = st?.state === 'pending';
+    return html`
+      <div class="advice-suggestion">
+        <div class="advice-body">
+          <span class="reason">${s.collection}: ${s.reason}</span>
+          <code>${s.statement}</code>
+          ${st?.state === 'created' ? html`<span class="advice-status-created">✓ Index created</span>` : nothing}
+          ${st?.state === 'failed' ? html`<span class="advice-status-failed">✗ ${st.message ?? 'Create failed'}</span>` : nothing}
+        </div>
+        <button
+          ?disabled=${busy || st?.state === 'created'}
+          title="Run this CREATE INDEX against the active connection (confirms first)"
+          @click=${() => this.applyAdvice(s.statement, s.collection)}
+        >${busy ? 'Creating…' : st?.state === 'created' ? 'Created' : 'Create index'}</button>
+      </div>
+    `;
+  }
+
+  private applyAdvice(statement: string, collection: string) {
+    if (this.adviseStates[statement]?.state === 'pending') { return; }
+    this.adviseStates = { ...this.adviseStates, [statement]: { state: 'pending' } };
+    postToHost({ type: 'query.createSuggestedIndex', statement, collection });
+  }
+
   private handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
@@ -783,6 +895,8 @@ export class QueryEditor extends LitElement {
           <pre>${this.errorMessage}</pre>
         </div>
       ` : nothing}
+
+      ${this.renderAdvice()}
 
       ${this.state === 'success' || this.state === 'running' ? html`
         <div class="results-header">
