@@ -2,7 +2,7 @@
 
 ## Setup (one-time)
 
-1. Install Node ≥ 20 and VS Code ≥ 1.95.
+1. Install Node ≥ 22 and VS Code ≥ 1.106.
 2. Clone or open this repo at `/Users/labeaaa/Developer/ditto-vsc-es`.
 3. Copy `.env.example` to `.env` and fill in your Ditto Cloud credentials:
    - `DITTO_DATABASE_ID` — your Database ID from https://portal.ditto.live
@@ -613,7 +613,7 @@ jsdom performs no layout:
 ### The Output panel shows `SPIKE: failed: …`
 
 The `@dittolive/ditto` native binary couldn't load. Check:
-- `node --version` is ≥ 20.
+- `node --version` is ≥ 22.
 - `ls node_modules/@dittolive/ditto/dist/*.node` lists a binary matching your platform/arch (e.g. `ditto-darwin-arm64.node` on Apple Silicon).
 - `npm install` ran without errors.
 
