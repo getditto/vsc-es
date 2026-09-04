@@ -69,8 +69,8 @@ without leaving VS Code.
 
 ## Requirements
 
-- VS Code ≥ 1.95
-- Node.js ≥ 20 (the extension runs in VS Code's Electron Node host)
+- VS Code ≥ 1.106
+- Node.js ≥ 22 (the extension runs in VS Code's Electron Node host)
 - A Ditto account at [portal.ditto.live](https://portal.ditto.live) for
   credentials
 
