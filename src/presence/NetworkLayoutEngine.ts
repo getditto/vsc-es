@@ -23,6 +23,11 @@
  *      resulting linear order is mapped onto the circle so connected
  *      pairs always land adjacent.
  *
+ *   2b. **Expanded-mode ring packing** — full-mesh mode spreads the mesh across
+ *      as many balanced concentric rings as it needs, apportioned by ring
+ *      capacity rather than one ring per BFS layer. See `packBfsRings` for why
+ *      the per-layer version stranded lone peers on long spokes.
+ *
  *   3. **Ring 2+ positioning** — each non-ring-1 peer is placed at its
  *      parent's angle, on the outer ring radius, so the connecting
  *      edge becomes a short outward radial segment rather than a
@@ -70,6 +75,9 @@ const PEER_SPACING = 20;          // Gap between adjacent peers when sizing a ri
  * packs a BFS layer across multiple visual rings. Pills have variable widths,
  * so this intentionally errs on the side of fewer peers per ring. */
 const EXPANDED_NODE_FOOTPRINT = 200;
+/** Runaway guard on the ring-packing loop. Ring capacity grows with radius, so
+ * ~11 rings already seat over 500 peers — far past any mesh this view renders. */
+const MAX_VISUAL_RINGS = 32;
 
 /** Top-of-circle start angle (90°); peers are laid out clockwise from
  *  here. Picked so the first ring-1 peer sits directly above local. */
@@ -85,11 +93,11 @@ const START_ANGLE = Math.PI / 2;
  * `radiusScale` (default 1.0) multiplies the base ring radius + the
  * per-ring increment. Used by the Presence Graph webview to spread
  * peers wider when "Direct Connected only" is OFF. Expanded mode also
- * packs each BFS layer into as many concentric visual rings as needed:
- * direct peers stay closest to the local peer, and later BFS layers do
- * not start until the previous layer is complete. The crowding-based
- * minimum-circumference floor is intentionally NOT scaled (pill sizes
- * don't change), so very small meshes don't drift apart for no reason.
+ * packs the mesh into as many balanced concentric visual rings as it
+ * needs, in hop order so direct peers stay closest to the local peer —
+ * see `packBfsRings`. The crowding-based minimum-circumference floor is
+ * intentionally NOT scaled (pill sizes don't change), so very small
+ * meshes don't drift apart for no reason.
  */
 export function calculateLayout(
   localPeerKey: string,
@@ -194,9 +202,31 @@ function performBFS(
   return { ringAssignments, parentMap };
 }
 
-/** Convert logical BFS layers into visual rings for expanded/full-mesh mode.
- * A crowded layer may consume several rings, but the next BFS layer never
- * starts until the current layer is complete. */
+/**
+ * Convert logical BFS layers into BALANCED visual rings for expanded/full-mesh mode.
+ *
+ * This used to give every BFS layer its own fresh visual ring — "a crowded layer may
+ * consume several rings, but the next BFS layer never starts until the current layer
+ * is complete". That reads well only when the mesh is a single wide layer, which is
+ * what the fixtures in this repo happen to be, so the failure mode never showed up
+ * here. On a real multicast mesh, where a handful of peers sit two or three hops out,
+ * it produces a ring holding exactly one peer at a huge radius: a lone node dangling
+ * on a long spoke, pointing straight up. That is what the Ditto Edge Studio Android
+ * presence viewer was observed doing on device, which is where this fix comes from.
+ * A trailing remainder had the same effect — 60 peers packed as 6 / 12 / 17 / 23 / 2,
+ * with two nodes stranded on the outermost orbit.
+ *
+ * Instead: flatten the layers in hop order (so low-hop peers still land innermost),
+ * take the fewest rings that can hold everyone, and spread the peers across those
+ * rings IN PROPORTION to each ring's capacity. Equal capacity share means equal
+ * spacing between neighbours on every orbit, which is what makes the rings read as
+ * balanced — outer rings legitimately hold more, exactly as this renderer already
+ * looks when its mesh happens to be one wide layer.
+ *
+ * A peer two hops out can now share a ring with direct peers. That is the intended
+ * trade: ring index stops being a strict hop count and becomes "roughly how far out
+ * you are", in exchange for orbits that stay balanced up to 120 nodes.
+ */
 function packBfsRings(
   bfsRings: Map<number, string[]>,
   radiusScale: number,
@@ -205,21 +235,87 @@ function packBfsRings(
   const packed = new Map<number, string[]>();
   packed.set(0, [...(bfsRings.get(0) ?? [])]);
 
-  let visualRing = 1;
-  const logicalRings = [...bfsRings.keys()]
+  const ordered = [...bfsRings.keys()]
     .filter(r => r > 0)
-    .sort((a, b) => a - b);
-  for (const logicalRing of logicalRings) {
-    const peers = bfsRings.get(logicalRing) ?? [];
-    let offset = 0;
-    while (offset < peers.length) {
-      const capacity = peersPerExpandedRing(visualRing, radiusScale, peers.slice(offset), peerFootprints);
-      packed.set(visualRing, peers.slice(offset, offset + capacity));
-      offset += capacity;
-      visualRing += 1;
-    }
+    .sort((a, b) => a - b)
+    .flatMap(ring => bfsRings.get(ring) ?? []);
+  if (ordered.length === 0) { return packed; }
+
+  const capacities = expandedRingCapacities(ordered, radiusScale, peerFootprints);
+  const counts = distributeAcrossRings(ordered.length, capacities);
+
+  let offset = 0;
+  for (const [index, count] of counts.entries()) {
+    if (count <= 0) { continue; }
+    packed.set(index + 1, ordered.slice(offset, offset + count));
+    offset += count;
   }
   return packed;
+}
+
+/**
+ * Capacity of each visual ring, growing outward until the rings can hold `peers`.
+ *
+ * Capacity is measured against the widest pill in the whole mesh rather than the
+ * widest still-unplaced one: the balanced packer decides every ring up front, so a
+ * per-ring measurement would depend on an assignment that hasn't happened yet.
+ */
+function expandedRingCapacities(
+  peers: readonly string[],
+  radiusScale: number,
+  peerFootprints?: PeerFootprints,
+): number[] {
+  const capacities: number[] = [];
+  let seated = 0;
+  let ring = 1;
+  while (seated < peers.length && ring <= MAX_VISUAL_RINGS) {
+    const capacity = peersPerExpandedRing(ring, radiusScale, peers, peerFootprints);
+    capacities.push(capacity);
+    seated += capacity;
+    ring += 1;
+  }
+  // peersPerExpandedRing always returns >= 1, so the loop only exits early at the ring
+  // cap. Park any overflow on the outermost ring rather than dropping peers.
+  if (seated < peers.length && capacities.length > 0) {
+    const last = capacities.length - 1;
+    capacities[last] = capacities[last]! + (peers.length - seated);
+  }
+  return capacities;
+}
+
+/**
+ * Split `total` peers across rings in proportion to `capacities`, never exceeding a
+ * ring's capacity. Largest-remainder apportionment, so the counts sum to exactly
+ * `total` and the rounding loss lands on the rings that were closest to another slot.
+ * Ties break on ring index so the same mesh always lays out the same way.
+ */
+function distributeAcrossRings(total: number, capacities: readonly number[]): number[] {
+  const counts = new Array<number>(capacities.length).fill(0);
+  const capacitySum = capacities.reduce((sum, capacity) => sum + capacity, 0);
+  if (capacitySum <= 0 || total <= 0) { return counts; }
+
+  const exact = capacities.map(capacity => (total * capacity) / capacitySum);
+  for (let i = 0; i < counts.length; i += 1) { counts[i] = Math.floor(exact[i]!); }
+
+  const byRemainder = exact
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((a, b) => (a.fraction === b.fraction ? a.index - b.index : b.fraction - a.fraction))
+    .map(entry => entry.index);
+
+  let remaining = total - counts.reduce((sum, count) => sum + count, 0);
+  let progressed = true;
+  while (remaining > 0 && progressed) {
+    progressed = false;
+    for (const index of byRemainder) {
+      if (remaining === 0) { break; }
+      if (counts[index]! < capacities[index]!) {
+        counts[index] = counts[index]! + 1;
+        remaining -= 1;
+        progressed = true;
+      }
+    }
+  }
+  return counts;
 }
 
 function peersPerExpandedRing(
@@ -298,7 +394,7 @@ function calculatePositions(
       // bunch siblings together again, so expanded rings always use equal
       // angular spacing.
       const ordered = ring === 1 ? sortRing1Peers(peers, adjacency) : [...peers];
-      const angles = calculateOptimalAngles(ordered.length);
+      const angles = calculateOptimalAngles(ordered.length, ring);
       for (const [i, peerKey] of ordered.entries()) {
         const a = angles[i];
         if (a === undefined) { continue; }
@@ -308,7 +404,7 @@ function calculatePositions(
       // Greedy double-ended path: cluster connected peers adjacent on
       // the circle so chord lines stay short.
       const ordered = sortRing1Peers(peers, adjacency);
-      const angles = calculateOptimalAngles(ordered.length);
+      const angles = calculateOptimalAngles(ordered.length, ring);
       for (const [i, peerKey] of ordered.entries()) {
         const a = angles[i];
         if (a === undefined) { continue; }
@@ -498,13 +594,21 @@ function pickBestNeighbour(
   return candidates[0];
 }
 
-/** Distribute `peerCount` peers evenly around a full circle, starting
- *  at the top (90°) and going clockwise. */
-export function calculateOptimalAngles(peerCount: number): number[] {
+/**
+ * Distribute `peerCount` peers evenly around a full circle, going clockwise.
+ *
+ * Ring 1 starts at the top (90°). Each ring further out is rotated by half of its own
+ * angular step, so consecutive orbits don't line their first peer up on the same
+ * radial spoke. Without the stagger every ring began at exactly 90°, drawing a seam of
+ * stacked nodes straight up from the local peer — and a ring holding a single peer
+ * always put it at the top, when either side of it was free.
+ */
+export function calculateOptimalAngles(peerCount: number, ringIndex = 1): number[] {
   if (peerCount <= 0) { return []; }
   const step = (2 * Math.PI) / peerCount;
+  const startAngle = START_ANGLE + step * 0.5 * (ringIndex - 1);
   const angles: number[] = [];
-  for (let i = 0; i < peerCount; i += 1) { angles.push(START_ANGLE + step * i); }
+  for (let i = 0; i < peerCount; i += 1) { angles.push(startAngle + step * i); }
   return angles;
 }
 
