@@ -153,6 +153,7 @@ function buildDeps(opts: DepsOptions = {}): { deps: SwitchDeps; rec: Recorded } 
       closeSubscription: () => { calls.push('panels.closeSubscription'); },
       closeQueryMetrics: () => { calls.push('panels.closeQueryMetrics'); },
       closeDatabaseMetrics: () => { calls.push('panels.closeDatabaseMetrics'); },
+      closeSystemMetrics: () => { calls.push('panels.closeSystemMetrics'); },
       closeImportData: () => { calls.push('panels.closeImportData'); },
       closeObserver: () => { calls.push('panels.closeObserver'); },
       closeObserverEditor: () => { calls.push('panels.closeObserverEditor'); },
@@ -258,6 +259,7 @@ test('switch happy path: closes panels → disconnect → connect → restorePan
   const sig = rec.calls.filter(c =>
     c === 'panels.closeQuery' || c === 'panels.closePeers' || c === 'panels.closeSubscription' ||
     c === 'panels.closeQueryMetrics' || c === 'panels.closeDatabaseMetrics' ||
+    c === 'panels.closeSystemMetrics' ||
     c === 'manager.disconnect' || c.startsWith('manager.connect') ||
     c.startsWith('panels.showQuery') || c.startsWith('panels.showPeers'),
   );
@@ -267,6 +269,7 @@ test('switch happy path: closes panels → disconnect → connect → restorePan
     'panels.closeSubscription',
     'panels.closeQueryMetrics',
     'panels.closeDatabaseMetrics',
+    'panels.closeSystemMetrics',
     'manager.disconnect',
     'manager.connect(B)',
     'panels.showQuery(B, "SELECT * FROM tasks")',

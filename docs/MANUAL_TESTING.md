@@ -555,6 +555,76 @@ so this recipe cannot be automated locally.
 10. Try a path longer than 104 bytes → the in-panel path warning appears; on
     macOS the app itself will have failed to bind, so connect fails too.
 
+### T24 · Database Metrics / System Metrics split (0.9.5)
+
+**Pre-conditions:** A connected database (T5) with some collections and
+activity.
+
+**Steps:**
+
+1. Expand the active database row → under **Features** the rows read, in
+   order: Presence, Query Editor, Query Metrics, Database Metrics, System
+   Metrics (pulse icon), Log Analyzer.
+2. Click **Database Metrics** → panel opens with the seven storage cards and
+   the collections table; there is NO System metrics section anywhere in it.
+3. Click **System Metrics** → its own panel opens next to Database Metrics
+   as a separate tab ("System Metrics — &lt;name&gt;"); the Inspector renders
+   System Metrics help in the secondary sidebar.
+
+**Expected:**
+
+- The panel shows a centered segment control (All / Network / Store / Sync /
+  Other) over a row list — every reported series, not curated sections. Each
+  row shows the metric name without the `ditto.` prefix, its labels, the
+  since-connect total, and the last period's delta (`▲ +N` or `—`).
+- The segment control filters by namespace: Network lists
+  `ditto.network.dsoq.*` rows, Store the `ditto.backend.*` rows (labelled
+  by `db` role), Sync the `ditto.replication.*` rows, Other anything
+  outside those. An empty namespace says "No metrics in this namespace."
+- Clicking a row's **ⓘ icon** expands its details: description, kind, unit,
+  the full metric name, and for histograms the average and absolute max
+  since connect; clicking again collapses it, and several rows can stay
+  expanded at once.
+- **Search:** the filter box at the right of the segment row narrows the
+  list immediately as you type — try `ble`/`wifi` (label values), `fsync`
+  (metric names), and uppercase (`BLE`) to confirm case-insensitivity.
+  Combine a namespace segment with a term (Network + `closed`). A term with
+  no matches shows `No metrics match "<term>".`; clearing the box restores
+  the full list. The Pinned section is unaffected by the query.
+- **Pinning:** click the pin icon on two or three rows → a **Pinned (N)**
+  accordion appears above the segment control listing those series with
+  live values; the same rows remain in the main list. Switching the segment
+  filter does not affect the Pinned section. Collapse and re-expand the
+  section via its chevron header. Unpin from either the pinned row or the
+  main-list row. **Clear** in the section header empties the whole set.
+- **Pin reorder:** with three pins, drag a row (anywhere on the row, or its
+  ☰ handle) over another → an insertion line appears above or below the
+  target row depending on which side of its middle the pointer is; drop to
+  reorder. Dropping a row on itself is a no-op. Close and reopen the panel →
+  the custom order is retained (it persists with the pins). Drag hit-testing
+  and the insertion indicator are visual — verify here, not in unit tests.
+- **Pin persistence:** with some pins set, close the System Metrics panel,
+  reopen it → pins are back. Disconnect and reconnect the database, reopen
+  → pins are back. Reload the VS Code window → pins are still back.
+  Connecting a DIFFERENT database shows that database's own (separate) pin
+  set.
+- The footer reads "Since … — updated … · polled every 5s"; the update time
+  advances roughly every 5 s while the panel is visible.
+- Generate some traffic (run a query, or sync from another peer) → the
+  Network/Store row values grow.
+- Click **Refresh** → the footer's update time jumps immediately, ahead of
+  the cadence.
+- Click away so the panel is hidden, wait ~15 s, then reveal it → the update
+  time jumps forward on reveal only (polling is visibility-tied; nothing
+  polls while hidden).
+- Toggle `dittoVsce.collectSystemMetrics` off, disconnect, reconnect, reopen
+  System Metrics → the panel shows the enable-and-reconnect guidance instead
+  of a dead table. Restore the setting when done.
+- Database Metrics' **Refresh** recomputes the storage numbers only and never
+  disturbs the System Metrics panel's cadence.
+- Connect a different database (T17) → both metrics panels for the old
+  database close with the rest of the per-database panels.
+
 ## What is covered automatically
 
 Before adding a recipe here, check whether it belongs in `npm test` instead —

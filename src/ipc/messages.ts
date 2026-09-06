@@ -330,8 +330,8 @@ export type MetricsIn =
 export type MetricsOut =
   | { type: 'metrics.state'; records: QueryMetricsRecord[] };
 
-// ─── system:metrics (SDK 5.1) — System metrics section of the
-//     Database Metrics panel. Host side: src/ditto/SystemMetricsService.ts.
+// ─── system:metrics (SDK 5.1) — System Metrics panel.
+//     Host side: src/ditto/SystemMetricsService.ts.
 //
 // `system:metrics` is a DQL virtual collection whose reads FLUSH the
 // underlying registry: every SELECT returns deltas since the previous
@@ -375,7 +375,7 @@ export interface SystemMetricsSnapshot {
   pollIntervalMs: number;
 }
 
-/** Explicit state machine for the System metrics section — the webview
+/** Explicit state machine for the System Metrics panel — the webview
  *  renders guidance per kind instead of a dead table. */
 export type SystemMetricsStatus =
   /** Polling and accumulating. */
@@ -422,10 +422,32 @@ export type DbMetricsIn =
 export type DbMetricsOut =
   | { type: 'dbMetrics.loading' }
   | { type: 'dbMetrics.snapshot'; snapshot: DbMetricsSnapshot }
-  | { type: 'dbMetrics.error'; message: string }
+  | { type: 'dbMetrics.error'; message: string };
+
+// ─── System Metrics panel ──────────────────────────────────────
+/** Identity of one metric series (metric key + label set) — enough to
+ *  match a sample in a later snapshot. Used for per-DB pinned metrics,
+ *  persisted in globalState so they survive panel/connection restarts. */
+export interface SystemMetricSeriesRef {
+  key: string;
+  labels: Record<string, string>;
+}
+
+export type SysMetricsIn =
+  /** The Refresh button: force an immediate poll, ahead of the cadence. */
+  | { type: 'sysMetrics.refresh' }
+  /** Replace the pinned-series list wholesale. Pin, unpin, and
+   *  "Clear pins" all send the complete resulting list (pin order), so
+   *  every edit is one idempotent write. */
+  | { type: 'sysMetrics.setPins'; pins: SystemMetricSeriesRef[] };
+
+export type SysMetricsOut =
   /** System metrics (SDK 5.1 `system:metrics`) status + accumulated snapshot.
-   *  Pushed on every poll while the panel is visible. */
-  | { type: 'dbMetrics.systemMetrics'; status: SystemMetricsStatus };
+   *  Pushed on every poll while the panel is visible, and on Refresh. */
+  | { type: 'sysMetrics.status'; status: SystemMetricsStatus }
+  /** The pinned series for this connection, in pin order. Pushed once
+   *  when the panel opens (the host owns the persisted truth). */
+  | { type: 'sysMetrics.pins'; pins: SystemMetricSeriesRef[] };
 
 // ─── Inspector view (auxiliary bar) ────────────────────────────
 export type InspectorIn =
@@ -445,7 +467,7 @@ export type InspectorOut =
   | { type: 'inspector.contentChanged'; content: InspectorContent }
   | { type: 'inspector.historyChanged'; databaseId: string; entries: QueryHistoryEntry[] }
   | { type: 'inspector.favoritesChanged'; databaseId: string; entries: QueryFavoriteEntry[] }
-  | { type: 'inspector.helpHtml'; kind: 'subscription' | 'query' | 'presence' | 'metrics' | 'databaseMetrics' | 'observers' | 'logAnalyzer' | 'patternEditor'; uri: string }
+  | { type: 'inspector.helpHtml'; kind: 'subscription' | 'query' | 'presence' | 'metrics' | 'databaseMetrics' | 'systemMetrics' | 'observers' | 'logAnalyzer' | 'patternEditor'; uri: string }
   | { type: 'inspector.attachmentProgress'; tokenId: string; pct: number }
   | { type: 'inspector.attachmentLoaded'; tokenId: string; mimeType: string; webviewUri: string }
   | { type: 'inspector.attachmentSaved'; tokenId: string; path: string }

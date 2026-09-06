@@ -7,8 +7,8 @@ import type {
 } from '../ipc/messages.js';
 
 /**
- * system:metrics (SDK 5.1) — polling accumulator behind the Database
- * Metrics panel's "System metrics" section.
+ * system:metrics (SDK 5.1) — polling accumulator behind the System
+ * Metrics panel.
  *
  * Two host-side facts drive the whole design (verified against
  * `crates/ditto-metrics-exporter-virtual-collection/src/lib.rs` and its
@@ -39,7 +39,7 @@ export const SYSTEM_METRICS_ENV_VAR = 'DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION
 
 const SYSTEM_METRICS_QUERY = 'SELECT * FROM system:metrics';
 
-/** Default poll cadence while a Database Metrics panel is visible. */
+/** Default poll cadence while a System Metrics panel is visible. */
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
 /** Workspace setting reader — mirrors `readCollectProfiling`/`readCollectMetrics`
@@ -256,9 +256,9 @@ export class SystemMetricsService {
     }
   }
 
-  /** One immediate poll, publishing the status. The panel's storage
-   *  `refresh` handler drives this so one Refresh click updates both
-   *  sections. No-op when the setting is off beyond reporting the state. */
+  /** One immediate poll, publishing the status. Exposed so callers can
+   *  force a fresh read outside the cadence. No-op when the setting is
+   *  off beyond reporting the state. */
   async refreshNow(): Promise<void> {
     this.onStatus(await this.pollOnce());
   }

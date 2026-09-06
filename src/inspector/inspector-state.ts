@@ -38,6 +38,7 @@ export type InspectorContent =
   | { kind: 'peers'; databaseId: string }
   | { kind: 'metrics'; databaseId: string }
   | { kind: 'databaseMetrics'; databaseId: string }
+  | { kind: 'systemMetrics'; databaseId: string }
   | { kind: 'logAnalyzer'; databaseId: string }
   | { kind: 'patternEditor' }
   | {

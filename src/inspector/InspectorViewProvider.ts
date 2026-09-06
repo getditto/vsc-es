@@ -88,6 +88,7 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     const presenceHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'presence.html')).toString();
     const metricsHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'metrics.html')).toString();
     const databaseMetricsHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'databaseMetrics.html')).toString();
+    const systemMetricsHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'systemMetrics.html')).toString();
     const observeHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'observe.html')).toString();
     const logAnalyzerHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'logAnalyzer.html')).toString();
     const patternEditorHelpUri = view.webview.asWebviewUri(vscode.Uri.joinPath(helpDir, 'patternEditor.html')).toString();
@@ -97,6 +98,7 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'inspector.helpHtml', kind: 'presence',         uri: presenceHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'metrics',          uri: metricsHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'databaseMetrics',  uri: databaseMetricsHelpUri });
+      this.post({ type: 'inspector.helpHtml', kind: 'systemMetrics',    uri: systemMetricsHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'observers',        uri: observeHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'logAnalyzer',      uri: logAnalyzerHelpUri });
       this.post({ type: 'inspector.helpHtml', kind: 'patternEditor',    uri: patternEditorHelpUri });

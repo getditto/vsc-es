@@ -42,6 +42,7 @@ await import('../../../webview-ui/peers/main.js');
 await import('../../../webview-ui/query/main.js');
 await import('../../../webview-ui/queryMetrics/main.js');
 await import('../../../webview-ui/subscription/main.js');
+await import('../../../webview-ui/systemMetrics/main.js');
 await import('../../../webview-ui/welcome/main.js');
 
 /** [directory, tag the directory's main.ts mounts into #root]. */
@@ -60,6 +61,7 @@ const MAINS: ReadonlyArray<readonly [string, string]> = [
   ['query', 'ditto-query-editor'],
   ['queryMetrics', 'ditto-query-metrics'],
   ['subscription', 'ditto-subscription-editor'],
+  ['systemMetrics', 'ditto-system-metrics'],
   ['welcome', 'ditto-welcome'],
 ];
 
