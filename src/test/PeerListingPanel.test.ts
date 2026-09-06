@@ -28,18 +28,23 @@ interface FakeManager {
 /** Let the panel's deferred constructor work (setTimeout … 50) run. */
 const settle = (): Promise<void> => new Promise(r => setTimeout(r, 80));
 
-function recordingLogger(): Logger {
+interface RecordedLogger extends Logger { readonly warns: string[] }
+
+function recordingLogger(): RecordedLogger {
+  const warns: string[] = [];
   const self = {
     error: (_m: string, _c?: LogContext) => {},
-    warn: () => {}, info: () => {}, debug: () => {}, trace: () => {},
+    warn: (m: string) => { warns.push(m); },
+    info: () => {}, debug: () => {}, trace: () => {},
     withTag: () => self,
     getChannelLevel: (): LogLevel => 'info',
     onDidChangeChannelLevel: () => ({ dispose: () => {} }),
-  } as unknown as Logger;
+    warns,
+  } as unknown as RecordedLogger;
   return self;
 }
 
-async function showPanel(): Promise<{ panel: FakePanel; manager: FakeManager }> {
+async function showPanel(): Promise<{ panel: FakePanel; manager: FakeManager; log: RecordedLogger }> {
   stub.__resetStub();
   const { PeerListingPanel } = await import('../panels/PeerListingPanel.js');
   PeerListingPanel.dispose();
@@ -51,6 +56,7 @@ async function showPanel(): Promise<{ panel: FakePanel; manager: FakeManager }> 
     presenceCbs: [],
   };
   const mem = new Map<string, unknown>();
+  const log = recordingLogger();
   PeerListingPanel.show(
     {
       extensionUri: vscode.Uri.file('/ext'),
@@ -75,10 +81,10 @@ async function showPanel(): Promise<{ panel: FakePanel; manager: FakeManager }> 
     'db-1',
     { setPeers: () => Promise.resolve() } as never,
     { setActiveFeature: () => {} } as never,
-    recordingLogger(),
+    log,
   );
   await settle();
-  return { panel: stub.createdWebviewPanels[0]!, manager };
+  return { panel: stub.createdWebviewPanels[0]!, manager, log };
 }
 
 function peerStatePosts(panel: FakePanel): unknown[] {
@@ -116,6 +122,39 @@ test('PeerListingPanel: a changed snapshot is posted on the next beat', async ()
   // …and the new state becomes the baseline to beat.
   for (const cb of manager.presenceCbs) { cb(); }
   assert.equal(peerStatePosts(panel).length, 2, 'unchanged repeat skipped again');
+});
+
+test('PeerListingPanel: a non-serializable snapshot skips the beat instead of wedging the panel', async () => {
+  const { panel, manager, log } = await showPanel();
+  assert.equal(peerStatePosts(panel).length, 1, 'initial deferred push landed');
+
+  // A BigInt anywhere in the payload detonates JSON.stringify — previously
+  // the throw escaped the listener and EVERY later beat failed the same
+  // way, freezing the panel on the last good frame forever.
+  manager.snapshot = {
+    local: null,
+    remote: [{
+      id: 'peer-1', isDittoServer: false, deviceName: 'Peer One',
+      connections: [], syncSessionStatus: 'Connected',
+      peerMetadata: { big: 10n },
+    }],
+  };
+  for (const cb of manager.presenceCbs) { cb(); }
+  for (const cb of manager.presenceCbs) { cb(); }
+  assert.equal(peerStatePosts(panel).length, 1, 'poisoned beats are skipped');
+  assert.equal(
+    log.warns.filter(m => m.includes('not JSON-serializable')).length, 1,
+    'and the failure is logged once, not once per beat',
+  );
+
+  // Recovery: once the poisoning value is gone, the very next beat posts
+  // (a payload that differs from the initial frame — the dedupe must see it).
+  manager.snapshot = {
+    local: null,
+    remote: [{ id: 'peer-1', isDittoServer: false, deviceName: 'Peer One', connections: [], syncSessionStatus: 'Connected' }],
+  };
+  for (const cb of manager.presenceCbs) { cb(); }
+  assert.equal(peerStatePosts(panel).length, 2, 'the panel self-heals on the next changed snapshot');
 });
 
 test('PeerListingPanel: a sync-state change alone reposts', async () => {

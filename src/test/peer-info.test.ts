@@ -14,6 +14,7 @@ interface FakePresencePeer {
   deviceName: string;
   os?: any;
   dittoSdkVersion?: string;
+  isCompatible?: boolean;
   connections: Array<{ id: string; connectionType: any; peer1: string; peer2: string }>;
   peerMetadata: Record<string, unknown>;
   identityServiceMetadata: Record<string, unknown>;
@@ -114,6 +115,94 @@ test('mergePeerList: presenceGraph includes multi-hop peers that remote[] filter
   ]);
 });
 
+test('mergePeerList: presenceGraph carries the detail-card enrichment for multi-hop peers', () => {
+  // The graph detail card reads presence-graph facts for peers that are NOT
+  // in the merged direct list — B here is only reachable through A.
+  const A = makeRemotePeer('A');
+  const B = makePeer({
+    peerKey: 'B',
+    os: 'Android',
+    dittoSdkVersion: '5.1.2',
+    isConnectedToDittoServer: true,
+    isCompatible: true,
+    peerMetadata: { role: 'kitchen', floor: 2 },
+    identityServiceMetadata: { sub: 'auth0|123' },
+    connections: [{ id: 'c-AB', connectionType: 'P2PWiFi', peer1: 'A', peer2: 'B' }],
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [A, B] },
+    new Map(),
+    null,
+    [],
+  );
+
+  assert.deepEqual(snapshot.remote.map(p => p.id), ['A'], 'B is multi-hop only');
+  const b = snapshot.presenceGraph?.remotePeers.find(p => p.peerKey === 'B');
+  assert.deepEqual(b, {
+    peerKey: 'B',
+    deviceName: 'phone',
+    os: 'Android',
+    dittoSdkVersion: '5.1.2',
+    isConnectedToDittoServer: true,
+    isCompatible: true,
+    // The card only ever renders "N keys" — bodies stay off the wire.
+    peerMetadataKeyCount: 2,
+    identityMetadataKeyCount: 1,
+  });
+
+  // The merged direct row now also states the cloud link, so the fallback
+  // (pre-presence-graph) card can render the same Cloud row for A.
+  assert.equal(snapshot.remote[0]?.isConnectedToDittoServer, false);
+});
+
+test('mergePeerList: presenceGraph counts empty metadata as 0 keys (card shows —)', () => {
+  const A = makeRemotePeer('A', 'AccessPoint', {
+    peerMetadata: {},
+    identityServiceMetadata: {},
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [A] },
+    new Map(),
+    null,
+    [],
+  );
+  const a = snapshot.presenceGraph?.remotePeers.find(p => p.peerKey === 'A');
+  assert.equal(a?.peerMetadataKeyCount, 0);
+  assert.equal(a?.identityMetadataKeyCount, 0);
+});
+
+test('mergePeerList: malformed metadata from the SDK never throws or leaks', () => {
+  // Presence metadata from remote peers crosses the napi boundary without
+  // the local set-time validation. A null/non-object document must read as
+  // "no metadata" — an Object.keys throw here would escape into the 250ms
+  // presence flush and silently freeze every panel.
+  const A = makeRemotePeer('A', 'AccessPoint', {
+    peerMetadata: null as unknown as Record<string, unknown>,
+    identityServiceMetadata: [] as unknown as Record<string, unknown>,
+  });
+  const B = makeRemotePeer('B', 'Bluetooth', {
+    peerMetadata: undefined as unknown as Record<string, unknown>,
+    identityServiceMetadata: { sub: 'auth0|123' },
+  });
+  const snapshot = mergePeerList(
+    { localPeer: makeLocalPeer(), remotePeers: [A, B] },
+    new Map(),
+    null,
+    [],
+  );
+
+  const a = snapshot.presenceGraph?.remotePeers.find(p => p.peerKey === 'A');
+  assert.deepEqual([a?.peerMetadataKeyCount, a?.identityMetadataKeyCount], [0, 0]);
+
+  // The direct row hardens the same way (its bodies still ship to the
+  // list tab — but only genuine objects, emptied arrays never pass).
+  const rowA = snapshot.remote.find(p => p.id === 'A')!;
+  assert.equal(rowA.peerMetadata, undefined);
+  assert.equal(rowA.identityMetadata, undefined);
+  const rowB = snapshot.remote.find(p => p.id === 'B')!;
+  assert.deepEqual(rowB.identityMetadata, { sub: 'auth0|123' });
+});
+
 test('mergePeerList preserves multicast edges in the full presence graph', () => {
   const multicastPeer = makePeer({
     peerKey: 'multicast-peer',
@@ -139,6 +228,12 @@ test('mergePeerList preserves multicast edges in the full presence graph', () =>
   assert.deepEqual(snapshot.presenceGraph?.remotePeers, [{
     peerKey: 'multicast-peer',
     deviceName: 'phone',
+    os: 'iOS',
+    dittoSdkVersion: '5.0.0',
+    isConnectedToDittoServer: false,
+    isCompatible: undefined,
+    peerMetadataKeyCount: 0,
+    identityMetadataKeyCount: 0,
   }]);
 });
 
@@ -167,6 +262,12 @@ test('mergePeerList includes edges advertised only by the local presence peer', 
   assert.deepEqual(snapshot.presenceGraph?.remotePeers, [{
     peerKey: 'multicast-peer',
     deviceName: 'phone',
+    os: 'iOS',
+    dittoSdkVersion: '5.0.0',
+    isConnectedToDittoServer: false,
+    isCompatible: undefined,
+    peerMetadataKeyCount: 0,
+    identityMetadataKeyCount: 0,
   }]);
 });
 

@@ -41,6 +41,7 @@ function drawFrame(advanceMs = 16): void {
 await import('../../../webview-ui/presence-graph/presence-graph-element.js');
 import { drawConnectionLine, type ConnectionLineData } from '../../../webview-ui/presence-graph/connection-line.js';
 import { CONNECTION_STYLES, type ConnectionTypeName } from '../../../webview-ui/presence-graph/colors.js';
+import type { PresencePeerCardDetail } from '../../../webview-ui/presence-graph/peer-detail.js';
 import {
   perpendicularControlPoint,
   outwardControlPoint,
@@ -564,6 +565,348 @@ test('PresenceGraphElement: a stale hover does not out-emphasize the selection',
   const receded = ctx.__ops.filter(o => o.op === 'stroke' && o.globalAlpha < 0.1);
   assert.ok(receded.length > 0, 'the hovered-but-unfocused link is still dimmed');
   assert.ok(receded.every(o => o.lineWidth === 2), 'and is not given the 3px emphasis');
+  el.remove();
+});
+
+test('PresenceGraphElement: searchMatchKeys dims non-matching peers and lines on canvas', async () => {
+  const el = await mount();
+  const ctx = contextFor(el.shadowRoot.querySelector('canvas'));
+
+  el.searchMatchKeys = new Set(['alpha']);
+  await el.updateComplete;
+  ctx.__reset();
+  drawFrame();
+  const alphas = fillAlphaByPeer(el, ctx);
+
+  assert.equal(alphas.get('alpha'), 0.9, 'match keeps idle opacity');
+  assert.ok(
+    Math.abs(alphas.get('beta')! - 0.25 * 0.9) < 1e-9,
+    `non-match dimmed to 0.225, got ${alphas.get('beta')}`,
+  );
+  assert.ok(
+    Math.abs(alphas.get('local')! - 0.25 * 0.9) < 1e-9,
+    'local peer dims too when it is not a match',
+  );
+
+  const strokes = ctx.__ops.filter(o => o.op === 'stroke');
+  assert.ok(strokes.some(o => o.globalAlpha === 1), 'the matched peer\u2019s link stays full');
+  assert.ok(strokes.some(o => o.globalAlpha < 0.1), 'the untouched link recedes');
+
+  el.searchMatchKeys = undefined;
+  await el.updateComplete;
+  ctx.__reset();
+  drawFrame();
+  assert.equal(fillAlphaByPeer(el, ctx).get('beta'), 0.9, 'clearing the query restores opacity');
+  el.remove();
+});
+
+test('PresenceGraphElement: focusPeer() selects like a full-mesh canvas click', async () => {
+  const el = await mount({ directConnectedOnly: false });
+  el.focusPeer('alpha');
+  await el.updateComplete;
+
+  assert.equal(el.scene.isFocusedView, true);
+  assert.equal(el.scene.selectedPeerKey, 'alpha');
+  assert.ok(el.shadowRoot.querySelector('.focus-banner'), 'focus banner is shown');
+  el.remove();
+});
+
+test('PresenceGraphElement: focusPeer() out of Direct mode defers to the rebuilt input', async () => {
+  const el = await mount();
+  let modeEvent: boolean | undefined;
+  el.addEventListener('direct-connected-only-change', (e: any) => { modeEvent = e.detail; });
+
+  el.focusPeer('alpha');
+
+  assert.equal(el.directConnectedOnly, false, 'flips Direct off like the checkbox does');
+  assert.equal(modeEvent, false, 'and reports it through the same event');
+  assert.equal(el.scene.isFocusedView, false, 'focus waits for the full-mesh input');
+
+  // The parent's half of the contract: rebuild input for the new mode and
+  // push it. Only then may the peer be focused — in Direct mode a searched
+  // peer may not even exist in the scene.
+  el.input = { ...structuredClone(INPUT) };
+  await el.updateComplete;
+
+  assert.equal(el.scene.selectedPeerKey, 'alpha');
+  assert.equal(el.scene.isFocusedView, true);
+  el.remove();
+});
+
+// ─── Peer detail card (focus view) ─────────────────────────────
+
+/** Alpha's focus orbit is {alpha, local, beta}: local↔alpha and alpha↔beta. */
+const FOCUS_INPUT = {
+  localPeerKey: 'local',
+  localDeviceName: 'Local device',
+  isLocalConnectedToCloud: false,
+  remotePeers: [
+    { peerKey: 'alpha', deviceName: 'Alpha' },
+    { peerKey: 'beta', deviceName: 'Beta' },
+  ],
+  connections: [
+    { from: 'local', to: 'alpha', type: 'AccessPoint' as const },
+    { from: 'alpha', to: 'beta', type: 'Bluetooth' as const },
+  ],
+};
+
+function detailFixture(): Map<string, PresencePeerCardDetail> {
+  return new Map<string, PresencePeerCardDetail>([
+    ['local', {
+      peerKey: 'local', displayName: 'Me', isLocal: true,
+      os: 'macOS', sdkVersion: '5.1.0', cloudLink: true, isCompatible: undefined,
+      peerMetadataKeyCount: 0, identityMetadataKeyCount: 0,
+      isDirectlyConnected: false,
+    }],
+    ['alpha', {
+      peerKey: 'alpha', displayName: 'Alpha', isLocal: false,
+      os: 'iOS', sdkVersion: '5.0.0', cloudLink: false, isCompatible: true,
+      peerMetadataKeyCount: 2, identityMetadataKeyCount: 0,
+      isDirectlyConnected: true, syncedUpToLocalCommitId: 42,
+      lastUpdateReceivedTime: Date.now() - 120_000,
+    }],
+    ['beta', {
+      peerKey: 'beta', displayName: 'Beta', isLocal: false,
+      os: 'Android', sdkVersion: '5.1.2', cloudLink: true, isCompatible: false,
+      peerMetadataKeyCount: 3, identityMetadataKeyCount: 1,
+      isDirectlyConnected: false,
+    }],
+  ]);
+}
+
+/** Mounts in the full mesh with card data and focuses alpha. */
+async function mountFocused(): Promise<any> {
+  const el = await mount({
+    directConnectedOnly: false,
+    input: structuredClone(FOCUS_INPUT),
+    peerDetails: detailFixture(),
+  });
+  clickPeer(el, 'alpha');
+  await el.updateComplete;
+  return el;
+}
+
+/** Screen coords of a peer's FOCUSED-orbit position (the mesh `peers[].position`
+ *  still holds the background layout while focus view is up). */
+function focusScreenPos(el: any, key: string): { clientX: number; clientY: number } {
+  const p = el.scene.focusAnimation.toPositions.get(key);
+  const zoom = el.scene.activeZoom;
+  return { clientX: 800 / 2 + p.x * zoom, clientY: 600 / 2 + p.y * zoom };
+}
+
+function clickPeerInFocus(el: any, key: string): void {
+  const canvas = el.shadowRoot.querySelector('canvas');
+  const at = focusScreenPos(el, key);
+  canvas.dispatchEvent(mouse('mousedown', { ...at, button: 0, buttons: 1 }));
+  window.dispatchEvent(mouse('mouseup', { button: 0, buttons: 0 }));
+}
+
+function clickCanvas(el: any): void {
+  const canvas = el.shadowRoot.querySelector('canvas');
+  canvas.dispatchEvent(mouse('mousedown', { clientX: 5, clientY: 5, button: 0, buttons: 1 }));
+  window.dispatchEvent(mouse('mouseup', { button: 0, buttons: 0 }));
+}
+
+function detailCard(el: any): any {
+  return el.shadowRoot.querySelector('.peer-detail-card');
+}
+
+function rowValue(card: any, label: string): { text: string | null; missing: boolean } {
+  const row = [...card.querySelectorAll('.peer-detail-row')]
+    .find((r: any) => r.querySelector('.label')?.textContent === label);
+  const v = row?.querySelector('.value');
+  return { text: v?.textContent ?? null, missing: !!v && v.classList.contains('missing') };
+}
+
+test('PresenceGraphElement: tapping an orbit peer opens and closes its detail card (accordion)', async () => {
+  const el = await mountFocused();
+  assert.equal(detailCard(el), null);
+
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+  assert.equal(detailCard(el)?.getAttribute('aria-label'), 'Details for Beta');
+
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+  assert.equal(detailCard(el), null, 're-tap closes the card');
+
+  // The tap never steals focus from the mesh view it belongs to.
+  assert.equal(el.scene.isFocusedView, true);
+  assert.equal(el.scene.focusedKey, 'alpha', 'tapping a peer shows its card; it does not refocus');
+  el.remove();
+});
+
+test('PresenceGraphElement: tapping another orbit peer swaps the open card', async () => {
+  const el = await mountFocused();
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+  clickPeerInFocus(el, 'local');
+  await el.updateComplete;
+
+  const card = detailCard(el);
+  assert.equal(card?.getAttribute('aria-label'), 'Details for Me', 'accordion: the other card replaces');
+  assert.ok(card.textContent.includes('This device'), 'the local device gets its sync-free section');
+  el.remove();
+});
+
+test('PresenceGraphElement: a canvas tap dismisses the card but keeps focus; the next tap exits focus', async () => {
+  const el = await mountFocused();
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+
+  clickCanvas(el);
+  await el.updateComplete;
+  assert.equal(detailCard(el), null, 'card dismissed');
+  assert.equal(el.scene.isFocusedView, true, 'focus kept — closing an inspector is not backing out');
+
+  clickCanvas(el);
+  await el.updateComplete;
+  assert.equal(el.scene.isFocusedView, false, 'with no card up, the canvas tap exits focus');
+  el.remove();
+});
+
+test('PresenceGraphElement: exiting focus via the banner takes the card with it', async () => {
+  const el = await mountFocused();
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+
+  el.shadowRoot.querySelector('[aria-label="Exit focused node view and show full mesh"]').click();
+  await el.updateComplete;
+  assert.equal(el.scene.isFocusedView, false);
+  assert.equal(detailCard(el), null, 'the card belongs to the focus session that ended');
+  el.remove();
+});
+
+test('PresenceGraphElement: the card closes when its peer leaves the mesh', async () => {
+  const el = await mountFocused();
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+
+  const remaining = detailFixture();
+  remaining.delete('beta');
+  el.peerDetails = remaining;
+  await el.updateComplete;
+
+  assert.equal(detailCard(el), null, 'a card anchored to a vanished peer must not survive it');
+  el.remove();
+});
+
+test('PresenceGraphElement: the card shows presence facts, metadata counts, and explicit missing copy', async () => {
+  const el = await mountFocused();
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+  const card = detailCard(el);
+
+  assert.deepEqual(rowValue(card, 'OS'), { text: 'Android', missing: false });
+  assert.deepEqual(rowValue(card, 'Ditto SDK'), { text: '5.1.2', missing: false });
+  assert.deepEqual(rowValue(card, 'Cloud link'), { text: 'Connected', missing: false });
+  assert.deepEqual(rowValue(card, 'Compatible'), { text: 'No', missing: false });
+  assert.deepEqual(rowValue(card, 'Peer metadata'), { text: '3 keys', missing: false });
+  assert.deepEqual(rowValue(card, 'Identity metadata'), { text: '1 key', missing: false });
+  assert.ok(card.textContent.includes('No sync session — not directly connected'),
+    'an indirect peer says why there are no sync rows');
+  el.remove();
+});
+
+test('PresenceGraphElement: a directly connected peer gets sync rows with placeholders and relative time', async () => {
+  const el = await mountFocused();
+  clickPeerInFocus(el, 'alpha');
+  await el.updateComplete;
+  const card = detailCard(el);
+
+  assert.deepEqual(rowValue(card, 'Synced to commit'), { text: '42', missing: false });
+  const lastUpdate = rowValue(card, 'Last update');
+  assert.equal(lastUpdate.missing, false);
+  assert.match(lastUpdate.text!, /^\d+ min ago$/, `relative time, got ${lastUpdate.text}`);
+
+  // The focused peer itself gets no "Focus this peer" action…
+  assert.equal(card.querySelector('.peer-detail-focus'), null);
+  el.remove();
+});
+
+test('PresenceGraphElement: "Focus this peer" refocuses the scene and closes the card', async () => {
+  const el = await mountFocused();
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+
+  detailCard(el).querySelector('.peer-detail-focus').click();
+  await el.updateComplete;
+
+  assert.equal(detailCard(el), null);
+  assert.equal(el.scene.focusedKey, 'beta');
+  assert.equal(el.scene.isFocusedView, true);
+  el.remove();
+});
+
+test('PresenceGraphElement: detailOpen/closeDetail — the panel Escape-routing API', async () => {
+  const el = await mountFocused();
+  assert.equal(el.detailOpen, false);
+
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+  assert.equal(el.detailOpen, true);
+
+  el.closeDetail();
+  await el.updateComplete;
+  assert.equal(el.detailOpen, false);
+  assert.equal(detailCard(el), null);
+  el.remove();
+});
+
+test('PresenceGraphElement: re-picking the FOCUSED peer via search exits focus and takes the card with it', async () => {
+  // Regression: focusPeer was the only focus-exit path without flip
+  // bookkeeping, so a kept-open search result re-click left the detail card
+  // orphaned over the unfocused mesh.
+  const el = await mountFocused();
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+  assert.ok(detailCard(el), 'card open before the toggle');
+
+  el.focusPeer('alpha'); // search re-pick of the focused peer == click toggle-off
+  await el.updateComplete;
+
+  assert.equal(el.scene.isFocusedView, false, 'the re-pick exited focus');
+  assert.equal(detailCard(el), null, 'and the card went with the focus session');
+  el.remove();
+});
+
+test('PresenceGraphElement: the local device card has no focus action and explains its missing sync rows', async () => {
+  const el = await mountFocused();
+  clickPeerInFocus(el, 'local');
+  await el.updateComplete;
+  const card = detailCard(el);
+
+  assert.ok(card.textContent.includes('This device'));
+  assert.ok(card.textContent.includes('Sync progress is tracked per remote peer'));
+  assert.equal(card.querySelector('.peer-detail-focus'), null);
+  el.remove();
+});
+
+test('PresenceGraphElement: Direct-mode taps keep the dim-only selection — no card', async () => {
+  const el = await mount({ peerDetails: detailFixture() });
+  clickPeer(el, 'alpha');
+  await el.updateComplete;
+
+  assert.equal(el.scene.selectedPeerKey, 'alpha', 'direct selection still works');
+  assert.equal(detailCard(el), null, 'detail cards are a focus-view feature');
+  el.remove();
+});
+
+test('PresenceGraphElement: a peer with no card data (the cloud node) stays a canvas tap', async () => {
+  const el = await mount({
+    directConnectedOnly: false,
+    input: { ...structuredClone(FOCUS_INPUT), isLocalConnectedToCloud: true },
+    peerDetails: detailFixture(),
+  });
+  // Focus the cloud node from the unfocused mesh, then re-tap it: with no
+  // card data the tap falls through to the dismiss-or-exit canvas path.
+  clickPeer(el, 'ditto-cloud-node');
+  await el.updateComplete;
+  assert.equal(el.scene.focusedKey, 'ditto-cloud-node');
+
+  clickPeerInFocus(el, 'ditto-cloud-node');
+  await el.updateComplete;
+  assert.equal(el.scene.isFocusedView, false, 'canvas-tap semantics: no card was open, so focus exits');
   el.remove();
 });
 

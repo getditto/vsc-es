@@ -267,11 +267,38 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
     - A focused-neighbourhood view places that peer at the centre and fades the focused ring in.
     - Only its directly connected peers are arranged in a clean BFS ring with extra spacing for long device names.
     - The rest of the mesh remains visible as a lightweight dimmed context layer.
-    - The focused-view exit button immediately returns to the full mesh.
-    - Clicking the selected peer again or clicking open canvas space also exits the focused view.
+    - With focus active, click a peer in the orbit — including the focused peer and **Me**:
+      a detail card opens centred over the canvas. Verify the rows: peer key,
+      OS, Ditto SDK, Cloud link, and Compatible come from the presence graph
+      (populated for multi-hop peers too); peer and identity metadata show as
+      key counts; the sync section shows per-peer commit/time rows for a
+      directly connected peer, "No sync session — not directly connected" for
+      an indirect one, and "This device" for **Me**.
+    - Clicking the same peer again closes the card; clicking another orbit
+      peer swaps to its card; pressing Escape closes it too (a second Escape
+      then clears any active search). **Focus this peer** on a card refocuses
+      the orbit on that peer. A card whose peer leaves the mesh closes itself.
+    - On a short or narrow pane, confirm the focus banner's ✕ stays clickable
+      above the card.
+    - The focused-view exit button immediately returns to the full mesh and
+      closes any open card. Clicking open canvas space closes an open card
+      while keeping focus; with no card open it exits the focused view.
     - If any Android peers use the Multicast beta, multicast-connected peers and
       peer-to-peer edges still render; multicast edges use the bright-yellow dotted legend style.
-13. Verify interaction and live-update edge cases:
+13. Use the search box at the right of the Presence Graph tab bar:
+    - The box takes no row away from the canvas; typing a device-name or
+      peer-ID fragment (case-insensitive) lists matching peers in a card
+      below the box; matching peers and their connections stay at full
+      opacity while everything else dims.
+    - A query with no hits reports "No peers match" and dims the whole graph.
+    - With **Direct** on, type the name of a peer only reachable through another
+      peer: it is still found, and clicking its card row switches Direct off and
+      opens the focused-neighbourhood view on it, like a full-mesh click.
+    - Press Enter to focus the first result; then, with focus anywhere in the
+      panel (try it right after clicking a result button), press Escape: an
+      open detail card is dismissed first, and the next Escape clears the box
+      and restores full opacity. The focus view stays untouched throughout.
+14. Verify interaction and live-update edge cases:
     - Dragging a peer moves it without being mistaken for a selection click.
     - Turning **Direct** off clears any selection and shows the full graph normally.
     - Removing a selected peer clears focus without leaving other peers dimmed.
@@ -281,12 +308,12 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
       With **Direct** enabled, hovering **Me** likewise dims nothing and thickens no
       connections; only its own pill shows the hover fill. (With Direct off, hovering
       **Me** emphasizes its connections like any other peer.)
-13. Verify state survives the tab round-trip (each of these was a real defect):
+15. Verify state survives the tab round-trip (each of these was a real defect):
     - Uncheck **Direct**, switch to *Connected Peers*, switch back. The box is
       still unchecked **and** multi-hop peers are still shown — the two must agree.
     - Hide the controls with the eye, round-trip the tabs, and confirm they are
       still hidden.
-14. Verify the graph never gets stuck dimmed:
+16. Verify the graph never gets stuck dimmed:
     - Hover a peer (unrelated peers dim), then move the pointer onto the Direct
       switch, the zoom controls, and off the panel entirely. Full opacity returns
       each time; the graph never stays dimmed once the pointer is away.
@@ -304,7 +331,7 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 > The following can only be checked by eye — jsdom performs no layout, cascade,
 > or hit-testing, so the automated suite cannot cover CSS behaviour at all.
 
-15. Verify cursors and pointer targets:
+17. Verify cursors and pointer targets:
     - Hovering a peer shows a pointer cursor; pressing and dragging shows
       `grabbing` (not `pointer`) for the whole drag.
     - Hover a peer, then move the pointer through the *gaps between* the control
@@ -316,7 +343,7 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
       background stars and the gradient disappear, leaving a solid editor
       background; click it again and both effects return. Confirm this while
       entering focused-node view to compare interaction smoothness.
-16. Switch VS Code to a **light** theme and reopen the Presence Graph:
+18. Switch VS Code to a **light** theme and reopen the Presence Graph:
     - The legend, Direct/zoom groups, and the center/eye buttons are all legible
       against their own backgrounds — check especially with the controls hidden,
       when the two icon buttons are the only thing on screen.

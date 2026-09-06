@@ -74,6 +74,8 @@ interface PresencePeerLike {
   deviceName: string;
   os?: PeerOS;
   dittoSdkVersion?: string;
+  /** `undefined` while the SDK has not determined compatibility. */
+  isCompatible?: boolean;
   connections: Array<{ id: string; connectionType: ConnectionType; peer1: string; peer2: string }>;
   peerMetadata: Record<string, unknown>;
   identityServiceMetadata: Record<string, unknown>;
@@ -113,6 +115,26 @@ function filterAndDedupeConnections(
   return result;
 }
 
+/**
+ * Presence metadata arrives typed `Record<string, any>` but that only
+ * promises the LOCAL set-time validation; a remote peer's document crosses
+ * the napi boundary unvalidated, so a null/absent/non-object value here is
+ * a real (if rare) input. Treat anything that is not a plain object as
+ * "no metadata" instead of letting Object.keys throw — a throw escapes
+ * mergePeerList and silently freezes every downstream snapshot.
+ */
+function metadataObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) { return undefined; }
+  return value as Record<string, unknown>;
+}
+
+/** Exported for DittoManager's local-peer stamping; the guard behaviour is
+ *  the point, so there must be exactly one implementation. */
+export function metadataKeyCount(value: unknown): number {
+  const meta = metadataObject(value);
+  return meta ? Object.keys(meta).length : 0;
+}
+
 function toPeerInfo(
   peer: PresencePeerLike,
   syncRow: SyncStatusRow | undefined,
@@ -124,18 +146,17 @@ function toPeerInfo(
   // In a cloud-attached mesh, every peer has it set to true, which would
   // wrongly paint every card with the cloud gradient.
   const isDittoServer = syncRow?.is_ditto_server ?? false;
-  const peerMetadata = Object.keys(peer.peerMetadata).length > 0 ? peer.peerMetadata : undefined;
-  const identityMetadata = Object.keys(peer.identityServiceMetadata).length > 0
-    ? peer.identityServiceMetadata
-    : undefined;
+  const peerMeta = metadataObject(peer.peerMetadata);
+  const identityMeta = metadataObject(peer.identityServiceMetadata);
   return {
     id: peer.peerKey,
     isDittoServer,
     deviceName: peer.deviceName,
     os: peer.os,
     dittoSdkVersion: peer.dittoSdkVersion,
-    peerMetadata,
-    identityMetadata,
+    isConnectedToDittoServer: peer.isConnectedToDittoServer,
+    peerMetadata: peerMeta && Object.keys(peerMeta).length > 0 ? peerMeta : undefined,
+    identityMetadata: identityMeta && Object.keys(identityMeta).length > 0 ? identityMeta : undefined,
     connections: filterAndDedupeConnections(peer.connections, localKey),
     // Presence-graph peers are presumed Connected until sync_status says
     // otherwise — matches SwiftUI's pass-1 behavior of synthesizing
@@ -280,9 +301,24 @@ function buildPresenceGraphView(
   // array entries directly, because peer X might only be reachable
   // via its appearance as peer2 in peer Y's connection list — we
   // still want to draw X when Y advertises an edge to it.
+  // Carry the presence-graph facts per peer — the detail card shows them
+  // for multi-hop peers too, which the merged `remote` list never
+  // includes. Metadata ships as host-computed COUNTS only: the card just
+  // shows "N keys", and raw documents from remote SDKs cross the napi
+  // boundary unvalidated (a single BigInt would detonate the panel's
+  // JSON fingerprint on every 250ms beat).
   const remotePeers = presence.remotePeers
     .filter(p => peersInAnyEdge.has(p.peerKey))
-    .map(p => ({ peerKey: p.peerKey, deviceName: p.deviceName }));
+    .map(p => ({
+      peerKey: p.peerKey,
+      deviceName: p.deviceName,
+      os: p.os,
+      dittoSdkVersion: p.dittoSdkVersion,
+      isConnectedToDittoServer: p.isConnectedToDittoServer,
+      isCompatible: p.isCompatible,
+      peerMetadataKeyCount: metadataKeyCount(p.peerMetadata),
+      identityMetadataKeyCount: metadataKeyCount(p.identityServiceMetadata),
+    }));
 
   return { remotePeers, connections };
 }

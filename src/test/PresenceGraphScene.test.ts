@@ -431,3 +431,58 @@ test('PresenceGraphScene: focus neighbours are recomputed when the topology chan
   scene.applyInput(graphInput());
   assert.deepEqual(scene.focusForPeer('local'), { selected: false, alpha: 1 });
 });
+
+test('PresenceGraphScene: an active search dims non-matching peers and their connections', () => {
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
+  scene.applyInput(graphInput());
+
+  scene.setSearchMatches(new Set(['a']));
+
+  assert.deepEqual(scene.focusForPeer('a'), { selected: false, alpha: 1 });
+  // Pinned exactly, same as the selection dimming: the search highlight is
+  // meant to read as the same treatment, not a new one.
+  assert.deepEqual(scene.focusForPeer('b'), { selected: false, alpha: 0.25 });
+  assert.deepEqual(scene.focusForPeer('local'), { selected: false, alpha: 0.25 });
+
+  const matchLine = [...scene.lines.values()].find(line => line.toKey === 'a')!;
+  const otherLine = [...scene.lines.values()].find(line => line.toKey === 'b')!;
+  assert.deepEqual(scene.focusForLine(matchLine), { selected: false, alpha: 1 });
+  assert.deepEqual(scene.focusForLine(otherLine), { selected: false, alpha: 0.08 });
+});
+
+test('PresenceGraphScene: an empty search match set dims the whole graph', () => {
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
+  scene.applyInput(graphInput());
+
+  // A query with zero hits must not read as "no search": every peer dimmed
+  // is what tells the user nothing here matches.
+  scene.setSearchMatches(new Set());
+
+  assert.deepEqual(scene.focusForPeer('a'), { selected: false, alpha: 0.25 });
+  assert.deepEqual(scene.focusForPeer('local'), { selected: false, alpha: 0.25 });
+
+  // ...and clearing the box restores full opacity everywhere.
+  scene.setSearchMatches(undefined);
+  assert.deepEqual(scene.focusForPeer('a'), { selected: false, alpha: 1 });
+  assert.deepEqual(scene.focusForPeer('b'), { selected: false, alpha: 1 });
+});
+
+test('PresenceGraphScene: hover and click selection override the search dimming', () => {
+  const scene = new PresenceGraphScene({ showDirectConnectedOnly: true });
+  scene.applyInput(graphInput());
+  scene.setSearchMatches(new Set(['a']));
+
+  // Hover inspects whichever peer is under the pointer even when it is not
+  // a search hit; moving off the canvas falls back to the search dimming.
+  scene.setHovered(scene.peers.get('b'));
+  assert.deepEqual(scene.focusForPeer('b'), { selected: false, alpha: 1 });
+  assert.deepEqual(scene.focusForPeer('a'), { selected: false, alpha: 0.25 });
+  scene.setHovered(undefined);
+  assert.deepEqual(scene.focusForPeer('b'), { selected: false, alpha: 0.25 });
+  assert.deepEqual(scene.focusForPeer('a'), { selected: false, alpha: 1 });
+
+  // A click selection is the strongest focus source while a search is live.
+  scene.selectPeer('a');
+  assert.deepEqual(scene.focusForPeer('a'), { selected: true, alpha: 1 });
+  assert.deepEqual(scene.focusForPeer('b'), { selected: false, alpha: 0.25 });
+});
