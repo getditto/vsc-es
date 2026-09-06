@@ -45,12 +45,13 @@ If you disconnect and reconnect, the panel auto-closes and the next open starts 
 
 ## The toolbar
 
-Four controls along the top:
+Four controls along the top, with the source tabs at the right end of the same row:
 
 - **⏸ Pause** — stops the panel from updating. State still accumulates server-side; nothing is dropped. Use when an error storm makes the live table unreadable.
 - **▶ Resume** — re-enables live updates and flushes whatever queued up while paused.
 - **⨯ Clear** — wipes the in-memory state for this session: counts, problems, histograms, line buffer. The on-disk log file is **not** touched; closing and re-opening the panel will re-backfill the same data.
 - **⚙ Patterns** — opens the **Manage Log Patterns** editor (a separate webview). Patterns are catalog-level rather than per-connection, so this editor is shared across all databases.
+- **Logs / Transport Conditions / Connection Requests** — the source tabs; see the **Source tabs** section below.
 
 ---
 
@@ -67,7 +68,7 @@ Top of the panel, collapsible. Updates at ~4 Hz while the panel is active. Three
 
 **SDK info row**
 - **SDK** — the Ditto SDK version detected from the log stream
-- **Tags** — distinct logger tags observed (e.g. `sdk`, `ext:DittoManager`, `ext:CollectionsRepository`)
+- **Tags** — distinct logger tags observed (e.g. `sdk`, `transport`, `connection-request`, `ext:DittoManager`)
 - **Range** — time range from first to most-recent line in the buffer
 
 Click the chevron to collapse the section and give the log table more space. Your collapsed/expanded preference persists for the lifetime of the panel.
@@ -89,17 +90,32 @@ Log-scale horizontal bars summarizing how long each replication connection laste
 
 ---
 
+## Source tabs
+
+At the right end of the toolbar, the source tabs pick which log stream the table shows (this mirrors the source tabs in the SwiftUI / Android Edge Studio Log Analyzer):
+
+- **Logs** — the unified buffer: every line the SDK emits and the extension writes for this connection, in chronological order
+- **Transport Conditions** — transport health events reported by the SDK's transport-conditions observer (BLE, TCP, AWDL, mDNS, Wi-Fi Aware): permission denials, disabled radios, listener failures. Lines look like `Transport: MDNS → MDNSFailure`
+- **Connection Requests** — every incoming peer connection request, logged and then **always allowed** (the handler is log-only, it never authorizes): `Connection Request | type=Bluetooth | key=pk… | identity=… | meta=…`
+
+The two event tabs badge themselves with the number of buffered events so you can see activity at a glance without switching. Event lines also remain part of the **Logs** stream and the on-disk log file, so backfill, search, pattern scanning and the histograms cover them too.
+
+Sources combine freely with the filter tabs and search box below: pick **Connection Requests** plus search `pk1` to see one peer's handshakes, for example. Note the event streams are INFO-level, so the **Errors**/**Warnings** filters are normally empty on those tabs.
+
+Observing starts when the database connects and stops on disconnect — events between connect and first open are still found via backfill of the log file.
+
+---
+
 ## Filter tabs
 
-Below the histograms, five tabs with live count badges:
-
+Below the source tabs, five tabs with live count badges:
 - **All** — every line in the buffer
 - **Critical** — lines that matched any severity-5 pattern
 - **Errors** — `ERROR`-level lines
 - **Warnings** — `WARN`-level lines
 - **Problems** — lines that matched any pattern (any severity)
 
-Clicking a tab re-queries the service and updates the table. The count badges reflect what's currently in the buffer for each tab; they update live as new lines arrive.
+Clicking a tab re-queries the service and updates the table. The count badges reflect what's currently in the buffer for each tab (regardless of the active source tab); they update live as new lines arrive.
 
 ---
 
@@ -198,6 +214,8 @@ See the Pattern Editor help (`patternEditor.html`) for full details on creating 
 
 **"Pause while I read this error"** → Click ⏸ Pause. The table freezes. Read, then ▶ Resume.
 
+**"A BLE peer never connects"** → Open the **Transport Conditions** source tab and look for `BLEDisabled`, `NoBLECentralPermission`, or `NoBLEHardware` events — they name the radio problem directly.
+
 **"My panel is stuck on stale state"** → Click ⨯ Clear. Counts reset. New lines stream in normally.
 
 ---
@@ -207,6 +225,8 @@ See the Pattern Editor help (`patternEditor.html`) for full details on creating 
 **Counts are zero, panel is empty.** The database isn't currently in `active` state, or backfill hit an error. Check the Ditto Output Channel for messages tagged `ext:LogAnalyzerPanel`.
 
 **Connection Durations histogram is empty.** No `physical connection` lines in this session yet. The SDK only emits them once it actually opens or closes a connection. Wait for sync traffic.
+
+**Transport Conditions or Connection Requests is empty.** Both streams start when the database connects and only report *events*: transport conditions burst once at connect time as the listeners bind, then only arrive when a radio/listener state actually changes, and connection requests need a second peer trying to connect. On a quiet cloud-only session the Connection Requests badge legitimately sits at 0.
 
 **The User Tag column is always empty.** You haven't added any user patterns with a `user_tag` value. Bundled patterns ship without user tags by design — open Manage Log Patterns and add one to start labeling.
 

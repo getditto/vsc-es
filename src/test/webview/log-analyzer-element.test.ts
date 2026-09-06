@@ -89,6 +89,7 @@ function summary(over: Record<string, unknown> = {}): any {
       critical: 2, errors: 5, warnings: 7, problems: 9,
       problemLines: 6, criticalLines: 2, totalLines: 123, unparseableLines: 1,
     },
+    sourceCounts: { transport: 3, connectionRequests: 4 },
     tags: ['sync', 'auth'],
     sdkVersion: '5.1.0',
     startTimeMs: Date.UTC(2026, 5, 9, 14, 0, 0),
@@ -119,6 +120,7 @@ test('LogAnalyzer: requests the first window of lines on connect', async t => {
   const q = lastPosted('analyzer.queryLines');
   assert.ok(q, 'an initial queryLines was posted');
   assert.equal(q.filter, 'all');
+  assert.equal(q.source, 'all', 'the default source tab is the unified log buffer');
   assert.equal(q.limit, 300, 'the table window is three 100-row chunks');
   assert.equal(q.offset, 0);
   assert.equal(q.search, undefined, 'empty search travels as undefined');
@@ -288,6 +290,61 @@ test('LogAnalyzer: honours only the latest linesResult and drops late responses'
   assert.equal(table.lines.length, 3);
   assert.equal(table.windowOffset, 0);
   assert.match(el.shadowRoot!.querySelector('.result-info')!.textContent, /3 lines/);
+});
+
+test('LogAnalyzer: source tabs badge from summary sourceCounts and re-query with the source', async t => {
+  const { el } = await mount(t);
+  fromHost(summary());
+  await el.updateComplete;
+
+  // The source tabs share the toolbar row (right of the action buttons) so
+  // the table keeps maximum vertical space.
+  assert.ok(
+    el.shadowRoot!.querySelector('.toolbar source-tabs'),
+    'source tabs live inside the top toolbar',
+  );
+
+  const tabs = child(el, 'source-tabs');
+  await tabs.updateComplete;
+  const buttons = [...tabs.shadowRoot.querySelectorAll('button.tab')] as HTMLElement[];
+  assert.deepEqual(
+    buttons.map(b => b.textContent.trim()),
+    ['Logs', 'Transport Conditions3', 'Connection Requests4'],
+    'source tabs carry the buffered line counts from the summary',
+  );
+
+  posted.length = 0;
+  const transportTab = buttons.find(b => /Transport Conditions/.test(b.textContent))!;
+  transportTab.click();
+  await el.updateComplete;
+
+  const q = lastPosted('analyzer.queryLines');
+  assert.ok(q, 'source change issued a new query');
+  assert.equal(q.source, 'transport');
+  assert.equal(q.offset, 0, 'a new source is a new result set — restart at the top');
+  assert.equal(q.filter, 'all', 'the level/problem filter is orthogonal to the source');
+
+  const requestsTab = [...tabs.shadowRoot.querySelectorAll('button.tab')]
+    .find((b: any) => /Connection Requests/.test(b.textContent)) as HTMLElement;
+  requestsTab.click();
+  await el.updateComplete;
+  assert.equal(lastPosted('analyzer.queryLines').source, 'connectionRequests');
+
+  // Re-clicking the active tab is a no-op.
+  posted.length = 0;
+  requestsTab.click();
+  await el.updateComplete;
+  assert.equal(countPosted('analyzer.queryLines'), 0, 'same-tab click must not re-query');
+
+  // Clear resets the badges via analyzer.reset.
+  fromHost({ type: 'analyzer.reset' });
+  await el.updateComplete;
+  await tabs.updateComplete;
+  const after = [...tabs.shadowRoot.querySelectorAll('button.tab')] as HTMLElement[];
+  assert.deepEqual(
+    after.map(b => b.textContent.trim()),
+    ['Logs', 'Transport Conditions0', 'Connection Requests0'],
+  );
 });
 
 test('LogAnalyzer: switching filter tabs re-queries from the top of the new result set', async t => {

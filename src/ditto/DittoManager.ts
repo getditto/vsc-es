@@ -41,6 +41,7 @@ import type { ConfigStore } from '../storage/ConfigStore.js';
 import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, isAdviseStatement } from './QueryProfileParser.js';
 import { withSystemMetricsEnv, readCollectSystemMetrics } from './SystemMetricsService.js';
 import { projectQueryRows } from './query-projection.js';
+import { installSessionLogObservers } from './session-log-observers.js';
 import { startSyncWithCollectionScopes } from './sync-scopes.js';
 import { applySystemSettings, parseShowAllOptions } from './system-settings.js';
 import { withConnectionPersistenceLock } from '../storage/connection-persistence-lock.js';
@@ -60,6 +61,12 @@ interface ActiveSession {
   configId: string;
   ditto: Ditto;
   presenceObserver?: { stop?: () => void } | undefined;
+  /** Transport-conditions observer + log-only connection request handler
+   *  (SwiftUI/Android Log Analyzer parity). Unlike the presence observer
+   *  these span a transport-config apply — the Ditto instance stays open
+   *  for one, and condition changes are exactly what the user wants to see
+   *  during it. */
+  logObservers?: { dispose(): void } | undefined;
   subscriptionHandles: Map<string, { cancel: () => void }>;
   presenceCoalesceTimer?: NodeJS.Timeout | undefined;
 }
@@ -93,6 +100,12 @@ export class DittoManager {
   readonly onLifecycleStateChange = this.lifecycleEmitter.event;
 
   private readonly log: Logger;
+  /** The untagged root logger. Session log observers (transport conditions,
+   *  connection requests) must derive their dedicated tags from this — NOT
+   *  from this.log. Logger.withTag COMPOSES ('ext:DittoManager' →
+   *  'ext:DittoManager:transport'), and the Log Analyzer's source tabs match
+   *  on the exact tag, so a composed tag is invisible to them. */
+  private readonly rootLogger: Logger;
   private applyingTransports = false;
 
   constructor(
@@ -101,6 +114,7 @@ export class DittoManager {
     private readonly configStore?: ConfigStore,
   ) {
     this.log = parentLogger.withTag('ext:DittoManager');
+    this.rootLogger = parentLogger;
   }
 
   getStatus(configId: string): DatabaseStatus {
@@ -171,6 +185,10 @@ export class DittoManager {
     // …) threw. Without this, the orphaned instance keeps __ditto_lock_file
     // and the next connect retries with "File already locked".
     let openedDitto: Ditto | null = null;
+    // Same hoisting discipline for the session log observers: they install
+    // right after open() (see below) and must be unwound by the catch on any
+    // failure between then and session hand-off.
+    let logObservers: { dispose(): void } | null = null;
     try {
       const persistenceDir = path.join(this.context.globalStorageUri.fsPath, 'dittoData', config.id);
       fs.mkdirSync(persistenceDir, { recursive: true });
@@ -239,6 +257,14 @@ export class DittoManager {
       }
       openedDitto = ditto;
 
+      // Install the log-only session observers (transport conditions +
+      // connection requests for the Log Analyzer source tabs) BEFORE
+      // transport config and sync start. They only fire on CHANGE — the
+      // bring-up cascade below (listeners binding, first dials) is exactly
+      // the burst SwiftUI's Logs screen shows right after open, because
+      // DittoLogCaptureService installs its observers at open too.
+      logObservers = this.attachSessionLogObservers(ditto);
+
       // Per-DB transport prefs gated by the runtime's OS support matrix.
       // The OS gate is defense-in-depth: even if a synced/replicated config
       // sets `isAwdlEnabled = true`, a Linux runtime keeps AWDL off because
@@ -302,7 +328,9 @@ export class DittoManager {
         ditto,
         subscriptionHandles: new Map(),
       };
-      // Ownership transferred to the session; disconnect() owns close() now.
+      // Ownership transferred to the session; disconnect() owns close()/dispose() now.
+      if (logObservers) { this.session.logObservers = logObservers; }
+      logObservers = null;
       openedDitto = null;
 
       this.attachPresenceObserver(ditto);
@@ -342,6 +370,7 @@ export class DittoManager {
         if (partial.presenceCoalesceTimer) { clearTimeout(partial.presenceCoalesceTimer); }
         for (const h of partial.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
         try { partial.presenceObserver?.stop?.(); } catch { /* ignore */ }
+        try { partial.logObservers?.dispose(); } catch { /* ignore */ }
         try {
           await Promise.race([
             partial.ditto.close(),
@@ -355,6 +384,7 @@ export class DittoManager {
       // Ditto instance. Bounded at 10s like disconnect() — the SDK can hang
       // here when network teardown blocks, and we'd rather discard than wait.
       if (openedDitto) {
+        try { logObservers?.dispose(); } catch { /* ignore */ }
         try {
           await Promise.race([
             openedDitto.close(),
@@ -386,6 +416,7 @@ export class DittoManager {
     try {
       for (const h of s.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
       try { s.presenceObserver?.stop?.(); } catch { /* ignore */ }
+      try { s.logObservers?.dispose(); } catch { /* ignore */ }
       try { s.ditto.sync.stop(); } catch { /* ignore */ }
       // Bound Ditto.close() at 10s; on timeout, force-discard the instance.
       // SDK can hang when network teardown blocks (Lifecycle spec §3.3 risk).
@@ -951,6 +982,15 @@ export class DittoManager {
   }
 
   // ─── private ─────────────────────────────────────────────────
+
+  /** Install the log-only session observers on a freshly-opened Ditto.
+   *  Separated from the session assignment because connect() installs them
+   *  BEFORE sync start (to catch the transport bring-up cascade); the
+   *  returned disposer is owned by whoever currently owns the instance
+   *  (the hoisted local during connect, the session afterwards). */
+  private attachSessionLogObservers(ditto: Ditto): { dispose(): void } {
+    return installSessionLogObservers(ditto, this.rootLogger);
+  }
 
   private attachPresenceObserver(ditto: Ditto) {
     let pending: PresenceGraph | null = null;

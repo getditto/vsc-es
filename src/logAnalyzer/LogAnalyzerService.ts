@@ -6,6 +6,12 @@ import type { PatternEngine, CompiledPattern } from './PatternEngine.js';
 import type { ConnectionTracker } from './ConnectionTracker.js';
 import { parseLine } from './LineParser.js';
 import { binProblemsOverTime, binDurations, pickBinWidth, type ProblemHit } from './Histograms.js';
+import {
+  logTagForSource,
+  TRANSPORT_CONDITIONS_TAG,
+  CONNECTION_REQUESTS_TAG,
+  type AnalyzerSource,
+} from './log-sources.js';
 
 const PROBLEM_CAP = 1000;
 const LINE_BUFFER_CAP = 50_000;
@@ -29,6 +35,11 @@ export type AnalyzerDiff =
   | {
       type: 'summary',
       counts: SummaryCounts,
+      /** Buffered line counts for the two log-only SDK observer sources
+       *  (src/ditto/session-log-observers.ts). The webview badges the
+       *  source tabs with these; they are buffer-scoped like the filter
+       *  tab badges, so trims and Clear move them the same way. */
+      sourceCounts: { transport: number; connectionRequests: number },
       tags: string[],
       sdkVersion: string | null,
       startTimeMs: number | null,
@@ -84,6 +95,11 @@ export class LogAnalyzerService {
   private bufferWarnings = 0;
   private bufferProblemLines = 0;
   private bufferCriticalLines = 0;
+  /** Buffered lines carrying each log-only SDK observer source's tag.
+   *  Tracked alongside the level counters above so the summary can badge
+   *  the source tabs without a buffer scan per flush. */
+  private bufferTransportLines = 0;
+  private bufferConnectionRequestLines = 0;
 
   constructor(private readonly opts: ServiceOptions) {
     this.throttleMs = opts.throttleMs ?? 250;
@@ -132,6 +148,8 @@ export class LogAnalyzerService {
     this.bufferWarnings = 0;
     this.bufferProblemLines = 0;
     this.bufferCriticalLines = 0;
+    this.bufferTransportLines = 0;
+    this.bufferConnectionRequestLines = 0;
     // The tracker owns the session history that state.sessions mirrors, so
     // it has to be cleared too — otherwise the next connection event
     // resurrects everything from before the Clear. Resetting the version
@@ -169,12 +187,17 @@ export class LogAnalyzerService {
    *    - 'warn'     → line.level === 'warn'
    *    - 'problem'  → line.id appears in any ProblemInstance across all pattern keys
    *
+   *  `source` further restricts to one log-only SDK observer source
+   *  ('transport' → TRANSPORT_CONDITIONS_TAG lines, 'connectionRequests' →
+   *  CONNECTION_REQUESTS_TAG lines); 'all'/undefined keeps every tag.
+   *
    *  `search` is a case-insensitive substring match against line.text + line.tag.
    *  Returns newest-first, plus the TOTAL count (pre-pagination) so the UI can
    *  show "1/12,403". */
   public queryLines(opts: {
     level?: 'critical' | 'error' | 'warn' | 'problem' | 'all';
     filter?: 'critical' | 'error' | 'warn' | 'problem' | 'all';
+    source?: AnalyzerSource | undefined;
     search?: string | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
@@ -182,6 +205,7 @@ export class LogAnalyzerService {
     // Accept both `level` and `filter` for flexibility — the IPC layer
     // sends `filter`, but the original spec called it `level`.
     const filter = opts.filter ?? opts.level ?? 'all';
+    const sourceTag = logTagForSource(opts.source);
     const search = opts.search?.trim().toLowerCase() ?? '';
     const limit = opts.limit ?? 1000;
     const offset = opts.offset ?? 0;
@@ -193,6 +217,7 @@ export class LogAnalyzerService {
     const criticalIds = this.criticalLineIds;
 
     const passes = (line: LogLine): boolean => {
+      if (sourceTag !== null && line.tag !== sourceTag) { return false; }
       switch (filter) {
         case 'all':      return true;
         case 'error':    return line.level === 'error';
@@ -207,37 +232,49 @@ export class LogAnalyzerService {
     if (search.length === 0) {
       // No haystack to build: the total comes from ingest-time counters that
       // track the current buffer, and the scan can stop once the requested
-      // window is filled.
-      let total: number;
+      // window is filled. Counters exist for every filter when no source tab
+      // is active, and for the 'all' filter of each source tab; other
+      // combinations (e.g. Errors inside Transport Conditions, where the
+      // answer is by construction zero-ish) count as they scan below.
+      let total: number | null;
       switch (filter) {
-        case 'all':      total = this.lineBuffer.length; break;
-        case 'error':    total = this.bufferErrors; break;
-        case 'warn':     total = this.bufferWarnings; break;
-        case 'problem':  total = this.bufferProblemLines; break;
-        case 'critical': total = this.bufferCriticalLines; break;
+        case 'all':
+          total = sourceTag === null ? this.lineBuffer.length
+            : sourceTag === TRANSPORT_CONDITIONS_TAG ? this.bufferTransportLines
+            : this.bufferConnectionRequestLines;
+          break;
+        case 'error':    total = sourceTag === null ? this.bufferErrors : null; break;
+        case 'warn':     total = sourceTag === null ? this.bufferWarnings : null; break;
+        case 'problem':  total = sourceTag === null ? this.bufferProblemLines : null; break;
+        case 'critical': total = sourceTag === null ? this.bufferCriticalLines : null; break;
       }
-      if (offset < total && limit > 0) {
-        let matchIndex = 0;
-        for (let i = this.lineBuffer.length - 1; i >= 0 && items.length < limit; i--) {
-          const line = this.lineBuffer[i];
-          if (!line || !passes(line)) continue;
-          if (matchIndex >= offset) { items.push(line); }
-          matchIndex++;
+      if (total !== null) {
+        if (offset < total && limit > 0) {
+          let matchIndex = 0;
+          for (let i = this.lineBuffer.length - 1; i >= 0 && items.length < limit; i--) {
+            const line = this.lineBuffer[i];
+            if (!line || !passes(line)) continue;
+            if (matchIndex >= offset) { items.push(line); }
+            matchIndex++;
+          }
         }
+        return { items, total };
       }
-      return { items, total };
     }
 
-    // With a search term the total is unknowable before the scan, but matched
-    // lines only ever need to land inside the requested window — count as we
-    // go instead of materialising every match.
+    // With a search term (or an uncounted filter×source combination) the
+    // total is unknowable before the scan, but matched lines only ever need
+    // to land inside the requested window — count as we go instead of
+    // materialising every match.
     let matchIndex = 0;
     for (let i = this.lineBuffer.length - 1; i >= 0; i--) {
       const line = this.lineBuffer[i];
       if (!line || !passes(line)) continue;
-      const userTagsHay = line.userTags ? ' ' + line.userTags.join(' ') : '';
-      const hay = (line.text + ' ' + (line.tag ?? '') + userTagsHay).toLowerCase();
-      if (!hay.includes(search)) continue;
+      if (search.length > 0) {
+        const userTagsHay = line.userTags ? ' ' + line.userTags.join(' ') : '';
+        const hay = (line.text + ' ' + (line.tag ?? '') + userTagsHay).toLowerCase();
+        if (!hay.includes(search)) continue;
+      }
       if (matchIndex >= offset && items.length < limit) { items.push(line); }
       matchIndex++;
     }
@@ -292,6 +329,8 @@ export class LogAnalyzerService {
     this.addToVolumeBins(line);
     if (line.level === 'error') this.bufferErrors++;
     if (line.level === 'warn') this.bufferWarnings++;
+    if (line.tag === TRANSPORT_CONDITIONS_TAG) this.bufferTransportLines++;
+    if (line.tag === CONNECTION_REQUESTS_TAG) this.bufferConnectionRequestLines++;
     // Trim in chunks rather than shift() per line — at the 50k cap a
     // per-line shift is an O(n) memmove on every log line under
     // sustained volume. The buffer may briefly hold up to 2× the cap.
@@ -303,6 +342,8 @@ export class LogAnalyzerService {
         this.removeFromVolumeBins(dead);
         if (dead.level === 'error') this.bufferErrors--;
         if (dead.level === 'warn') this.bufferWarnings--;
+        if (dead.tag === TRANSPORT_CONDITIONS_TAG) this.bufferTransportLines--;
+        if (dead.tag === CONNECTION_REQUESTS_TAG) this.bufferConnectionRequestLines--;
         if (this.problemLineIds.has(dead.id)) this.bufferProblemLines--;
         if (this.criticalLineIds.has(dead.id)) this.bufferCriticalLines--;
       }
@@ -435,6 +476,10 @@ export class LogAnalyzerService {
         ...this.state.counts,
         problemLines: this.problemLineIds.size,
         criticalLines: this.criticalLineIds.size,
+      },
+      sourceCounts: {
+        transport: this.bufferTransportLines,
+        connectionRequests: this.bufferConnectionRequestLines,
       },
       tags: [...this.state.tags].sort(),
       sdkVersion: this.state.sdkVersion,

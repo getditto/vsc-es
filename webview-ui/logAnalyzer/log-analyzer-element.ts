@@ -5,9 +5,11 @@ import './components/summary-header.js';
 import './components/problems-list.js';
 import './components/histograms-row.js';
 import './components/collapsible-section.js';
+import './components/source-tabs.js';
 import './components/filter-tabs.js';
 import './components/log-table.js';
 import './components/line-detail-drawer.js';
+import type { SourceKey } from './components/source-tabs.js';
 import type { FilterKey } from './components/filter-tabs.js';
 import type { AnalyzerOut } from '../../src/ipc/messages.js';
 
@@ -38,15 +40,18 @@ import type {
 /** Root element for the Log Analyzer panel. Owns the IPC message
  *  listener and the aggregate analyzer state derived from
  *  `AnalyzerOut` diffs. Child components (`summary-header`,
- *  `problems-list`, `histograms-row`, `log-table`, `line-detail-drawer`)
- *  are pure presentation.
+ *  `problems-list`, `histograms-row`, `source-tabs`, `filter-tabs`,
+ *  `log-table`, `line-detail-drawer`) are pure presentation.
  *
  *  Message wire-up: messages from the host are coalesced incremental
  *  diffs (`analyzer.summary`, `analyzer.problemsAdded`,
  *  `analyzer.histogramsUpdated`, …). The webview keeps its own grouped
  *  map of problems keyed by pattern. The log table is fed by on-demand
  *  `analyzer.queryLines` requests that the root element re-issues
- *  whenever the active filter, search text, or summary counts change.
+ *  whenever the active source tab, filter, search text, or summary
+ *  counts change. Source tabs ('all' / 'transport' / 'connectionRequests')
+ *  switch between the unified log buffer and the two log-only SDK
+ *  observer streams (see src/ditto/session-log-observers.ts).
  *
  *  Session data is still tracked on the host (the durations histogram
  *  needs it) but no longer visualised here — the connection timeline
@@ -66,7 +71,14 @@ export class DittoLogAnalyzer extends LitElement {
       font-family: var(--vscode-font-family);
       box-sizing: border-box;
     }
-    .toolbar { display: flex; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex: 0 0 auto;
+      flex-wrap: wrap;
+      align-items: center;
+    }
     button {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
@@ -138,6 +150,9 @@ export class DittoLogAnalyzer extends LitElement {
     connectionDurations: [],
   };
   // Log-table state
+  @state() private activeSource: SourceKey = 'all';
+  @state() private sourceCounts: { transport: number; connectionRequests: number } =
+    { transport: 0, connectionRequests: 0 };
   @state() private activeFilter: FilterKey = 'all';
   @state() private tableLines: LogLine[] = [];
   @state() private tableTotal = 0;
@@ -170,6 +185,7 @@ export class DittoLogAnalyzer extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener('reveal-line', this.onRevealLine);
+    this.addEventListener('source-change', this.onSourceChange);
     this.addEventListener('filter-change', this.onFilterChange);
     this.addEventListener('line-clicked', this.onLineClicked);
     this.addEventListener('drawer-close', this.onDrawerClose);
@@ -180,6 +196,7 @@ export class DittoLogAnalyzer extends LitElement {
 
   override disconnectedCallback(): void {
     this.removeEventListener('reveal-line', this.onRevealLine);
+    this.removeEventListener('source-change', this.onSourceChange);
     this.removeEventListener('filter-change', this.onFilterChange);
     this.removeEventListener('line-clicked', this.onLineClicked);
     this.removeEventListener('drawer-close', this.onDrawerClose);
@@ -201,6 +218,17 @@ export class DittoLogAnalyzer extends LitElement {
     const requestId = String(++this.requestCursor);
     this.latestDetailReq = requestId;
     postToHost({ type: 'analyzer.requestLineDetail', lineId: detail.id, requestId });
+  };
+
+  private onSourceChange = (e: Event): void => {
+    const detail = (e as CustomEvent).detail as { key: SourceKey };
+    if (detail.key === this.activeSource) return;
+    this.activeSource = detail.key;
+    // A new source is a new result set — start at the top rather than
+    // holding an offset that means nothing in it.
+    this.tableOffset = 0;
+    this.scrollTableToTop();
+    this.requestLines(0);
   };
 
   private onFilterChange = (e: Event): void => {
@@ -274,6 +302,7 @@ export class DittoLogAnalyzer extends LitElement {
     postToHost({
       type: 'analyzer.queryLines',
       filter: this.activeFilter,
+      source: this.activeSource,
       search: this.search || undefined,
       limit: ROW_WINDOW,
       offset,
@@ -298,6 +327,7 @@ export class DittoLogAnalyzer extends LitElement {
     switch (m.type) {
       case 'analyzer.summary':
         this.counts = m.counts;
+        this.sourceCounts = m.sourceCounts;
         // The rest of the summary header travels with the counts. It used not
         // to travel at all, which is why Tags/SDK/Range read "none /
         // unknown / n/a" for the life of the panel.
@@ -327,6 +357,7 @@ export class DittoLogAnalyzer extends LitElement {
         this.tableOffset = 0;
         this.inFlightOffset = null;
         this.counts = null;
+        this.sourceCounts = { transport: 0, connectionRequests: 0 };
         this.tags = [];
         this.sdkVersion = null;
         this.startTimeMs = null;
@@ -417,6 +448,10 @@ export class DittoLogAnalyzer extends LitElement {
         <button @click=${(): void => postToHost({ type: 'analyzer.resume' })}>▶ Resume</button>
         <button @click=${(): void => postToHost({ type: 'analyzer.clear' })}>⨯ Clear</button>
         <button @click=${(): void => postToHost({ type: 'analyzer.openPatternEditor' })}>⚙ Patterns</button>
+        <!-- Source tabs share the toolbar row so the table keeps maximum
+             vertical space; they are outlined pills, visually distinct from
+             the filled action buttons. -->
+        <source-tabs .active=${this.activeSource} .sourceCounts=${this.sourceCounts}></source-tabs>
       </div>
       ${this.errorBanner ? html`<div class="banner">${this.errorBanner}</div>` : ''}
       <div class="stack">
