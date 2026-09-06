@@ -180,7 +180,7 @@ export interface LocalPeerInfo {
  * orbit is the *focused* peer's neighbourhood, so most of it is usually
  * not directly connected to this device.
  */
-export interface RawPresenceGraphPeer {
+interface RawPresenceGraphPeer {
   peerKey: string;
   deviceName: string;
   os?: PeerOS | undefined;
