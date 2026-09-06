@@ -15,6 +15,7 @@ import { PeerListingPanel } from './panels/PeerListingPanel.js';
 import { QueryEditorPanel } from './panels/QueryEditorPanel.js';
 import { QueryMetricsPanel } from './panels/QueryMetricsPanel.js';
 import { DatabaseMetricsPanel } from './panels/DatabaseMetricsPanel.js';
+import { SystemMetricsPanel } from './panels/SystemMetricsPanel.js';
 import { DebugConsolePanel } from './panels/DebugConsolePanel.js';
 import { ImportDataPanel } from './panels/ImportDataPanel.js';
 import { WelcomePanel } from './panels/WelcomePanel.js';
@@ -113,6 +114,7 @@ function buildSwitchDeps(
       closeSubscription: () => SubscriptionEditorPanel.dispose(),
       closeQueryMetrics: () => QueryMetricsPanel.dispose(),
       closeDatabaseMetrics: () => DatabaseMetricsPanel.dispose(),
+      closeSystemMetrics: () => SystemMetricsPanel.dispose(),
       closeImportData: () => ImportDataPanel.dispose(),
       closeObserver: () => ObserverPanel.disposeAll(),
       closeObserverEditor: () => ObserverEditorPanel.dispose(),
@@ -417,6 +419,8 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       inspectorController.setActiveFeature({ kind: 'metrics', databaseId: dbId });
     } else if (node.kind === 'databaseMetrics') {
       inspectorController.setActiveFeature({ kind: 'databaseMetrics', databaseId: dbId });
+    } else if (node.kind === 'systemMetrics') {
+      inspectorController.setActiveFeature({ kind: 'systemMetrics', databaseId: dbId });
     }
   }));
 
@@ -547,6 +551,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
             SubscriptionEditorPanel.dispose();
             QueryMetricsPanel.dispose();
             DatabaseMetricsPanel.dispose();
+            SystemMetricsPanel.dispose();
             ImportDataPanel.dispose();
             ObserverEditorPanel.dispose();
             ObserverPanel.disposeAll();
@@ -668,6 +673,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
             SubscriptionEditorPanel.dispose();
             QueryMetricsPanel.dispose();
             DatabaseMetricsPanel.dispose();
+            SystemMetricsPanel.dispose();
             ImportDataPanel.dispose();
             ObserverEditorPanel.dispose();
             ObserverPanel.disposeAll();
@@ -802,6 +808,10 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     vscode.commands.registerCommand('dittoVsce.openDatabaseMetrics', (databaseId: string) => {
       if (!databaseId) { return; }
       DatabaseMetricsPanel.show(context, configStore, manager, databaseId, inspectorController, logger);
+    }),
+    vscode.commands.registerCommand('dittoVsce.openSystemMetrics', (databaseId: string) => {
+      if (!databaseId) { return; }
+      SystemMetricsPanel.show(context, configStore, manager, databaseId, inspectorController, logger);
     }),
     vscode.commands.registerCommand('dittoVsce.openDebugConsole', () => {
       // Standalone by design: the debug socket belongs to a RUNNING APP's

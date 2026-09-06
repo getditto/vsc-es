@@ -17,11 +17,11 @@ await import('../../../webview-ui/databaseMetrics/database-metrics-element.js');
 
 /**
  * Database Metrics panel behaviour: the refresh round-trip, the category
- * card grid (byte formatting across B/KB/MB/GB, zero-total guard), the
- * sortable collections table, and the system:metrics dashboard's histogram
- * detail column (µs/ms/s averaging, max, empty sections, label ordering).
- * The HostMessages re-attach contract and the divergence banner live in
- * database-metrics-element.test.ts; this file covers everything around them.
+ * card grid (byte formatting across B/KB/MB/GB, zero-total guard) and the
+ * sortable collections table. The HostMessages re-attach contract lives in
+ * database-metrics-element.test.ts; the system:metrics dashboard that used
+ * to share this panel moved to webview-ui/systemMetrics/ (covered by
+ * system-metrics-element.test.ts / system-metrics-behavior.test.ts).
  */
 
 interface El extends HTMLElement {
@@ -61,15 +61,6 @@ function snapshot(over: Record<string, unknown> = {}): Record<string, unknown> {
     totalDiskBytes: 1024,
     computedAt: Date.UTC(2026, 5, 9, 14, 0, 0),
     ...over,
-  };
-}
-
-function sysSnapshot(samples: unknown[]): Record<string, unknown> {
-  return {
-    samples,
-    sinceMs: Date.UTC(2026, 5, 9, 14, 0, 0),
-    polledAtMs: Date.UTC(2026, 5, 9, 14, 1, 0),
-    pollIntervalMs: 5000,
   };
 }
 
@@ -249,122 +240,4 @@ test('DatabaseMetrics: one collection is singular; none renders the empty state'
   assert.match(text(el), /0 collections/);
   assert.match(text(el), /No user collections found\./);
   assert.equal(el.shadowRoot!.querySelector('tbody'), null, 'no table without collections');
-});
-
-// ─── System metrics dashboard detail ────────────────────────────
-
-test('DatabaseMetrics: empty metric sections say there is nothing to observe yet', async t => {
-  const el = await mount(t);
-  fromHost({ type: 'dbMetrics.systemMetrics', status: { kind: 'working', snapshot: sysSnapshot([]) } });
-  await el.updateComplete;
-
-  const nones = el.shadowRoot!.querySelectorAll('.sys-none');
-  assert.equal(nones.length, 3, 'one placeholder per dashboard section');
-  assert.match(nones[0]!.textContent ?? '', /No observations yet/);
-  assert.match(text(el), /every 5s/, 'poll interval rendered');
-  assert.match(text(el), /Totals since /);
-});
-
-test('DatabaseMetrics: histogram rows render µs/ms averages and the max; counters show their description', async t => {
-  const el = await mount(t);
-  fromHost({
-    type: 'dbMetrics.systemMetrics',
-    status: {
-      kind: 'working',
-      snapshot: sysSnapshot([
-        {
-          key: 'ditto.backend.sqlite3.fsync_duration_secs',
-          labels: { db: 'main' }, description: 'fsync duration', unit: 'seconds', kind: 'histogram',
-          sinceConnect: 10, periodDelta: 2, sumSinceConnect: 0.0005, absMax: 1.23456,
-        },
-        {
-          key: 'ditto.backend.sqlite3.fsync_total',
-          labels: { db: 'main' }, description: 'Total fsync calls', unit: 'count', kind: 'counter',
-          sinceConnect: 1000, periodDelta: 12,
-        },
-      ]),
-    },
-  });
-  await el.updateComplete;
-
-  // samplesFor orders by SQLITE_KEYS: fsync_total precedes fsync_duration_secs.
-  const rows = [...el.shadowRoot!.querySelectorAll('.sys-table tbody tr')];
-  assert.equal(rows.length, 2);
-  const counter = [...rows[0]!.querySelectorAll('td')].map(td => (td.textContent ?? '').trim());
-  assert.equal(counter[0], 'sqlite3.fsync_total', 'shortKey strips the two-segment prefix');
-  assert.equal(counter[2], '1,000', 'counter values localise');
-  assert.equal(counter[4], 'Total fsync calls', 'counters use the description as the detail');
-
-  const hist = [...rows[1]!.querySelectorAll('td')].map(td => td.textContent ?? '');
-  assert.equal(hist[0], 'sqlite3.fsync_duration_secs');
-  assert.equal(hist[1], 'db=main');
-  assert.equal(hist[2], '10', 'histogram count column is a plain count, not seconds');
-  assert.equal(hist[3], '2');
-  assert.match(hist[4]!, /avg 50 µs/, 'sub-millisecond averages render in µs');
-  assert.match(hist[4]!, /max 1\.23 s/, 'second-scale values render in s');
-});
-
-test('DatabaseMetrics: a histogram with no observations yet omits the average, and a missing max stays absent', async t => {
-  const el = await mount(t);
-  fromHost({
-    type: 'dbMetrics.systemMetrics',
-    status: {
-      kind: 'working',
-      snapshot: sysSnapshot([
-        {
-          key: 'ditto.backend.sqlite3.checkpoint_duration_secs',
-          labels: {}, description: 'checkpoint', unit: 'seconds', kind: 'histogram',
-          sinceConnect: 0, periodDelta: 0,
-        },
-        {
-          key: 'ditto.backend.sqlite3.wal_size_pages',
-          labels: {}, description: 'wal size', unit: 'seconds', kind: 'histogram',
-          sinceConnect: 4, periodDelta: 1, sumSinceConnect: 0.02, // 5 ms avg
-        },
-      ]),
-    },
-  });
-  await el.updateComplete;
-
-  // SQLITE_KEYS order: wal_size_pages precedes checkpoint_duration_secs.
-  const rows = [...el.shadowRoot!.querySelectorAll('.sys-table tbody tr')];
-  const msRow = [...rows[0]!.querySelectorAll('td')].map(td => (td.textContent ?? '').trim());
-  assert.match(msRow[4]!, /avg 5\.0 ms/, 'millisecond band between µs and s');
-  assert.ok(!/max/.test(msRow[4]!), 'absMax absent → no max clause');
-  const zeroRow = [...rows[1]!.querySelectorAll('td')].map(td => (td.textContent ?? '').trim());
-  assert.equal(zeroRow[4], '', 'sinceConnect 0 → no average (division guard) and no max');
-});
-
-test('DatabaseMetrics: samples are ordered by section key, then by label set', async t => {
-  const el = await mount(t);
-  const opened = (labels: Record<string, string>) => ({
-    key: 'ditto.network.dsoq.connection.opened',
-    labels, description: 'opened', unit: 'count', kind: 'counter',
-    sinceConnect: 1, periodDelta: 0,
-  });
-  fromHost({
-    type: 'dbMetrics.systemMetrics',
-    status: {
-      kind: 'working',
-      // Payload deliberately scrambled: closed before opened, and two
-      // opened series whose label sets need the tiebreak.
-      snapshot: sysSnapshot([
-        opened({ transport: 'wifi' }),
-        { key: 'ditto.network.dsoq.connection.closed', labels: {}, description: 'closed', unit: 'count', kind: 'counter', sinceConnect: 3, periodDelta: 0 },
-        opened({ transport: 'ble' }),
-      ]),
-    },
-  });
-  await el.updateComplete;
-
-  const firstTable = el.shadowRoot!.querySelector('.sys-table')!;
-  const keys = [...firstTable.querySelectorAll('tbody tr td:first-child')].map(td => td.textContent);
-  assert.deepEqual(keys, [
-    'dsoq.connection.opened',
-    'dsoq.connection.opened',
-    'dsoq.connection.closed',
-  ], 'rows follow DSOQ_KEYS order, not payload order');
-  const labelCells = [...firstTable.querySelectorAll('tbody tr td.labels')].map(td => td.textContent);
-  assert.deepEqual(labelCells.slice(0, 2), ['transport=ble', 'transport=wifi'],
-    'same-key series are ordered by their label set');
 });

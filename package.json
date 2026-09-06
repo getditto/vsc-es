@@ -168,6 +168,11 @@
         "icon": "$(pie-chart)"
       },
       {
+        "command": "dittoVsce.openSystemMetrics",
+        "title": "Open System Metrics",
+        "icon": "$(pulse)"
+      },
+      {
         "command": "dittoVsce.openImportData",
         "title": "Import Data…",
         "icon": "$(cloud-upload)"
@@ -328,6 +333,10 @@
           "when": "false"
         },
         {
+          "command": "dittoVsce.openSystemMetrics",
+          "when": "false"
+        },
+        {
           "command": "dittoVsce.openImportData",
           "when": "false"
         },
@@ -482,7 +491,7 @@
         "dittoVsce.collectSystemMetrics": {
           "type": "boolean",
           "default": true,
-          "description": "Enable Ditto's startup-gated system:metrics virtual collection for connections this extension opens (sets DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED around Ditto.open) and show the System metrics section in the Database Metrics panel. Changes apply at the NEXT connect — the SDK parameter is startup-only."
+          "description": "Enable Ditto's startup-gated system:metrics virtual collection for connections this extension opens (sets DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED around Ditto.open), feeding the System Metrics panel. Changes apply at the NEXT connect — the SDK parameter is startup-only."
         },
         "dittoVsce.logAnalyzer.customPatternsFile": {
           "type": "string",

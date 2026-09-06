@@ -11,6 +11,7 @@ export type ActiveFeature =
   | { kind: 'query'; databaseId: string }
   | { kind: 'metrics'; databaseId: string }
   | { kind: 'databaseMetrics'; databaseId: string }
+  | { kind: 'systemMetrics'; databaseId: string }
   | { kind: 'logAnalyzer'; databaseId: string }
   | { kind: 'patternEditor' }
   | { kind: 'observers'; databaseId: string; observerId: string; tab: 'json' | 'help' };

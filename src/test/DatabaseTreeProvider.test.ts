@@ -91,6 +91,7 @@ test('databaseDetails expands to subs + inline collections + section + peers + q
     'queryEditor',
     'queryMetrics',
     'databaseMetrics',
+    'systemMetrics',
     'logAnalyzer',
     // Second blank-rule divider, then the Import Data bulk action.
     'sectionHeader',
@@ -683,6 +684,7 @@ test('getTreeItem(feature rows): labels, icons, ids and commands are wired', asy
     [{ kind: 'queryEditor', databaseId: '1' }, 'Query Editor', 'terminal', 'query.1', 'dittoVsce.openQueryEditor'],
     [{ kind: 'queryMetrics', databaseId: '1' }, 'Query Metrics', 'dashboard', 'qmetrics.1', 'dittoVsce.openQueryMetrics'],
     [{ kind: 'databaseMetrics', databaseId: '1' }, 'Database Metrics', 'pie-chart', 'dbmetrics.1', 'dittoVsce.openDatabaseMetrics'],
+    [{ kind: 'systemMetrics', databaseId: '1' }, 'System Metrics', 'pulse', 'sysmetrics.1', 'dittoVsce.openSystemMetrics'],
     [{ kind: 'logAnalyzer', databaseId: '1' }, 'Log Analyzer', 'search', 'logAnalyzer.1', 'dittoVsce.openLogAnalyzer'],
     [{ kind: 'importData', databaseId: '1' }, 'Import Data', 'cloud-upload', 'importData.1', 'dittoVsce.openImportData'],
   ];
@@ -754,6 +756,7 @@ test('getParent: first-level detail rows resolve to databaseDetails', async () =
     { kind: 'queryEditor', databaseId: '1' },
     { kind: 'queryMetrics', databaseId: '1' },
     { kind: 'databaseMetrics', databaseId: '1' },
+    { kind: 'systemMetrics', databaseId: '1' },
     { kind: 'logAnalyzer', databaseId: '1' },
     { kind: 'importData', databaseId: '1' },
   ];

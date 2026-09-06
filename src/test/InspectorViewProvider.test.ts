@@ -449,7 +449,7 @@ test('resolve posts help URIs, preferences, settings, and the current content', 
   const helpKinds = p.posted.filter(m => m.type === 'inspector.helpHtml').map(m => m.kind);
   assert.deepEqual(helpKinds, [
     'subscription', 'query', 'presence', 'metrics',
-    'databaseMetrics', 'observers', 'logAnalyzer', 'patternEditor',
+    'databaseMetrics', 'systemMetrics', 'observers', 'logAnalyzer', 'patternEditor',
   ], 'every help tab got a URI at resolve');
   const help = p.posted.find(m => m.type === 'inspector.helpHtml' && m.kind === 'query');
   assert.match(String(help?.uri), /^https:\/\/stub\//, 'a webview-safe URI');

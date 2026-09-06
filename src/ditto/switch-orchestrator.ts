@@ -60,6 +60,12 @@ interface SwitchPanels {
   /** Dispose the Database Metrics panel if it's open. Same per-DB
    *  reasoning as the Query Metrics close. */
   closeDatabaseMetrics(): void;
+  /** Dispose the System Metrics panel if it's open. Its accumulated
+   *  since-connect totals belong to the previous connection — leaving it
+   *  open across a switch would keep folding the NEW database's deltas
+   *  into numbers labelled with the old one. Same per-DB reasoning as
+   *  the Query Metrics close. */
+  closeSystemMetrics(): void;
   /** Dispose the Import Data panel if it's open. Carries a buffered
    *  document array tied to the current connection — switching DBs
    *  while that buffer is alive would let the user import into the
@@ -185,6 +191,7 @@ export async function performSwitch(
         panels.closeSubscription();
         panels.closeQueryMetrics();
         panels.closeDatabaseMetrics();
+        panels.closeSystemMetrics();
         panels.closeImportData();
         panels.closeObserver();
         panels.closeObserverEditor();

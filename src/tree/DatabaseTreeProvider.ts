@@ -124,8 +124,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         { kind: 'queryEditor', databaseId: dbId },
         ...(collectMetrics ? [{ kind: 'queryMetrics' as const, databaseId: dbId }] : []),
         { kind: 'databaseMetrics', databaseId: dbId },
+        // System Metrics sits between Database Metrics and the Log
+        // Analyzer: it split out of Database Metrics (its polling model
+        // is the inverse of the on-demand storage walk) and, like the
+        // Log Analyzer, it's a continuous-diagnostics surface.
+        { kind: 'systemMetrics', databaseId: dbId },
         // Log Analyzer is scoped to the active database — it lives here
-        // next to Database Metrics rather than in the global Logging
+        // next to the metrics rows rather than in the global Logging
         // sidebar so it's clear which connection's logs you're viewing.
         { kind: 'logAnalyzer', databaseId: dbId },
         // Second thin divider so Import Data reads as a distinct
@@ -237,6 +242,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
       || element.kind === 'queryEditor'
       || element.kind === 'queryMetrics'
       || element.kind === 'databaseMetrics'
+      || element.kind === 'systemMetrics'
       || element.kind === 'logAnalyzer'
       || element.kind === 'importData') {
       return { kind: 'databaseDetails', config };
@@ -532,11 +538,22 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         item.command = { command: 'dittoVsce.openDatabaseMetrics', title: 'Open Database Metrics', arguments: [node.databaseId] };
         return item;
       }
+      case 'systemMetrics': {
+        // pulse codicon — a live, continuously-updated dashboard, vs the
+        // point-in-time pie-chart (Database Metrics) above and the
+        // search glyph (Log Analyzer) below.
+        const item = new vscode.TreeItem('System Metrics');
+        item.iconPath = new vscode.ThemeIcon('pulse');
+        item.contextValue = 'systemMetrics';
+        item.id = `sysmetrics.${node.databaseId}`;
+        item.command = { command: 'dittoVsce.openSystemMetrics', title: 'Open System Metrics', arguments: [node.databaseId] };
+        return item;
+      }
       case 'logAnalyzer': {
         // Per-database log analyzer — scoped to the current connection.
         // 'search' codicon since the panel is primarily a log-search tool;
-        // distinct from pie-chart (Database Metrics) and dashboard
-        // (Query Metrics) that flank it.
+        // distinct from pie-chart (Database Metrics), pulse (System
+        // Metrics) and dashboard (Query Metrics) that flank it.
         const item = new vscode.TreeItem('Log Analyzer');
         item.iconPath = new vscode.ThemeIcon('search');
         item.contextValue = 'logAnalyzer';
