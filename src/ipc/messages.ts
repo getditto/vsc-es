@@ -488,6 +488,9 @@ export type AnalyzerOut =
   | {
       type: 'analyzer.summary';
       counts: import('../logAnalyzer/types.js').SummaryCounts;
+      /** Buffered line counts for the log-only SDK observer sources; the
+       *  source tabs badge themselves with these. */
+      sourceCounts: { transport: number; connectionRequests: number };
       /** Distinct log tags seen so far, sorted. */
       tags: string[];
       /** Parsed from the SDK's init line; null until one is seen. */
@@ -528,6 +531,9 @@ export type AnalyzerIn =
   | {
       type: 'analyzer.queryLines';
       filter: 'all' | 'critical' | 'error' | 'warn' | 'problem';
+      /** Source-tab restriction: limit the result set to one log-only SDK
+       *  observer stream. Omit / 'all' for the unified log buffer. */
+      source?: import('../logAnalyzer/log-sources.js').AnalyzerSource;
       search?: string;
       limit?: number;
       offset?: number;

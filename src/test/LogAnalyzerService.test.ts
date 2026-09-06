@@ -694,3 +694,115 @@ test('Service: the session snapshot is taken per flush, not per line', () => {
   svc.resume();
   assert.equal(svc.getStateForTesting().sessions.length, N);
 });
+
+// ─── Source tabs (log-only SDK observer streams) ─────────────
+// The host emits transport-condition and connection-request events through
+// the Logger under the dedicated tags from src/logAnalyzer/log-sources.ts
+// (SwiftUI/Android parity). These tests pin the queryLines source filter,
+// its totals, and the sourceCounts carried by summary diffs.
+
+/** Lines for the source tests: two transport events, one connection
+ *  request, and two ordinary sdk lines, oldest first. */
+const SOURCE_LINES = [
+  '2026-06-09T14:00:00.000Z  INFO   [sdk]  ordinary sdk line mentioning mdns',
+  '2026-06-09T14:00:01.000Z  INFO   [transport]  Transport: MDNS → MDNSFailure',
+  '2026-06-09T14:00:02.000Z  INFO   [transport]  Transport: TCP → OK',
+  '2026-06-09T14:00:03.000Z  INFO   [connection-request]  Connection Request | type=Bluetooth | key=pk1 | identity=none | meta=none',
+  '2026-06-09T14:00:04.000Z  ERROR  [sdk]  an sdk error',
+];
+
+test('Service: queryLines source filter returns only that stream, newest first', () => {
+  const { svc, sink } = makeSvc();
+  svc.start();
+  for (const l of SOURCE_LINES) { sink.write('info', l); }
+
+  const all = svc.queryLines({ filter: 'all' });
+  assert.equal(all.total, 5, 'no source keeps the unified buffer, event streams included');
+
+  const transport = svc.queryLines({ filter: 'all', source: 'transport' });
+  assert.equal(transport.total, 2);
+  assert.deepEqual(
+    transport.items.map(l => l.text),
+    ['Transport: TCP → OK', 'Transport: MDNS → MDNSFailure'],
+    'newest-first within the source',
+  );
+
+  const requests = svc.queryLines({ filter: 'all', source: 'connectionRequests' });
+  assert.equal(requests.total, 1);
+  assert.match(requests.items[0]?.text ?? '', /^Connection Request \| type=Bluetooth/);
+});
+
+test('Service: uncounted filter×source combinations count by scanning', () => {
+  const { svc, sink } = makeSvc();
+  svc.start();
+  for (const l of SOURCE_LINES) { sink.write('info', l); }
+
+  // The event streams are INFO by construction, so Errors inside them is 0;
+  // there is no ingest-time counter for this combination, it must fall back
+  // to the counting scan rather than reporting the global error count.
+  const transportErrors = svc.queryLines({ filter: 'error', source: 'transport' });
+  assert.equal(transportErrors.total, 0);
+  assert.equal(transportErrors.items.length, 0);
+
+  // Sanity: the same filter with no source still uses the error counter.
+  assert.equal(svc.queryLines({ filter: 'error' }).total, 1);
+});
+
+test('Service: search combines with the source filter', () => {
+  const { svc, sink } = makeSvc();
+  svc.start();
+  for (const l of SOURCE_LINES) { sink.write('info', l); }
+
+  // Both a transport line and an sdk line mention mdns; only the transport
+  // one may come back. Search against the tag also works (the tag IS the
+  // source name), which is how the tag column stays searchable.
+  const r = svc.queryLines({ filter: 'all', source: 'transport', search: 'mdns' });
+  assert.equal(r.total, 1);
+  assert.equal(r.items[0]?.text, 'Transport: MDNS → MDNSFailure');
+
+  const byTag = svc.queryLines({ filter: 'all', search: 'connection-request' });
+  assert.equal(byTag.total, 1, 'tag search finds the event source from the unified buffer too');
+});
+
+test('Service: summary diffs carry per-source buffered counts', () => {
+  const { svc, sink } = makeSvc();
+  const summaries: { sourceCounts: { transport: number; connectionRequests: number } }[] = [];
+  svc.onDiff(d => { if (d.type === 'summary') { summaries.push(d); } });
+  svc.start();
+  for (const l of SOURCE_LINES) { sink.write('info', l); }
+
+  const last = summaries[summaries.length - 1];
+  assert.deepEqual(last?.sourceCounts, { transport: 2, connectionRequests: 1 });
+});
+
+test('Service: clear() zeroes the source counters', () => {
+  const { svc, sink } = makeSvc();
+  const summaries: { sourceCounts: { transport: number; connectionRequests: number } }[] = [];
+  svc.onDiff(d => { if (d.type === 'summary') { summaries.push(d); } });
+  svc.start();
+  for (const l of SOURCE_LINES) { sink.write('info', l); }
+
+  svc.clear();
+  // clear() emits only 'reset'; the next line's flush proves the counters
+  // really survived no resurrection from before the Clear.
+  sink.write('info', '2026-06-09T14:00:05.000Z  INFO   [transport]  Transport: TCP → OK');
+  const last = summaries[summaries.length - 1];
+  assert.deepEqual(last?.sourceCounts, { transport: 1, connectionRequests: 0 });
+});
+
+test('Service: source counters stay exact across a buffer trim', () => {
+  // Same trim discipline as the level counters: the per-source badge totals
+  // describe the CURRENT buffer, not everything ever ingested.
+  const { svc, sink } = makeSvc();
+  svc.start();
+  const TOTAL = 100_001; // LINE_BUFFER_CAP * 2 + 1 → one chunked trim, leaving exactly the cap
+  for (let i = 0; i < TOTAL; i++) {
+    const tag = i % 3 === 0 ? 'transport' : i % 3 === 1 ? 'connection-request' : 'sdk';
+    sink.write('info', `2026-08-23T18:59:${String(i % 60).padStart(2, '0')}.000Z  INFO   [${tag}]  line ${i}`);
+  }
+  const remaining = svc.queryLines({ filter: 'all', limit: 200_000 }).items;
+  const wantTransport = remaining.filter(l => l.tag === 'transport').length;
+  const wantRequests = remaining.filter(l => l.tag === 'connection-request').length;
+  assert.equal(svc.queryLines({ filter: 'all', source: 'transport' }).total, wantTransport);
+  assert.equal(svc.queryLines({ filter: 'all', source: 'connectionRequests' }).total, wantRequests);
+});

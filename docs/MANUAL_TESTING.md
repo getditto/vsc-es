@@ -678,6 +678,36 @@ jsdom performs no layout:
 4. Tab through one row: name → direction → up → down → remove, each with a
    visible focus ring.
 
+## Log Analyzer source tabs (Transport Conditions / Connection Requests)
+
+Counters, filtering and message formats are covered automatically
+(`session-log-observers.test.ts`, `LogAnalyzerService.test.ts`, and the
+webview element tests). What still needs a real Extension Development Host
+is the live stream itself — transport conditions only fire on real
+radio/network state, and connection requests require a second peer:
+
+1. Connect a database and open **Log Analyzer**. The toolbar's right end
+   shows the Logs / Transport Conditions / Connection Requests source tabs.
+   **Transport Conditions** should tick over at connect time as the
+   listeners bind (e.g. `Transport: TCP → OK`, `Transport: MDNS → OK`) —
+   the observers install at open precisely to catch that bring-up cascade;
+   afterwards they only report state *changes* (toggle Wi-Fi to force more).
+2. With a second device on the same app id (e.g. a phone running a Ditto
+   demo app), watch **Transport Conditions**: mDNS/TCP/AWDL transitions
+   appear as `Transport: <source> → <condition>` lines as radios and
+   listeners change state (toggle Wi-Fi on/off to force events).
+3. Watch **Connection Requests** on the same setup: each incoming peer
+   handshake logs `Connection Request | type=… | key=… | identity=… |
+   meta=…`. All requests are auto-accepted (log-only) — the peer list must
+   show the device as fully connected for every logged request.
+4. Confirm the event lines also appear inline in the **Logs** tab
+   (chronological stream) and in the exported/on-disk log file, and that
+   search and the level filter tabs combine with the active source (e.g.
+   Errors inside Transport Conditions shows 0 rows).
+5. Narrow the panel: the toolbar (action buttons + source tabs) wraps
+   without overlapping the filter tabs below it, in both light and dark
+   themes.
+
 ## Troubleshooting
 
 ### The Output panel shows `SPIKE: failed: …`

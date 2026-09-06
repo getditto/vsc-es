@@ -48,6 +48,11 @@ interface RecordedLog {
   infos: string[];
   secrets: string[][];
   clearedSecrets: number;
+  /** Per-record (level, resolved tag, message). `withTag` composes here
+   *  exactly like the real Logger (`parent:child`), because the session log
+   *  observers' source tabs depend on the composed tag matching
+   *  src/logAnalyzer/log-sources.ts exactly. */
+  records: { level: string; tag: string | undefined; message: string }[];
 }
 
 function recordingLogger(): RecordedLog {
@@ -55,21 +60,25 @@ function recordingLogger(): RecordedLog {
   const warns: string[] = [];
   const infos: string[] = [];
   const secrets: string[][] = [];
+  const records: { level: string; tag: string | undefined; message: string }[] = [];
   const rec: RecordedLog = {
-    errors, warns, infos, secrets,
+    errors, warns, infos, secrets, records,
     clearedSecrets: 0,
     logger: undefined as unknown as Logger,
   };
-  const self = {
-    error: (m: string, _c?: LogContext) => { errors.push(m); },
-    warn: (m: string, _c?: LogContext) => { warns.push(m); },
-    info: (m: string, _c?: LogContext) => { infos.push(m); },
-    debug: () => {}, trace: () => {},
-    registerKnownSecrets: (values: readonly string[]) => { secrets.push([...values]); },
-    clearKnownSecrets: () => { rec.clearedSecrets += 1; },
-    withTag: () => self,
-  } as unknown as Logger;
-  rec.logger = self;
+  const make = (tag: string | undefined): Logger => {
+    const self = {
+      error: (m: string, _c?: LogContext) => { errors.push(m); records.push({ level: 'error', tag, message: m }); },
+      warn: (m: string, _c?: LogContext) => { warns.push(m); records.push({ level: 'warn', tag, message: m }); },
+      info: (m: string, _c?: LogContext) => { infos.push(m); records.push({ level: 'info', tag, message: m }); },
+      debug: () => {}, trace: () => {},
+      registerKnownSecrets: (values: readonly string[]) => { secrets.push([...values]); },
+      clearKnownSecrets: () => { rec.clearedSecrets += 1; },
+      withTag: (child: string) => make(tag ? `${tag}:${child}` : child),
+    } as unknown as Logger;
+    return self;
+  };
+  rec.logger = make(undefined);
   return rec;
 }
 
@@ -111,12 +120,14 @@ interface ManagerInternals {
     configId: string;
     ditto: Ditto;
     presenceObserver?: { stop?: () => void } | undefined;
+    logObservers?: { dispose(): void } | undefined;
     subscriptionHandles: Map<string, { cancel: () => void }>;
     presenceCoalesceTimer?: NodeJS.Timeout | undefined;
   } | null;
   syncState: 'active' | 'idle';
   localPeerInfo: unknown;
   attachPresenceObserver(ditto: Ditto): void;
+  attachSessionLogObservers(ditto: Ditto): { dispose(): void };
   loadLocalPeerInfo(ditto: Ditto): Promise<void>;
 }
 
@@ -872,4 +883,37 @@ test('a failed connect clears the redaction set it never registered', async t =>
   );
   assert.deepEqual(log.secrets, [], 'a failed connect never registers secrets');
   assert.ok(log.clearedSecrets >= 1, 'and clears the set defensively');
+});
+
+// ─── Session log observers (Log Analyzer source tabs) ─────────
+
+test('session log observers: handler installs under the bare source tag, always allows, and disconnect unwinds it', async t => {
+  // connect() installs these right after Ditto.open (unreachable offline —
+  // sync.start refuses first), so this test drives the same seam directly
+  // against a staged session and takes the session's real teardown path.
+  const { mgr, ditto, log } = await stageSession(t, makeConfig());
+  internals(mgr).session!.logObservers = internals(mgr).attachSessionLogObservers(ditto);
+
+  assert.equal(typeof ditto.presence.connectionRequestHandler, 'function');
+
+  const handler = ditto.presence.connectionRequestHandler as unknown as (r: unknown) => Promise<string>;
+  const authorization = await handler({
+    connectionType: 'Bluetooth',
+    peerKey: 'pkRemote123',
+    identityServiceMetadata: {},
+    peerMetadata: {},
+  });
+  assert.equal(authorization, 'allow', 'the handler is log-only and must never deny');
+
+  const rec = log.records.find(r => r.level === 'info' && r.message.startsWith('Connection Request |'));
+  assert.ok(rec, 'the request was logged');
+  // NOT 'ext:DittoManager:connection-request': Logger.withTag composes, and
+  // the analyzer's Connection Requests tab matches its tag exactly — the
+  // composed tag is what left the source tabs at zero while Logs tab lines
+  // looked fine.
+  assert.equal(rec.tag, 'connection-request');
+  assert.match(rec.message, /type=Bluetooth \| key=pkRemote123 \| identity=none \| meta=none/);
+
+  await mgr.disconnect();
+  assert.equal(ditto.presence.connectionRequestHandler, null, 'disconnect clears the handler');
 });

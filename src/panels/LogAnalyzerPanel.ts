@@ -146,6 +146,7 @@ export class LogAnalyzerPanel {
       case 'analyzer.queryLines': {
         const result = this.svc.queryLines({
           filter: msg.filter,
+          source: msg.source,
           search: msg.search,
           limit: msg.limit,
           offset: msg.offset,

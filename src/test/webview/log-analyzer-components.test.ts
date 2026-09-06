@@ -8,6 +8,7 @@ import './setup.js';
 await import('../../../webview-ui/logAnalyzer/components/collapsible-section.js');
 await import('../../../webview-ui/logAnalyzer/components/duration-histogram.js');
 await import('../../../webview-ui/logAnalyzer/components/filter-tabs.js');
+await import('../../../webview-ui/logAnalyzer/components/source-tabs.js');
 await import('../../../webview-ui/logAnalyzer/components/histograms-row.js');
 await import('../../../webview-ui/logAnalyzer/components/line-detail-drawer.js');
 await import('../../../webview-ui/logAnalyzer/components/problems-histogram.js');
@@ -133,6 +134,36 @@ test('FilterTabs: clicking a tab emits filter-change; the active class follows t
   const active = el.shadowRoot.querySelectorAll('.tab.active');
   assert.equal(active.length, 1);
   assert.match(active[0].textContent, /Warnings/);
+});
+
+// ─── source-tabs ─────────────────────────────────────────────────────
+
+test('SourceTabs: renders the three sources; only the event streams carry badges', async t => {
+  const el = await mount(t, 'source-tabs', {
+    sourceCounts: { transport: 7, connectionRequests: 2 },
+  });
+  const tabs = [...el.shadowRoot.querySelectorAll('.tab')];
+  assert.deepEqual(tabs.map((b: any) => b.textContent.trim()), [
+    'Logs', 'Transport Conditions7', 'Connection Requests2',
+  ]);
+  assert.ok(tabs[0].classList.contains('active'), 'Logs tab active by default');
+});
+
+test('SourceTabs: clicking a tab emits source-change; the active class follows the property', async t => {
+  const el = await mount(t, 'source-tabs', { active: 'all' });
+  const seen: string[] = [];
+  el.addEventListener('source-change', (e: any) => seen.push(e.detail.key));
+
+  const tabs = [...el.shadowRoot.querySelectorAll('.tab')];
+  tabs[1].click();
+  tabs[2].click();
+  assert.deepEqual(seen, ['transport', 'connectionRequests']);
+
+  el.active = 'connectionRequests';
+  await el.updateComplete;
+  const active = el.shadowRoot.querySelectorAll('.tab.active');
+  assert.equal(active.length, 1);
+  assert.match(active[0].textContent, /Connection Requests/);
 });
 
 // ─── histograms-row ──────────────────────────────────────────────────

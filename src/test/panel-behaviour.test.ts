@@ -161,14 +161,14 @@ interface FakeService {
   clears: number;
   pauses: number;
   resumes: number;
-  queried: { filter?: string; offset?: number; limit?: number }[];
+  queried: { filter?: string; source?: string; offset?: number; limit?: number }[];
   start(p?: { backfillLines?: readonly string[] }): void;
   clear(): void;
   pause(): void;
   resume(): void;
   dispose(): void;
   onDiff(): { dispose(): void };
-  queryLines(o: { filter?: string; offset?: number; limit?: number }): { items: unknown[]; total: number };
+  queryLines(o: { filter?: string; source?: string; offset?: number; limit?: number }): { items: unknown[]; total: number };
   getLineDetail(): { line: null; before: never[]; after: never[] };
 }
 
@@ -272,6 +272,21 @@ test('LogAnalyzerPanel: clear, pause and resume forward to the service', async (
   assert.equal(svc.pauses, 1);
   assert.equal(svc.resumes, 1);
   assert.equal(svc.clears, 1);
+});
+
+test('LogAnalyzerPanel: the source tab reaches the service on line queries', async () => {
+  // Source tabs are the Transport Conditions / Connection Requests views
+  // (SwiftUI parity); the panel must pass `source` straight through to
+  // queryLines or every tab would silently show the unified buffer.
+  const svc = fakeService();
+  const panel = await showAnalyzer(svc, () => Promise.resolve([]));
+
+  panel.fireMessage({
+    type: 'analyzer.queryLines', filter: 'all', source: 'transport', limit: 100, requestId: 's1',
+  });
+  await settle();
+
+  assert.equal(svc.queried[svc.queried.length - 1]?.source, 'transport');
 });
 
 test('LogAnalyzerPanel: a line query echoes its offset back', async () => {
