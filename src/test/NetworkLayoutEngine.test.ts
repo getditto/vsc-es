@@ -7,6 +7,7 @@ import {
   perpendicularControlPoint,
   outwardControlPoint,
   type ConnectionInfo,
+  type LayoutResult,
 } from '../presence/NetworkLayoutEngine.js';
 
 // ─── BFS ring assignment ───────────────────────────────────────
@@ -337,13 +338,15 @@ test('layout: expanded mode packs a crowded BFS layer into concentric rings', ()
   const r = calculateLayout('local', peers, cs, 1.75);
   const ring1 = r.ringAssignments.get(1) ?? [];
   const ring2 = r.ringAssignments.get(2) ?? [];
-  const ring3 = r.ringAssignments.get(3) ?? [];
 
-  // The direct layer fills the first visual rings before the multi-hop peer
-  // is placed outside them.
+  // Hop order still decides who sits innermost: ring 1 is all direct peers and the
+  // multi-hop peer lands on the outermost ring. What it must NOT do is claim a ring
+  // of its own — before the balanced packer, 'indirect' was alone on ring 3 at a
+  // radius half again as large as ring 2, dangling on a long spoke.
   assert.ok(ring1.length > 0 && ring1.every(peer => direct.includes(peer)));
-  assert.ok(ring2.length > 0 && ring2.every(peer => direct.includes(peer)));
-  assert.deepEqual(ring3, ['indirect']);
+  assert.ok(ring2.length > 1, 'the multi-hop peer must share a ring, not get its own');
+  assert.ok(ring2.includes('indirect'), 'the multi-hop peer belongs on the outermost ring');
+  assert.equal(r.ringAssignments.get(3), undefined);
 
   const radii = [...r.ringRadii.entries()]
     .filter(([ring]) => ring > 0)
@@ -441,5 +444,124 @@ test('layout: rerunning the same input produces the same output (determinism)', 
     const pa = a.positions.get(k)!;
     const pb = b.positions.get(k)!;
     assert.deepEqual(pa, pb, `position for ${k} differs across runs`);
+  }
+});
+
+// ─── Balanced ring packing (expanded mode) ─────────────────────
+
+/** Peer counts per ring, innermost first (ring 0 excluded). */
+function ringSizes(result: LayoutResult): number[] {
+  return [...result.ringAssignments.keys()]
+    .filter(ring => ring > 0)
+    .sort((a, b) => a - b)
+    .map(ring => (result.ringAssignments.get(ring) ?? []).length);
+}
+
+function fullMesh(peerCount: number): LayoutResult {
+  const peers = ['local', ...Array.from({ length: peerCount }, (_, i) => `P${String(i).padStart(3, '0')}`)];
+  const cs: ConnectionInfo[] = [];
+  for (let i = 0; i < peers.length; i += 1) {
+    for (let j = i + 1; j < peers.length; j += 1) {
+      cs.push({ fromPeer: peers[i]!, toPeer: peers[j]! });
+    }
+  }
+  return calculateLayout('local', peers, cs, 1.75);
+}
+
+test('layout: no ring is left stranded with a lone peer', () => {
+  // 14 fully-meshed peers plus a 2-hop and a 3-hop straggler. This is the on-device
+  // shape: the stragglers each used to take a whole ring to themselves, hundreds of
+  // units out, on a spoke pointing straight up.
+  const core = Array.from({ length: 14 }, (_, i) => `core${String(i).padStart(2, '0')}`);
+  const peers = ['local', ...core, 'hop2', 'hop3'];
+  const meshed = ['local', ...core];
+  const cs: ConnectionInfo[] = [];
+  for (let i = 0; i < meshed.length; i += 1) {
+    for (let j = i + 1; j < meshed.length; j += 1) {
+      cs.push({ fromPeer: meshed[i]!, toPeer: meshed[j]! });
+    }
+  }
+  cs.push({ fromPeer: core[0]!, toPeer: 'hop2' });
+  cs.push({ fromPeer: 'hop2', toPeer: 'hop3' });
+
+  const r = calculateLayout('local', peers, cs, 1.75);
+  const sizes = ringSizes(r);
+
+  assert.ok(sizes.every(size => size > 1), `every ring must carry more than one peer, got ${sizes.join('/')}`);
+  assert.equal(r.positions.size, peers.length);
+});
+
+test('layout: ring populations grow outward, never trailing off into a remainder', () => {
+  // 60 peers used to pack as 6/12/17/23/2 — two nodes stranded on the outermost orbit
+  // at the largest radius in the scene.
+  for (const peerCount of [12, 25, 40, 60, 90, 120]) {
+    const sizes = ringSizes(fullMesh(peerCount));
+    assert.equal(sizes.reduce((sum, n) => sum + n, 0), peerCount, `all ${peerCount} peers must be placed`);
+    for (let i = 1; i < sizes.length; i += 1) {
+      assert.ok(
+        sizes[i]! >= sizes[i - 1]!,
+        `orbits must not shrink outward at n=${peerCount}, got ${sizes.join('/')}`,
+      );
+    }
+  }
+});
+
+test('layout: neighbour spacing stays comparable across orbits', () => {
+  // Capacity-proportional sharing is what makes the rings read as balanced: the chord
+  // between neighbours should be roughly equal on every orbit.
+  const r = fullMesh(60);
+  const gaps = [...r.ringAssignments.keys()]
+    .filter(ring => ring > 0)
+    .sort((a, b) => a - b)
+    .map(ring => {
+      const count = (r.ringAssignments.get(ring) ?? []).length || 1;
+      return 2 * (r.ringRadii.get(ring) ?? 0) * Math.sin(Math.PI / count);
+    });
+  const smallest = Math.min(...gaps);
+  const largest = Math.max(...gaps);
+  assert.ok(largest <= smallest * 2, `spacing should stay within 2x across rings, got ${gaps.join('/')}`);
+});
+
+test('layout: a three-hop chain collapses onto one orbit, not one ring per hop', () => {
+  const peers = ['local', 'a', 'b', 'c'];
+  const cs: ConnectionInfo[] = [
+    { fromPeer: 'local', toPeer: 'a' },
+    { fromPeer: 'a', toPeer: 'b' },
+    { fromPeer: 'b', toPeer: 'c' },
+  ];
+
+  const r = calculateLayout('local', peers, cs, 1.75);
+  assert.deepEqual(ringSizes(r), [3], 'three peers fit a single orbit');
+});
+
+test('layout: consecutive rings do not stack their first peer on the same spoke', () => {
+  const r = fullMesh(120);
+  const startAngles = [...r.ringAssignments.keys()]
+    .filter(ring => ring > 0)
+    .sort((a, b) => a - b)
+    .map(ring => {
+      const first = (r.ringAssignments.get(ring) ?? [])[0];
+      const point = first === undefined ? undefined : r.positions.get(first);
+      if (!point) { return 0; }
+      let angle = Math.atan2(point.y, point.x);
+      if (angle < 0) { angle += 2 * Math.PI; }
+      return angle;
+    });
+  const distinct = new Set(startAngles.map(angle => Math.round(angle * 1000)));
+  assert.equal(
+    distinct.size,
+    startAngles.length,
+    'every ring started at 90 degrees, drawing a seam straight up',
+  );
+});
+
+test('calculateOptimalAngles: outer rings are staggered by half a step', () => {
+  const ring1 = calculateOptimalAngles(4, 1);
+  const ring2 = calculateOptimalAngles(4, 2);
+  assert.ok(Math.abs(ring1[0]! - Math.PI / 2) < 1e-6, 'ring 1 still starts at the top');
+  assert.ok(Math.abs(ring2[0]! - (Math.PI / 2 + Math.PI / 4)) < 1e-6, 'ring 2 offsets by half a step');
+  // The stagger must not disturb even spacing within a ring.
+  for (let i = 1; i < ring2.length; i += 1) {
+    assert.ok(Math.abs((ring2[i]! - ring2[i - 1]!) - Math.PI / 2) < 1e-6);
   }
 });
