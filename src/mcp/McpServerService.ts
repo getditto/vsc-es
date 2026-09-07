@@ -48,8 +48,10 @@ export interface McpServerServiceOptions {
 }
 
 /** EADDRINUSE with actionable text (the port setting exists precisely
- *  so a user can free a stuck port claim without editing JSON). */
-export class McpPortInUseError extends Error {
+ *  so a user can free a stuck port claim without editing JSON). Not
+ *  exported — callers pattern-match on the message, which is the whole
+ *  blueprint the user needs. */
+class McpPortInUseError extends Error {
   constructor(port: number) {
     super(
       `Port ${port} is already in use. Change the dittoVsce.mcpServer.port setting ` +
@@ -256,7 +258,9 @@ export class McpServerService {
       enableJsonResponse: true,
       onsessioninitialized: (sid) => {
         this.sessions.set(sid, entry);
-        this.log.debug('MCP session initialized', { sessionId: sid, transport: 'streamable' });
+        // info (not debug): "did any agent ever reach us?" is the first
+        // triage question when the server is up but a client is silent.
+        this.log.info('MCP client session initialized', { sessionId: sid, transport: 'streamable', sessions: this.sessions.size });
       },
       onsessionclosed: (sid) => {
         if (this.sessions.delete(sid)) {
@@ -286,7 +290,7 @@ export class McpServerService {
       void server.close().catch(() => { /* best effort */ });
     };
     this.sessions.set(transport.sessionId, entry);
-    this.log.debug('MCP session initialized', { sessionId: transport.sessionId, transport: 'sse' });
+    this.log.info('MCP client session initialized', { sessionId: transport.sessionId, transport: 'sse', sessions: this.sessions.size });
     // server.connect() calls transport.start(), which takes over the
     // response (event-stream + endpoint event). Do not touch res after.
     await server.connect(transport);

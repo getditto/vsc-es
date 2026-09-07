@@ -263,6 +263,10 @@
         "title": "Ditto: Stop MCP Server"
       },
       {
+        "command": "dittoVsce.mcpServerStatus",
+        "title": "Ditto: MCP Server Status"
+      },
+      {
         "command": "dittoVsce.mcpServerCopyConfig",
         "title": "Ditto: Copy MCP Client Config"
       }

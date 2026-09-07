@@ -1223,6 +1223,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     }),
     vscode.commands.registerCommand('dittoVsce.mcpServerStart', () => mcpController.startCommand()),
     vscode.commands.registerCommand('dittoVsce.mcpServerStop', () => mcpController.stopCommand()),
+    vscode.commands.registerCommand('dittoVsce.mcpServerStatus', () => mcpController.statusCommand()),
     vscode.commands.registerCommand('dittoVsce.mcpServerCopyConfig', () => mcpController.copyConfigCommand()),
     vscode.commands.registerCommand('dittoVsce.toggleInspector', async () => {
       await vscode.commands.executeCommand('dittoVsce.inspector.focus');

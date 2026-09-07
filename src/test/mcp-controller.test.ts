@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as http from 'node:http';
 import * as vscode from 'vscode';
 
 /**
@@ -122,6 +123,73 @@ test('copilot provider hands out the HTTP definition only while running', async 
 
   await controller.stop();
   assert.deepEqual(entry.provider.provideMcpServerDefinitions(), []);
+});
+
+test('start failure is logged for the Log Analyzer, toasted once, and clears on success', async (t) => {
+  // Occupy the configured port so the bind must fail.
+  const blocker = http.createServer();
+  await new Promise<void>(r => blocker.listen(0, '127.0.0.1', r));
+  const addr = blocker.address();
+  assert.ok(addr && typeof addr === 'object');
+  const busyPort = (addr).port;
+
+  const { controller, bundle } = setup({ activeId: 'cfg-1', flagOn: true, port: busyPort });
+  t.after(() => controller.dispose());
+
+  await controller.syncToActiveConnection();
+  assert.equal(controller.isRunning, false);
+  assert.ok(
+    bundle.logger.written.some(l => l.startsWith('ERROR MCP server failed to start')),
+    `expected an [mcp] error line (Log Analyzer surfaces these as problems); got: ${bundle.logger.written.join(' | ')}`,
+  );
+  assert.equal(stub.window.shownErrors.length, 1, 'toast exactly once per failure episode');
+
+  // A second failing sync logs again but does not re-toast.
+  await controller.syncToActiveConnection();
+  assert.equal(stub.window.shownErrors.length, 1);
+  assert.ok(bundle.logger.written.filter(l => l.startsWith('ERROR MCP server failed to start')).length >= 2);
+
+  // Free the port; the next sync starts and resets the latch.
+  await new Promise<void>(r => { blocker.close(() => r()); });
+  stub.workspace.configValues['dittoVsce.mcpServer'] = { port: 0 };
+  await controller.syncToActiveConnection();
+  assert.equal(controller.isRunning, true);
+  assert.ok(bundle.logger.written.includes('INFO MCP server started'));
+
+  // And the latch really is reset: a later failure toasts again.
+  const otherBlocker = http.createServer();
+  await new Promise<void>(r => otherBlocker.listen(0, '127.0.0.1', r));
+  const addr2 = otherBlocker.address();
+  assert.ok(addr2 && typeof addr2 === 'object');
+  const busyPort2 = (addr2).port;
+  t.after(() => new Promise<void>(r => { otherBlocker.close(() => r()); }));
+
+  await controller.stop();
+  stub.workspace.configValues['dittoVsce.mcpServer'] = { port: busyPort2 };
+  await controller.syncToActiveConnection();
+  assert.equal(stub.window.shownErrors.length, 2, 'new failure episode after success re-toasts');
+});
+
+test('status command logs the full state (Log Analyzer backfill) and shows it', async (t) => {
+  const { controller, bundle } = setup({ activeId: 'cfg-1', flagOn: true });
+  t.after(() => controller.dispose());
+  await controller.syncToActiveConnection();
+  await controller.statusCommand();
+  assert.ok(bundle.logger.written.includes('INFO MCP server status'));
+  const toast = stub.window.shownInfos.find(m => /Running: yes/.test(m));
+  assert.ok(toast, 'status modal shown');
+  assert.match(toast, /URL: http:\/\/127\.0\.0\.1:\d+\/mcp/);
+  assert.match(toast, /MCP enabled on active connection: yes/);
+});
+
+test('status command while disconnected explains instead of lying', async (t) => {
+  const { controller } = setup({ activeId: null });
+  t.after(() => controller.dispose());
+  await controller.statusCommand();
+  const toast = stub.window.shownInfos.find(m => /Running: no/.test(m));
+  assert.ok(toast);
+  assert.match(toast, /Active connection: none/);
+  assert.match(toast, /n\/a \(nothing connected\)/);
 });
 
 test('copy config command writes a client snippet for the configured port', async (t) => {

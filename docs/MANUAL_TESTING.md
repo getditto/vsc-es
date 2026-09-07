@@ -778,6 +778,15 @@ mode) for the last steps.
 11. Uncheck the box (edit the connection, save) while connected → the server
     stops immediately. Where the checkbox lives is the *only* enable switch:
     there is no global "always on" setting to hunt down.
+12. **Observability:** Command Palette → **Ditto: MCP Server Status** shows
+    running state, URL, session count, the active connection's flag, and the
+    last start error. In the **Log Analyzer** (or the "Ditto Edge Studio"
+    output channel), filter tag `mcp`: `starting` / `started` / `stopped`
+    and one `client session initialized` per agent connection appear at INFO;
+    a start failure appears at ERROR and as a Log Analyzer **problem row**
+    with a remediation recommendation. Force a failure (run a second VS Code
+    window with a flagged connection on the same port, then reload this one)
+    → ERROR line + problem row + a single error toast per episode.
 
 **Expected:**
 

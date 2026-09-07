@@ -83,6 +83,24 @@ Liveness without a client: `curl http://127.0.0.1:65270/health` → `OK`.
 request; afterwards clients send the `Mcp-Session-Id` header. Use a real MCP
 client for anything beyond the health check.)
 
+### When /health fails
+
+1. **Command Palette → `Ditto: MCP Server Status`** — one modal with
+   running state, URL, session count, whether the *active* connection has
+   the flag on, and the last start error verbatim.
+2. **Log Analyzer** (active database → Features → Log Analyzer) — every
+   lifecycle beat is logged under the `[mcp]` tag: `MCP server starting
+   / started / stopped`, each client session init
+   (`MCP client session initialized`), and failures as ERROR
+   (`MCP server failed to start`). A bundled problem pattern flags the
+   failure line with a recommendation. Backfill covers the current
+   connection, so the lines from *this* connect are already there.
+3. **Output channel** — "Ditto Edge Studio", filter `mcp`.
+4. Likely candidates when never-started: the port is owned by another
+   VS Code window (or the SwiftUI app — it defaults to 65269, we to 65270,
+   but check), or the checkbox isn't actually saved on THIS connection.
+
+
 ## Security model
 
 - **Loopback-only** (`127.0.0.1` + `::1`). Unreachable from the LAN.
