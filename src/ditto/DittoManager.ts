@@ -543,6 +543,19 @@ export class DittoManager {
    *  UPDATE/INSERT statements (used by the attachment add/delete
    *  flows). */
   async executeRaw(query: string, args?: Record<string, unknown>): Promise<Record<string, unknown>[]> {
+    const { rows } = await this.executeRawDetailed(query, args);
+    return rows;
+  }
+
+  /** {@link executeRaw} plus the SDK's mutation metadata — the INSERT/
+   *  UPDATE/DELETE affected-document IDs and commit ID, surfaced so the
+   *  MCP execute_dql tool can tell an agent exactly what a mutation did
+   *  (the SwiftUI server derives the same from its result type). Read
+   *  paths see both empty. */
+  async executeRawDetailed(
+    query: string,
+    args?: Record<string, unknown>,
+  ): Promise<{ rows: Record<string, unknown>[]; mutatedDocumentIds: string[]; commitId: string | null }> {
     if (!this.session) { throw new Error('No active database.'); }
     const result = args === undefined
       ? await this.session.ditto.store.execute(query)
@@ -562,7 +575,19 @@ export class DittoManager {
         try { item.dematerialize(); } catch { /* ignore */ }
       }
     }
-    return rows;
+    let mutated: string[] = [];
+    try {
+      mutated = result.mutatedDocumentIDsV2().map(id => String(id));
+    } catch { /* read path — no mutation envelope */ }
+    let commitId: string | null = null;
+    try {
+      // SDK exposes `get commitID(): bigint | null`; read defensively.
+      const raw: unknown = (result as { commitID?: unknown }).commitID;
+      commitId = typeof raw === 'bigint' || typeof raw === 'number' || typeof raw === 'string'
+        ? String(raw)
+        : null;
+    } catch { /* absent on reads */ }
+    return { rows, mutatedDocumentIds: mutated, commitId };
   }
 
   /**
@@ -790,6 +815,21 @@ export class DittoManager {
       ...(truncated ? { truncated: true, totalResultCount: totalRowCount } : {}),
     };
     return { rows, durationMs, metadata };
+  }
+
+  /** Run `EXPLAIN <query>` and return the plan object. Unlike
+   *  {@link runExplain} (a best-effort metrics side-trip) this THROWS on
+   *  failure — tool callers need the real error, not a silently empty
+   *  plan. */
+  async explainQuery(query: string): Promise<Record<string, unknown>> {
+    if (!this.session) { throw new Error('No active database.'); }
+    if (query.trimStart().toUpperCase().startsWith('EXPLAIN')) {
+      throw new Error('Query already starts with EXPLAIN.');
+    }
+    const rows = await this.executeRaw(`EXPLAIN ${query}`);
+    const first = rows[0];
+    if (!first) { throw new Error('EXPLAIN returned no plan.'); }
+    return first;
   }
 
   /** Captures `EXPLAIN <query>` output as a pretty-printed JSON string.

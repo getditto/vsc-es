@@ -128,7 +128,7 @@ const SHOW_ARGS: Record<string, () => unknown[]> = {
   PeerListingPanel:         () => [fakeContext(), anyStub(), anyStub(), DB_ID, anyStub(), anyStub(), anyStub()],
   QueryMetricsPanel:        () => [fakeContext(), anyStub(), anyStub(), DB_ID, anyStub(), anyStub()],
   SubscriptionEditorPanel:  () => [fakeContext(), anyStub(), anyStub(), DB_ID, anyStub(), anyStub()],
-  SystemMetricsPanel:       () => [fakeContext(), anyStub(), anyStub(), DB_ID, anyStub(), anyStub()],
+  SystemMetricsPanel:       () => [fakeContext(), anyStub(), anyStub(), DB_ID, anyStub(), anyStub(), anyStub()],
   WelcomePanel:             () => [fakeContext(), anyStub(), anyStub()],
   DatabaseEditorPanel:      () => [fakeContext(), anyStub(), anyStub(), anyStub(), anyStub()],
   QueryEditorPanel:         () => [fakeContext(), anyStub(), anyStub(), anyStub(), DB_ID, anyStub(), anyStub(), anyStub(), anyStub(), anyStub(), anyStub()],

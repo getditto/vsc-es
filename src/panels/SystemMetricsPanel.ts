@@ -5,7 +5,8 @@ import type { DittoManager } from '../ditto/DittoManager.js';
 import type { InspectorController } from '../inspector/InspectorController.js';
 import type { SysMetricsIn, SysMetricsOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
-import { SystemMetricsService } from '../ditto/SystemMetricsService.js';
+import type { SystemMetricsService } from '../ditto/SystemMetricsService.js';
+import type { SystemMetricsHub, SystemMetricsHandle } from '../ditto/SystemMetricsHub.js';
 import { readPins, writePins } from '../storage/system-metrics-pins.js';
 
 /**
@@ -35,6 +36,7 @@ export class SystemMetricsPanel {
     databaseId: string,
     inspector: InspectorController,
     logger: Logger,
+    metricsHub: SystemMetricsHub,
   ): void {
     if (SystemMetricsPanel.current) {
       if (SystemMetricsPanel.current.databaseId === databaseId) {
@@ -47,7 +49,7 @@ export class SystemMetricsPanel {
       SystemMetricsPanel.current.dispose();
     }
     SystemMetricsPanel.current = new SystemMetricsPanel(
-      context, configs, manager, databaseId, inspector, logger,
+      context, configs, manager, databaseId, inspector, logger, metricsHub,
     );
     autoRevealInspectorOnce(context);
   }
@@ -59,15 +61,17 @@ export class SystemMetricsPanel {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly systemMetrics: SystemMetricsService;
+  private readonly metricsHandle: SystemMetricsHandle;
   private readonly globalState: vscode.Memento;
 
   private constructor(
     context: vscode.ExtensionContext,
     configs: ConfigStore,
-    private readonly manager: DittoManager,
+    _manager: DittoManager,
     private readonly databaseId: string,
     private readonly inspector: InspectorController,
     private readonly logger: Logger,
+    metricsHub: SystemMetricsHub,
   ) {
     this.globalState = context.globalState;
     const cfg = configs.get(databaseId);
@@ -107,22 +111,26 @@ export class SystemMetricsPanel {
     );
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
 
-    // The service polls ONLY while this panel is visible for its own
-    // connection: `isExpectedActive` guards against accumulating the wrong
-    // database's deltas after a mid-poll switch, and the view-state
-    // listener below ties the timer to visibility.
-    this.systemMetrics = new SystemMetricsService(this.manager, this.logger, {
-      isExpectedActive: () => this.manager.getActiveConfigId() === this.databaseId,
-      onStatus: (status) => this.post({ type: 'sysMetrics.status', status }),
-    });
+    // The hub owns the shared per-connection accumulator: the panel is one
+    // (pauseable) consumer; the MCP get_system_metrics tool reads the SAME
+    // since-connect totals instead of running a competing accumulator that
+    // would race the panel for the registry's per-read deltas. The handle
+    // starts unpaused; the view-state listener ties ticking to visibility
+    // (an invisible panel poll would still flush counters while producing
+    // numbers nobody sees).
+    this.metricsHandle = metricsHub.acquire(
+      this.databaseId,
+      (status) => this.post({ type: 'sysMetrics.status', status }),
+    );
+    this.systemMetrics = this.metricsHandle.service;
 
     this.disposables.push(
       this.panel.onDidChangeViewState(e => {
         const p = e.webviewPanel;
         if (p.visible) {
-          this.systemMetrics.start();
+          this.metricsHandle.resume();
         } else {
-          this.systemMetrics.stop();
+          this.metricsHandle.pause();
         }
         if (p.active) {
           this.inspector.setActiveFeature({ kind: 'systemMetrics', databaseId: this.databaseId });
@@ -132,7 +140,9 @@ export class SystemMetricsPanel {
 
     // The panel opens visible (creation doesn't fire onDidChangeViewState).
     if (this.panel.visible) {
-      this.systemMetrics.start();
+      this.metricsHandle.resume();
+    } else {
+      this.metricsHandle.pause();
     }
 
     // Push the persisted pinned-series list. Deferred by one tick so the
@@ -162,7 +172,7 @@ export class SystemMetricsPanel {
 
   private dispose() {
     SystemMetricsPanel.current = undefined;
-    this.systemMetrics.stop();
+    this.metricsHandle.dispose();
     while (this.disposables.length) { this.disposables.pop()?.dispose(); }
     this.panel.dispose();
   }

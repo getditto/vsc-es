@@ -60,6 +60,38 @@ test('DatabaseEditor: legacy config renders a collapsed empty advanced section',
   el.remove();
 });
 
+test('DatabaseEditor: MCP checkbox defaults OFF and carries the security warning', async () => {
+  const el = await mount();
+  const box = el.shadowRoot.querySelector('#cb-mcp-server') as HTMLInputElement;
+  assert.equal(box.checked, false, 'MCP must be off by default (security)');
+  const details = el.shadowRoot.querySelector('details.advanced') as HTMLDetailsElement;
+  assert.ok(!details.textContent.includes('MCP on'), 'no badge while off');
+  assert.match(details.textContent, /ANY process on this machine can read and write/);
+  el.remove();
+});
+
+test('DatabaseEditor: MCP flag renders checked + summary badge, and posts in the save payload', async () => {
+  const el = await mount({ mcpServerEnabled: true });
+  const box = el.shadowRoot.querySelector('#cb-mcp-server') as HTMLInputElement;
+  assert.equal(box.checked, true);
+  const details = el.shadowRoot.querySelector('details.advanced') as HTMLDetailsElement;
+  assert.match(details.textContent, /MCP on/);
+  el.remove();
+
+  // Toggle on from a fresh config and save → flag reaches the host message.
+  const el2 = await mount();
+  const box2 = el2.shadowRoot.querySelector('#cb-mcp-server') as HTMLInputElement;
+  box2.click();
+  await el2.updateComplete;
+  posted.length = 0;
+  (el2.shadowRoot.querySelector('.footer .save') as HTMLButtonElement).click();
+  await el2.updateComplete;
+  const saveMsg = posted.find((m: any) => m?.type === 'editor.save') as any;
+  assert.ok(saveMsg, 'save message posted');
+  assert.equal(saveMsg.config.advancedConfig.mcpServerEnabled, true);
+  el2.remove();
+});
+
 test('DatabaseEditor: active setting additions and removals show reconnect warning with counts', async () => {
   const el = await mount({
     collectionSyncScopes: [],

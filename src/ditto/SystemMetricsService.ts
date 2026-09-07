@@ -263,6 +263,15 @@ export class SystemMetricsService {
     this.onStatus(await this.pollOnce());
   }
 
+  /** Latest accumulated state WITHOUT a registry read — side-effect-free,
+   *  for readers that must not perturb the delta stream (the MCP
+   *  ditto://system-metrics resource). Undefined before the first
+   *  successful poll. */
+  currentSnapshot(): SystemMetricsSnapshot | undefined {
+    if (this.sinceMs === undefined) { return undefined; }
+    return this.buildSnapshot();
+  }
+
   private async tick(): Promise<void> {
     if (this.inFlight) { return; } // a slow store must not stack polls
     this.inFlight = true;

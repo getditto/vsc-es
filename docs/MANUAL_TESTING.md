@@ -735,6 +735,66 @@ radio/network state, and connection requests require a second peer:
    without overlapping the filter tabs below it, in both light and dark
    themes.
 
+### T25 · MCP server (AI automation surface)
+
+**Pre-conditions:** A registered connection that syncs a small dataset (T4/T5);
+`curl` available. Also useful: a real MCP client (Claude Code, Copilot agent
+mode) for the last steps.
+
+**Steps:**
+
+1. Fresh connection editor (right-click → **Edit Configuration** → expand
+   **Advanced Configuration** → scroll to **MCP Server (AI Access)**):
+   the checkbox is **unchecked** and the warning about local read/write
+   access is visible. The Advanced summary line shows no "MCP on" badge.
+2. Check the box → the summary badge now reads "· MCP on". Save. Connect.
+   The status bar shows `⎇ plug Ditto MCP :65270`.
+3. `curl http://127.0.0.1:65270/health` → `OK`.
+4. From another shell with nothing connected to the port, run a real client
+   (or the stateless check below). In **Claude Code**, Command Palette →
+   **Ditto: Copy MCP Client Config**, paste into `.mcp.json`, and ask it to
+   run `list_databases` → your connections appear; `get_active_database` →
+   shows the active one with `httpApiConfigured` boolean and **no token or
+   key values anywhere**.
+5. Ask the client to `execute_dql` a small `SELECT` — rows come back. Then a
+   mutation (`INSERT`) — the reply carries `mutatedDocumentIds` and
+   `commitId`; confirm the row is visible in the Query Editor (`SELECT` it
+   back).
+6. `get_system_metrics` twice in a row: the second call's `sinceConnect`
+   totals are ≥ the first (deltas accumulate); with the System Metrics panel
+   open, its totals continue to climb normally (the tool does not perturb
+   the panel).
+7. `watch_query` with `duration_ms: 3000` while you insert a document via
+   the Query Editor → the change arrives as event 2 with the diff arrays,
+   `stoppedBy: "duration"`.
+8. **Disconnect** the database → the status-bar item disappears within a
+   second and `/health` stops answering (`curl: (7) Connection refused`).
+   Reconnect (checkbox still on) → it's back.
+9. Switch to a second connection that has the checkbox OFF → the server
+   stops. Switch back → it starts again.
+10. Copilot agent mode (with the server running): the tool picker lists
+    `ditto-edge-studio` tools; ask the agent to `get_sync_status` → works
+    without any config file.
+11. Uncheck the box (edit the connection, save) while connected → the server
+    stops immediately. Where the checkbox lives is the *only* enable switch:
+    there is no global "always on" setting to hunt down.
+12. **Observability:** Command Palette → **Ditto: MCP Server Status** shows
+    running state, URL, session count, the active connection's flag, and the
+    last start error. In the **Log Analyzer** (or the "Ditto Edge Studio"
+    output channel), filter tag `mcp`: `starting` / `started` / `stopped`
+    and one `client session initialized` per agent connection appear at INFO;
+    a start failure appears at ERROR and as a Log Analyzer **problem row**
+    with a remediation recommendation. Force a failure (run a second VS Code
+    window with a flagged connection on the same port, then reload this one)
+    → ERROR line + problem row + a single error toast per episode.
+
+**Expected:**
+
+- /health answers only while running; the status-bar item mirrors reality.
+- Credentials never appear in any tool output.
+- Everything works entirely on loopback — disable Wi-Fi mid-session and
+  `execute_dql` against the local store still succeeds.
+
 ## Troubleshooting
 
 ### The Output panel shows `SPIKE: failed: …`

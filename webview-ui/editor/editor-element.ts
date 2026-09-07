@@ -16,6 +16,8 @@ interface StoredDittoConfig {
   advancedConfig?: {
     collectionSyncScopes?: CollectionSyncScopeEntry[];
     systemSettings?: SystemSetting[];
+    /** Per-connection MCP server opt-in (host default: off). */
+    mcpServerEnabled?: boolean;
   };
 }
 
@@ -182,6 +184,19 @@ export class DatabaseEditor extends LitElement {
     this.config = {
       ...this.config,
       advancedConfig: { ...this.config.advancedConfig, collectionSyncScopes },
+    };
+    this.validationError = null;
+  }
+
+  private mcpServerEnabled(): boolean {
+    return this.config?.advancedConfig?.mcpServerEnabled === true;
+  }
+
+  private setMcpServerEnabled(enabled: boolean) {
+    if (!this.config) { return; }
+    this.config = {
+      ...this.config,
+      advancedConfig: { ...this.config.advancedConfig, mcpServerEnabled: enabled },
     };
     this.validationError = null;
   }
@@ -509,7 +524,7 @@ export class DatabaseEditor extends LitElement {
     const systemSettings = this.systemSettings();
     const systemSettingsError = this.systemSettingsError();
     const settingChanges = this.settingChanges();
-    const advancedCount = `${scopes.length} ${scopes.length === 1 ? 'scope' : 'scopes'} · ${systemSettings.length} startup ${systemSettings.length === 1 ? 'setting' : 'settings'}`;
+    const advancedCount = `${scopes.length} ${scopes.length === 1 ? 'scope' : 'scopes'} · ${systemSettings.length} startup ${systemSettings.length === 1 ? 'setting' : 'settings'}${this.mcpServerEnabled() ? ' · MCP on' : ''}`;
     return html`
       ${this.validationError ? html`<div class="error-banner" role="alert">${this.validationError}</div>` : nothing}
 
@@ -706,6 +721,19 @@ export class DatabaseEditor extends LitElement {
             <label for="cb-strict" style="margin: 0">Enable DQL Strict Mode</label>
           </div>
           <div class="warn">⚠️ For most users of Ditto SDK 5.0+, strict mode should remain disabled. Enable only if you require SDK 4.x compatibility.</div>
+
+          <h2>MCP Server (AI Access)</h2>
+          <div class="checkbox-row">
+            <input type="checkbox" id="cb-mcp-server" .checked=${this.mcpServerEnabled()} @change=${(e: Event) => this.setMcpServerEnabled((e.target as HTMLInputElement).checked)} />
+            <label for="cb-mcp-server" style="margin: 0">Start MCP server while this connection is active</label>
+          </div>
+          <div class="help">
+            Runs a loopback-only Model Context Protocol server so AI assistants (Claude Code, Cursor, Copilot, …)
+            can run DQL, manage indexes, and read metrics/peers/logs for this database.
+            Stops automatically when you disconnect or switch databases.
+            Use <em>Ditto: Copy MCP Client Config</em> from the Command Palette to wire up a client.
+          </div>
+          <div class="warn">⚠️ Off by default. While enabled, ANY process on this machine can read and write this database through the server. Enable only for connections where AI automation is intended.</div>
         </div>
       </details>
 
