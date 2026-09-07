@@ -142,10 +142,11 @@ export const observerTools: ToolDef[] = [
           tick = setInterval(() => {
             if (events.length >= args.max_events) { finish('max_events'); }
           }, 50);
-          // Never pin the (test-harness or extension-host) event loop open
-          // for a watch nobody is awaiting anymore.
-          timer.unref?.();
-          tick.unref?.();
+          // NOTE: deliberately REF'd. The awaiter is the MCP caller, both
+          // timers are always cleared by finish(), and the observer is
+          // cancelled in the finally — that is the leak guard. unref'd timers
+          // let a hosting event loop drain mid-watch (and node:test cancels
+          // the whole file's pending tests when that happens).
         });
       } finally {
         try { handle.cancel(); } catch { /* already torn down */ }
