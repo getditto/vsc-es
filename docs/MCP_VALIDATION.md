@@ -138,7 +138,8 @@ These change global/session state, so they stay manual:
   switch back).
 - **fetch_attachment:** insert a document with an attachment via the Inspector,
   find its token via `execute_dql`, then ask the agent to
-  `fetch_attachment` to a scratch path with `overwrite:false` — the file lands
+  `fetch_attachment` to a scratch path under the OS temp dir or the workspace
+  (other roots are refused) with `overwrite:false` — the file lands
   on disk; a second call without overwrite fails cleanly.
 - **debug_socket_query:** with an app under development, apply
   `ALTER SYSTEM SET debug_socket = '/tmp/ditto-debug.sock'` to it, then

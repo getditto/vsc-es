@@ -147,7 +147,8 @@ test('start failure is logged for the Log Analyzer, toasted once, and clears on 
   // A second failing sync logs again but does not re-toast.
   await controller.syncToActiveConnection();
   assert.equal(stub.window.shownErrors.length, 1);
-  assert.ok(bundle.logger.written.filter(l => l.startsWith('ERROR MCP server failed to start')).length >= 2);
+  // Serialization makes the count deterministic: one ERROR line per sync.
+  assert.equal(bundle.logger.written.filter(l => l.startsWith('ERROR MCP server failed to start')).length, 2);
 
   // Free the port; the next sync starts and resets the latch.
   await new Promise<void>(r => { blocker.close(() => r()); });
@@ -168,6 +169,109 @@ test('start failure is logged for the Log Analyzer, toasted once, and clears on 
   stub.workspace.configValues['dittoVsce.mcpServer'] = { port: busyPort2 };
   await controller.syncToActiveConnection();
   assert.equal(stub.window.shownErrors.length, 2, 'new failure episode after success re-toasts');
+});
+
+test('overlapping syncs start exactly one server — no phantom port-in-use failure', async (t) => {
+  // The Start command path fires two syncs on the same tick (the ConfigStore
+  // save event + the command's own sync). Without serialization both see an
+  // empty slot and race to bind: the loser reports "port already in use"
+  // while the winner runs fine, and failures latch.
+  const probe = http.createServer();
+  await new Promise<void>(r => probe.listen(0, '127.0.0.1', r));
+  const probeAddr = probe.address();
+  assert.ok(probeAddr && typeof probeAddr === 'object');
+  const freePort = probeAddr.port;
+  await new Promise<void>(r => { probe.close(() => r()); });
+
+  const { controller, bundle } = setup({ activeId: 'cfg-1', flagOn: true, port: freePort });
+  t.after(() => controller.dispose());
+  await Promise.all([
+    controller.syncToActiveConnection(),
+    controller.syncToActiveConnection(),
+  ]);
+  assert.equal(controller.isRunning, true);
+  assert.equal(stub.window.shownErrors.length, 0, 'no false failure toast while the server is up');
+  assert.equal(
+    bundle.logger.written.filter(l => l === 'INFO MCP server starting').length,
+    1,
+    `exactly one bind attempt; got: ${bundle.logger.written.join(' | ')}`,
+  );
+});
+
+test('a failing port-change restart is recorded + toasted instead of rejecting silently', async (t) => {
+  const { controller, bundle } = setup({ activeId: 'cfg-1', flagOn: true, port: 0 });
+  t.after(() => controller.dispose());
+  await controller.syncToActiveConnection();
+  assert.equal(controller.isRunning, true);
+
+  // Occupy the port the user is about to move to.
+  const blocker = http.createServer();
+  await new Promise<void>(r => blocker.listen(0, '127.0.0.1', r));
+  const addr = blocker.address();
+  assert.ok(addr && typeof addr === 'object');
+  t.after(() => new Promise<void>(r => { blocker.close(() => r()); }));
+  stub.workspace.configValues['dittoVsce.mcpServer'] = { port: addr.port };
+
+  await controller.reconcile();
+  assert.equal(controller.isRunning, false, 'old listener stopped');
+  assert.equal(stub.window.shownErrors.length, 1, 'the failure is visible, not swallowed');
+  assert.ok(bundle.logger.written.some(l => l.startsWith('ERROR MCP server failed to start')),
+    'the log line the mcp_server_start_failure Log-Analyzer pattern keys on must fire');
+});
+
+test('a flag flipped off mid-bind stops the fresh listener before it serves', async (t) => {
+  const { controller, bundle } = setup({ activeId: 'cfg-1', flagOn: true, port: 0 });
+  t.after(() => controller.dispose());
+  // Simulate: sync begins (bind in flight), then a queued sync observes the
+  // flag off. Serialization alone would leave a bind-window gap, so the
+  // controller re-checks the flag after the bind completes and stands down.
+  const sync = controller.syncToActiveConnection();
+  bundle.manager.state.activeId = null; // disconnect lands during the bind
+  await sync;
+  await controller.syncToActiveConnection(); // the queued corrective run
+  assert.equal(controller.isRunning, false);
+  assert.equal(controller.url, undefined);
+});
+
+test('dispose inside the bind window stands the listener down and nothing can resurrect it', async (t) => {
+  // Find a free port to prove release afterwards.
+  const probe = http.createServer();
+  await new Promise<void>(r => probe.listen(0, '127.0.0.1', r));
+  const probeAddr = probe.address();
+  assert.ok(probeAddr && typeof probeAddr === 'object');
+  const freePort = probeAddr.port;
+  await new Promise<void>(r => { probe.close(() => r()); });
+
+  const { controller, bundle } = setup({ activeId: 'cfg-1', flagOn: true, port: freePort });
+  // Dispose must land INSIDE the async bind window deterministically: the
+  // op logs 'MCP server starting' synchronously before its first listen
+  // await, and the two loopback binds need at least two event-loop poll
+  // phases, so polling the log via setImmediate is guaranteed to resume
+  // while start() is still suspended. (Regression: dispose() used to
+  // bypass the queue and could leave a bound server nothing could ever
+  // stop.)
+  const sync = controller.syncToActiveConnection();
+  while (!bundle.logger.written.some(l => l.includes('MCP server starting'))) {
+    await new Promise<void>(r => setImmediate(r));
+  }
+  controller.dispose();
+  await sync;
+  assert.equal(controller.isRunning, false, 'no listener survives the disposed controller');
+  assert.equal(controller.url, undefined, 'url stays cleared once disposed');
+
+  // Later transitions bail out instead of resurrecting the listener.
+  await controller.syncToActiveConnection();
+  await controller.reconcile();
+  assert.equal(controller.isRunning, false);
+
+  // The port is provably free: a new server can take it (v4 loopback).
+  const rebind = http.createServer();
+  t.after(() => new Promise<void>(r => { rebind.close(() => r()); }));
+  await new Promise<void>((resolve, reject) => {
+    rebind.once('error', reject);
+    rebind.listen(freePort, '127.0.0.1', () => resolve());
+  });
+  assert.equal(rebind.listening, true, 'the disposed controller released the port');
 });
 
 test('status command logs the full state (Log Analyzer backfill) and shows it', async (t) => {

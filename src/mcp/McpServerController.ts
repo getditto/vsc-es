@@ -39,6 +39,18 @@ export class McpServerController {
   private failureNotified = false;
   /** Last start failure, surfaced by the status command/tool. */
   private lastStartError: string | undefined;
+  /** Serializes lifecycle transitions. Lifecycle beats, ConfigStore change
+   *  events, settings edits, and the Start/Stop commands can all fire within
+   *  the same bind window; two overlapping syncs would both see
+   *  `this.service === undefined`, bind the same port twice, and report a
+   *  phantom "port in use" failure while the winner runs fine. */
+  private pending: Promise<void> = Promise.resolve();
+  /** Latched by dispose(). Enqueued ops and the post-bind re-check consult
+   *  it so no transition can bind (or resurrect) the listener after the
+   *  controller is gone — otherwise an op suspended in the async bind
+   *  window would outlive disposal, wedging the port against a torn-down
+   *  service graph with nothing left that can stop it. */
+  private disposed = false;
 
   constructor(
     private readonly toolContext: McpToolContext,
@@ -66,27 +78,55 @@ export class McpServerController {
    *  and on ConfigStore change (an editor save flipping the checkbox).
    *  Never rejects — failures are logged + toasted once per episode. */
   async syncToActiveConnection(): Promise<void> {
-    if (!this.desiredEnabled()) {
-      if (this.service) { await this.stop(); }
-      return;
-    }
-    try {
-      await this.startIfNeeded();
-    } catch (e) {
-      this.recordStartFailure(e);
-    }
+    return this.enqueue(async () => {
+      if (this.disposed) { return; }
+      if (!this.desiredEnabled()) {
+        if (this.service) { await this.stop(); }
+        return;
+      }
+      try {
+        await this.startIfNeeded();
+      } catch (e) {
+        this.recordStartFailure(e);
+      }
+    });
   }
 
   /** Settings-edit path: a port change restarts the listener when running. */
   async reconcile(): Promise<void> {
-    const port = readMcpPort();
-    if (this.service && this.service.port !== port && this.desiredEnabled()) {
-      this.log.info('MCP port setting changed — restarting listener', { from: this.service.port, to: port });
-      await this.stop();
-      await this.startIfNeeded();
-      return;
-    }
-    await this.syncToActiveConnection();
+    return this.enqueue(async () => {
+      if (this.disposed) { return; }
+      const port = readMcpPort();
+      if (this.service && this.service.port !== port && this.desiredEnabled()) {
+        this.log.info('MCP port setting changed — restarting listener', { from: this.service.port, to: port });
+        await this.stop();
+        try {
+          await this.startIfNeeded();
+        } catch (e) {
+          this.recordStartFailure(e);
+        }
+        return;
+      }
+      if (!this.desiredEnabled()) {
+        if (this.service) { await this.stop(); }
+        return;
+      }
+      try {
+        await this.startIfNeeded();
+      } catch (e) {
+        this.recordStartFailure(e);
+      }
+    });
+  }
+
+  /** Run one lifecycle transition after the previous one settles. The chain
+   *  itself never wedges: a rejecting op is absorbed into `pending` while the
+   *  caller still sees the rejection (in practice the ops above catch their
+   *  own failures — this is belt-and-suspenders for stop() throwing). */
+  private enqueue(op: () => Promise<void>): Promise<void> {
+    const run = this.pending.then(op);
+    this.pending = run.catch(() => { /* queue must survive a rejecting op */ });
+    return run;
   }
 
   private recordStartFailure(e: unknown): void {
@@ -101,6 +141,7 @@ export class McpServerController {
 
   /** Start when the flag wants it and the port differs; no-op otherwise. */
   private async startIfNeeded(): Promise<void> {
+    if (this.disposed) { return; }
     const port = readMcpPort();
     if (this.service?.isRunning && this.service.port === port) { return; }
     if (this.service) { await this.stop(); }
@@ -115,6 +156,14 @@ export class McpServerController {
       log: this.log,
     });
     await service.start(port);
+    // The bind window is async — the flag may have been flipped off (or the
+    // connection dropped, or the controller disposed) while we awaited.
+    // Serialization queues a corrective sync behind us, but don't leave the
+    // listener up in the meantime; on dispose nothing can ever stop it.
+    if (this.disposed || !this.desiredEnabled()) {
+      await service.stop();
+      return;
+    }
     this.service = service;
     this.lastStartError = undefined;
     this.failureNotified = false;
@@ -128,15 +177,25 @@ export class McpServerController {
     });
   }
 
-  /** Hard stop regardless of flags. */
+  /** Hard stop regardless of flags. Never rejects — teardown paths
+   *  (dispose, `deactivate()`) call this without a useful catch context,
+   *  and a rejection floated through a `void` call site reads as "nothing
+   *  happened" with no log line. */
   async stop(): Promise<void> {
     const service = this.service;
     if (!service) { return; }
     this.service = undefined;
-    await service.stop();
+    try {
+      await service.stop();
+    } catch (e) {
+      this.log.error('MCP server stop failed', { err: e instanceof Error ? e.message : String(e) });
+    }
+    this.log.info('MCP server stopped', { hadSessions: service.sessionCount });
+    // After dispose the status item and emitter are gone — updating them
+    // would throw (a disposed EventEmitter refuses fire()).
+    if (this.disposed) { return; }
     this.statusItem.hide();
     this.changeEmitter.fire();
-    this.log.info('MCP server stopped', { hadSessions: service.sessionCount });
   }
 
   /** Human-readable current state — logged at info AND shown, so the Log
@@ -217,7 +276,12 @@ export class McpServerController {
   }
 
   dispose(): void {
-    void this.stop();
+    this.disposed = true;
+    // Through the queue, not around it: a sync suspended in the bind window
+    // finishes first (its post-bind re-check sees the latch and stands the
+    // fresh listener down), then this stop runs, and no later op can
+    // resurrect the listener — all of them bail on `disposed`.
+    void this.enqueue(() => this.stop());
     this.changeEmitter.dispose();
     this.statusItem.dispose();
   }

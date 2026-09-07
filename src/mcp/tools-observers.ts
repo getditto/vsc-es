@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { ok, err } from './tool-result.js';
 import { resolveConnection } from './guards.js';
-import { tool, type ToolDef } from './define-tool.js';
+import { tool, type ToolCallExtra, type ToolDef } from './define-tool.js';
 import type { McpToolContext } from './context.js';
 import { isSelectStatement } from '../ditto/QueryProfileParser.js';
 import { randomId } from '../util/id.js';
@@ -95,7 +95,7 @@ export const observerTools: ToolDef[] = [
       max_rows_per_event: z.number().int().min(1).max(200).default(25)
         .describe('Rows shipped per event (events beyond this keep diff counts but drop rows).'),
     },
-    handler: async (ctx, args: { query: string; duration_ms: number; max_events: number; max_rows_per_event: number }) => {
+    handler: async (ctx, args: { query: string; duration_ms: number; max_events: number; max_rows_per_event: number }, extra?: ToolCallExtra) => {
       resolveConnection(ctx);
       if (!isSelectStatement(args.query)) {
         return err('watch_query needs a SELECT statement.');
@@ -136,8 +136,19 @@ export const observerTools: ToolDef[] = [
             stoppedBy = why;
             clearTimeout(timer);
             clearInterval(tick);
+            // Detach so a 30 s watch doesn't pin the listener (and the
+            // closure) for the rest of the session after an early finish.
+            extra?.signal.removeEventListener('abort', onAbort);
             resolve();
           };
+          // MCP ride-along: a client notifications/cancelled (or its session
+          // closing) aborts this signal — stop the watch instead of holding
+          // ref'd timers + a live store observer for the full duration.
+          const onAbort = (): void => finish('cancelled');
+          // Pre-aborted: bail BEFORE arming anything — finish() clears
+          // timers, so arms created after an early finish would never clear.
+          if (extra?.signal.aborted) { finish('cancelled'); return; }
+          extra?.signal.addEventListener('abort', onAbort);
           timer = setTimeout(() => finish('duration'), args.duration_ms);
           tick = setInterval(() => {
             if (events.length >= args.max_events) { finish('max_events'); }

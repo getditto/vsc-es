@@ -6,7 +6,9 @@ import { tool, type ToolDef } from './define-tool.js';
 import type { McpToolContext } from './context.js';
 import type { PeerInfo, StoredDittoConfig } from '../models/DittoConfig.js';
 
-function peerToJson(p: PeerInfo): Record<string, unknown> {
+/** Exported for the ditto://peers resource: the metadata-bodies-off-the-wire
+ *  policy must hold on every MCP surface, not just the get_peers tool. */
+export function peerToJson(p: PeerInfo): Record<string, unknown> {
   return {
     peerKey: p.id,
     deviceName: p.deviceName,

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as http from 'node:http';
 import { McpServerService, MCP_MAX_BODY_BYTES } from '../mcp/McpServerService.js';
 import { registerAllTools } from '../mcp/registry.js';
 import { registerAllResources } from '../mcp/resources.js';
@@ -78,7 +79,14 @@ async function openSession(t: test.TestContext, base: string): Promise<string> {
   const note = await rpc(base, { jsonrpc: '2.0', method: 'notifications/initialized' }, sid);
   assert.ok(note.status === 200 || note.status === 202, `initialized notification → 2xx, got ${note.status}`);
   t.after(async () => {
-    await fetch(`${base}/mcp`, { method: 'DELETE', headers: { 'mcp-session-id': sid } }).catch(() => undefined);
+    // Session cleanup — bounded: when the test stopped the server first, a
+    // keep-alive-pooled socket can black-hole this request until undici's
+    // 300 s headersTimeout; by then there is nothing to clean up anyway.
+    await fetch(`${base}/mcp`, {
+      method: 'DELETE',
+      headers: { 'mcp-session-id': sid },
+      signal: AbortSignal.timeout(2_000),
+    }).catch(() => undefined);
   });
   return sid;
 }
@@ -240,6 +248,124 @@ test('legacy SSE transport: endpoint hand-off, POST /messages round-trip, stale 
   assert.ok(events.includes('ditto-edge-studio-vscode'), `initialize reply should name the server: ${events}`);
 });
 
+/** fetch() cannot override Host (forbidden header) — go through http directly. */
+function rawRequest(
+  url: string,
+  opts: { method?: string; headers?: Record<string, string>; body?: string } = {},
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, { method: opts.method ?? 'GET', headers: opts.headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('error', reject);
+    if (opts.body) { req.write(opts.body); }
+    req.end();
+  });
+}
+
+test('DNS-rebinding guard: a non-loopback Host is 403 on /mcp, /messages, and /sse; live Host still works', async (t) => {
+  const { service, base } = await startServer(t);
+  const port = service.port;
+  assert.ok(port);
+  const evilHost = { host: `attacker.example:${port}` };
+
+  const badInit = await rawRequest(`${base}/mcp`, {
+    method: 'POST',
+    headers: { ...evilHost, ...JSON_HEADERS },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'evil', version: '0' } },
+    }),
+  });
+  assert.equal(badInit.status, 403, `rebinding Host must not open a session: ${badInit.body}`);
+
+  const badMessages = await rawRequest(`${base}/messages?sessionId=whatever`, {
+    method: 'POST', headers: { ...evilHost, ...JSON_HEADERS }, body: '{}',
+  });
+  assert.equal(badMessages.status, 403);
+  assert.equal(service.sessionCount, 0, 'rejected requests never mint sessions');
+
+  const badSse = await rawRequest(`${base}/sse`, { headers: { ...evilHost, accept: 'text/event-stream' } });
+  assert.equal(badSse.status, 403);
+
+  // Health is deliberately unauthenticated and stays reachable.
+  const health = await rawRequest(`${base}/health`, { headers: evilHost });
+  assert.equal(health.status, 200);
+
+  // And ordinary loopback clients (fetch sets Host: 127.0.0.1:<port>) are unaffected.
+  const sid = await openSession(t, base);
+  assert.ok(sid.length > 0);
+});
+
+test('legacy SSE client disconnect tears the session down and the server stays healthy', async (t) => {
+  const { service, base } = await startServer(t);
+  const ctrl = new AbortController();
+  t.after(() => ctrl.abort());
+
+  const sseRes = await fetch(`${base}/sse`, {
+    headers: { Accept: 'text/event-stream' },
+    signal: ctrl.signal,
+  });
+  assert.equal(sseRes.status, 200);
+  assert.ok(sseRes.body);
+  assert.equal(service.sessionCount, 1, 'SSE session registered on connect');
+
+  ctrl.abort(); // the client goes away mid-stream
+  // Let the server observe the socket close and run the onclose chain. The
+  // regression being pinned: onclose -> server.close() -> transport.close()
+  // -> onclose used to recurse into RangeError (visible as stderr spam).
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(service.sessionCount, 0, 'session removed on client disconnect');
+
+  const health = await fetch(`${base}/health`);
+  assert.equal(await health.text(), 'OK', 'server survives a legacy client teardown');
+
+  // …and a fresh legacy client can still connect.
+  const ctrl2 = new AbortController();
+  t.after(() => ctrl2.abort());
+  const again = await fetch(`${base}/sse`, {
+    headers: { Accept: 'text/event-stream' },
+    signal: ctrl2.signal,
+  });
+  assert.equal(again.status, 200);
+  assert.equal(service.sessionCount, 1);
+});
+
+test('ditto://peers resource ships metadata key COUNTS only — never bodies', async (t) => {
+  const { base, bundle } = await startServer(t, { activeId: 'cfg-1' });
+  bundle.manager.state.snapshot = {
+    local: {
+      peerKey: 'local-1', deviceName: 'VS Code',
+      sdkLanguage: 'js', sdkPlatform: 'node', sdkVersion: '5.1.0',
+    },
+    remote: [{
+      id: 'peer-9', isDittoServer: false, deviceName: 'Pixel 8', os: 'Android',
+      dittoSdkVersion: '5.0.0', isConnectedToDittoServer: true,
+      peerMetadata: { role: 'kds-secret-value' },
+      identityMetadata: { a: '1', b: '2' },
+      connections: [{ id: 'c1', connectionType: 'P2PWiFi', peer1: 'local-1', peer2: 'peer-9' }],
+      syncSessionStatus: 'Connected', syncedUpToLocalCommitId: 55,
+    }],
+    presenceGraph: { remotePeers: [], connections: [] },
+  };
+  const sid = await openSession(t, base);
+  const res = await rpc(base, { jsonrpc: '2.0', id: 20, method: 'resources/read', params: { uri: 'ditto://peers' } }, sid);
+  assert.equal(res.status, 200);
+  const result = res.body.result as { contents: { text: string }[] };
+  const block = result.contents[0];
+  assert.ok(block);
+  assert.ok(!block.text.includes('kds-secret-value'),
+    'peer metadata VALUES must not cross the MCP wire via resources either — the doc invariant covers every surface');
+  const payload = JSON.parse(block.text) as { remote: Record<string, unknown>[] };
+  const peer = payload.remote[0];
+  assert.ok(peer);
+  assert.equal(peer.peerKey, 'peer-9');
+  assert.equal(peer.peerMetadataKeyCount, 1);
+  assert.equal(peer.identityMetadataKeyCount, 2);
+});
+
 test('resources/list + resources/read: ditto:// schema, peers, sync-status, subscriptions, system-metrics', async (t) => {
   const { base, bundle } = await startServer(t, {
     activeId: 'cfg-1',
@@ -328,8 +454,50 @@ test('resources return noConnection JSON (not protocol errors) while disconnecte
   assert.equal(payload.error, 'no_active_connection');
 });
 
+/** A free loopback port, probed then released for the subject to bind. */
+async function freePort(): Promise<number> {
+  const probe = http.createServer();
+  await new Promise<void>(r => probe.listen(0, '127.0.0.1', r));
+  const addr = probe.address();
+  assert.ok(addr && typeof addr === 'object');
+  const port = addr.port;
+  await new Promise<void>(r => { probe.close(() => r()); });
+  return port;
+}
+
+/** Rebind a listener the subject claims to have released — the only real
+ *  proof the socket is gone. A leaked listener fails this with EADDRINUSE;
+ *  hosts without IPv6 (EADDRNOTAVAIL) have nothing to leak, so that one
+ *  code is tolerated for the ::1 probe. */
+async function assertPortFree(t: test.TestContext, port: number, host: string): Promise<void> {
+  const probe = http.createServer();
+  t.after(() => new Promise<void>(r => { probe.close(() => r()); }));
+  await new Promise<void>((resolve, reject) => {
+    probe.once('error', (e: NodeJS.ErrnoException) => {
+      if (host === '::1' && e.code === 'EADDRNOTAVAIL') { resolve(); return; }
+      reject(e);
+    });
+    probe.listen(port, host, () => resolve());
+  });
+  assert.equal(probe.listening, true, `${host}:${port} should be re-bindable after stop()`);
+}
+
 test('stop() drains sessions and releases the port', async (t) => {
-  const { service, base } = await startServer(t);
+  // Explicit (non-ephemeral) port so the service binds BOTH the 127.0.0.1
+  // and ::1 listeners — the ephemeral path skips IPv6 by design, which
+  // would make a ::1 rebind assertion vacuous.
+  const port = await freePort();
+  const bundle = makeContext({ configs: [seedConfig()], activeId: 'cfg-1' });
+  const service = new McpServerService({
+    name: 'ditto-edge-studio-vscode',
+    version: '0.0.0-test',
+    register: (s) => { registerAllTools(s, bundle.ctx); registerAllResources(s, bundle.ctx); },
+    log: makeFakeLogger(),
+  });
+  await service.start(port);
+  t.after(() => service.stop().catch(() => { /* teardown best effort */ }));
+  const base = `http://127.0.0.1:${port}`;
+
   const sid = await openSession(t, base);
   assert.ok(service.sessionCount >= 1);
   await service.stop();
@@ -340,6 +508,11 @@ test('stop() drains sessions and releases the port', async (t) => {
     params: { name: 'list_databases', arguments: {} },
   }, sid).catch(() => null);
   assert.ok(res === null || res.status !== 200, 'stopped server must not keep serving sessions');
+  // "Releases the port" is only proven by taking it back: a server that
+  // refused the probe above while still holding a listener would pass
+  // without these. Both loopback families the service binds are checked.
+  await assertPortFree(t, port, '127.0.0.1');
+  await assertPortFree(t, port, '::1');
 });
 
 test('two servers can bind distinct ephemeral ports side by side', async (t) => {

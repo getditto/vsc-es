@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
+import * as vscode from 'vscode';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { ok, err } from './tool-result.js';
 import { requireActiveConfig } from './guards.js';
@@ -19,6 +22,63 @@ interface FetchArgs {
   overwrite: boolean;
 }
 
+/**
+ * Attachment bytes come from the Ditto store — and Ditto syncs data from
+ * OTHER peers, so the tool's arguments can be steered by untrusted synced
+ * content (prompt injection writes over ~/.zshrc, VS Code settings, etc.).
+ * The download therefore stays inside roots the user already owns as work
+ * areas: open workspace folders, the extension's global storage, and the
+ * OS temp directory. Roots are canonicalised so a symlinked workspace root
+ * still matches its real path.
+ */
+function allowedRoots(ctx: McpToolContext): string[] {
+  const roots: string[] = [];
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    roots.push(folder.uri.fsPath);
+  }
+  roots.push(ctx.globalStorageFsPath, os.tmpdir());
+  return roots.map((r) => {
+    try { return fsSync.realpathSync(r); } catch { return path.resolve(r); }
+  });
+}
+
+/** Resolve `saveToPath` to a canonical destination inside an allowed root
+ *  or explain the refusal. The nearest EXISTING ancestor is realpath'd so
+ *  a symlink component anywhere in the chain cannot escape the root
+ *  (e.g. `workspaceDir/evil -> /etc` makes `evil/passwd` resolve outside). */
+async function resolveDestination(
+  ctx: McpToolContext,
+  saveToPath: string,
+): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
+  const resolved = path.resolve(saveToPath);
+  let ancestor = path.dirname(resolved);
+  const missing: string[] = [];
+  for (;;) {
+    try {
+      ancestor = await fs.realpath(ancestor);
+      break;
+    } catch {
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) {
+        return { ok: false, reason: `No existing directory on the path: ${saveToPath}` };
+      }
+      missing.unshift(path.basename(ancestor));
+      ancestor = parent;
+    }
+  }
+  const canonical = path.join(ancestor, ...missing, path.basename(resolved));
+  const roots = allowedRoots(ctx);
+  if (!roots.some((r) => canonical === r || canonical.startsWith(r + path.sep))) {
+    return {
+      ok: false,
+      reason:
+        'save_to_path must be inside an open workspace folder, the extension storage ' +
+        `directory, or the OS temp directory: ${saveToPath}`,
+    };
+  }
+  return { ok: true, path: canonical };
+}
+
 async function fetchAttachment(ctx: McpToolContext, args: FetchArgs): Promise<CallToolResult> {
   requireActiveConfig(ctx);
   const len = typeof args.token.len === 'string' ? Number.parseInt(args.token.len, 10) : args.token.len;
@@ -31,28 +91,54 @@ async function fetchAttachment(ctx: McpToolContext, args: FetchArgs): Promise<Ca
   if (!path.isAbsolute(args.save_to_path)) {
     return err('save_to_path must be absolute.');
   }
-  try {
-    const stat = await fs.stat(args.save_to_path);
-    if (stat && !args.overwrite) {
-      return err(`File already exists: ${args.save_to_path}. Pass overwrite: true to replace it.`);
-    }
-  } catch { /* ENOENT is the expected path */ }
+  const dest = await resolveDestination(ctx, args.save_to_path);
+  if (!dest.ok) { return err(dest.reason); }
 
-  const fetcher = ctx.manager.fetchAttachment(
-    { id: args.token.id, len, metadata: args.token.metadata ?? {} },
-  );
-  if (!fetcher) { return err('No active session.'); }
-  const attachment = await fetcher;
-  if (!attachment) { return err('The attachment could not be fetched (deleted or unavailable).'); }
-  // Native store→disk copy: no JS-side byte materialization (same path the
-  // Inspector's Download action uses).
-  await ctx.manager.saveAttachmentToPath(attachment, args.save_to_path);
-  const written = await fs.stat(args.save_to_path).catch(() => null);
-  return ok({
-    savedTo: args.save_to_path,
-    bytes: written?.size ?? len,
-    attachmentId: args.token.id,
-  });
+  // overwrite:false claims the destination ATOMICALLY (exclusive create).
+  // The old stat-then-copy gap let a second caller pass the existence
+  // check while the first was still fetching, and the loser's file got
+  // clobbered — and it turns "exists?" into the answer at claim time, not
+  // at some earlier read.
+  const claimed = !args.overwrite;
+  if (claimed) {
+    try {
+      await fs.writeFile(dest.path, '', { flag: 'wx' });
+    } catch {
+      return err(`File already exists: ${dest.path}. Pass overwrite: true to replace it.`);
+    }
+  }
+
+  const dropClaim = async (): Promise<void> => {
+    // Our own exclusively-created placeholder — safe to remove, and a
+    // stranded 0-byte file would read as a successful 0-byte download.
+    if (claimed) { await fs.unlink(dest.path).catch(() => { /* best effort */ }); }
+  };
+
+  try {
+    const fetcher = ctx.manager.fetchAttachment(
+      { id: args.token.id, len, metadata: args.token.metadata ?? {} },
+    );
+    if (!fetcher) { await dropClaim(); return err('No active session.'); }
+    const attachment = await fetcher;
+    if (!attachment) {
+      await dropClaim();
+      return err('The attachment could not be fetched (deleted or unavailable).');
+    }
+    // Native store→disk copy: no JS-side byte materialization (same path the
+    // Inspector's Download action uses).
+    await ctx.manager.saveAttachmentToPath(attachment, dest.path);
+    const written = await fs.stat(dest.path).catch(() => null);
+    return ok({
+      // Report the path as requested — the canonical destination resolves
+      // to the same file, and callers think in their own paths.
+      savedTo: args.save_to_path,
+      bytes: written?.size ?? len,
+      attachmentId: args.token.id,
+    });
+  } catch (e) {
+    await dropClaim();
+    throw (e instanceof Error ? e : new Error(String(e)));
+  }
 }
 
 export const attachmentTools: ToolDef[] = [
@@ -60,15 +146,17 @@ export const attachmentTools: ToolDef[] = [
     name: 'fetch_attachment',
     description:
       'Download a document attachment (token copied from an execute_dql row: the object with ' +
-      'id/len/metadata) straight to a local file path. Refuses to overwrite existing files ' +
-      'unless overwrite is true. Bytes never enter the conversation.',
+      'id/len/metadata) straight to a local file. save_to_path must be absolute and inside an ' +
+      'open workspace folder, the extension storage directory, or the OS temp directory. ' +
+      'Refuses to overwrite existing files unless overwrite is true. Bytes never enter the conversation.',
     schema: {
       token: z.object({
         id: z.string().min(1),
         len: z.union([z.number(), z.string()]).describe('Byte length from the token (bigint may arrive as a string in JSON).'),
         metadata: z.record(z.string()).optional(),
       }),
-      save_to_path: z.string().min(1).describe('Absolute destination path.'),
+      save_to_path: z.string().min(1)
+        .describe('Absolute destination path (must be inside an open workspace folder, extension storage, or the OS temp dir).'),
       overwrite: z.boolean().default(false),
     },
     handler: (ctx, args: FetchArgs) => fetchAttachment(ctx, args),

@@ -10,3 +10,6 @@ sbom.json
 
 # test-injector generated datasets (schema is committed; data is generated on demand)
 scripts/test-injector/data/
+
+# local scratch captures — never committed, never shipped
+screens/

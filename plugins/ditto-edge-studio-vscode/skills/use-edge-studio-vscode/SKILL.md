@@ -77,7 +77,7 @@ Use the Ditto Edge Studio **VS Code extension** MCP server to query and manage t
 | `get_app_logs` | `lines?`≤2000, `filter?` substring | Extension log, redacted. |
 | `get_ditto_logs` | `+ level?` min severity | Ditto-origin tags only (`sdk`/`transport`/`connection-request`). |
 | `query_log_analyzer` | `level?`, `source?`, `search?`, `limit?`, `offset?` | Pattern-flagged problems, paged. First call backfills (slow is normal). |
-| `fetch_attachment` | `token` (id/len/metadata from a row), `save_to_path` (absolute), `overwrite?` | Streams to disk; never returns bytes. |
+| `fetch_attachment` | `token` (id/len/metadata from a row), `save_to_path` (absolute; workspace folder, extension storage, or OS temp only), `overwrite?` | Streams to disk; never returns bytes. |
 
 ## Resources (`resources/read`)
 

@@ -44,9 +44,11 @@ export function registerAllTools(server: McpServer, ctx: McpToolContext): void {
     server.registerTool(
       def.name,
       { description: def.description, inputSchema: def.schema },
-      async (args) => {
+      async (args, extra) => {
         try {
-          return await def.handler(ctx, args);
+          // extra.signal fires on notifications/cancelled and on session
+          // close — forward it so long-running tools can bail out.
+          return await def.handler(ctx, args, { signal: extra.signal });
         } catch (e) {
           return toolErr(e instanceof Error ? e.message : String(e));
         }

@@ -25,7 +25,7 @@ connection**, not globally:
    flag stops it).
 
 While it runs, a status-bar item (`⎇ plug Ditto MCP :65270`) is visible —
-click it to copy a client config snippet. Command Palette shortcuts:
+click it for a status modal. Command Palette shortcuts:
 **Ditto: Start MCP Server** / **Stop MCP Server** flip the flag on the active
 connection; **Ditto: Copy MCP Client Config** copies the snippet regardless.
 
@@ -69,19 +69,31 @@ Copilot agent mode: nothing to configure — the extension advertises the
 running server via `vscode.lm.registerMcpServerDefinitionProvider`, so its
 tools appear in the agent tool picker automatically whenever the server is up.
 
-Smoke test (stateless, no session header):
+Smoke test (sessions are stateful — initialize first, then send the
+returned `Mcp-Session-Id` header):
 
 ```sh
+# 1. Initialize; the session id comes back in a response header.
+curl -sD - -X POST http://127.0.0.1:65270/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}'
+
+# 2. Notify initialized, then call — both with the header from step 1.
 curl -X POST http://127.0.0.1:65270/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+  -H 'Mcp-Session-Id: <id from step 1>' \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+curl -X POST http://127.0.0.1:65270/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'Mcp-Session-Id: <id from step 1>' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 ```
 
 Liveness without a client: `curl http://127.0.0.1:65270/health` → `OK`.
-(Sessions are stateful: the first POST to `/mcp` must be an `initialize`
-request; afterwards clients send the `Mcp-Session-Id` header. Use a real MCP
-client for anything beyond the health check.)
 
 ### When /health fails
 
@@ -111,6 +123,9 @@ client for anything beyond the health check.)
 - Requests are capped at 4 MiB; unknown/expired session ids are rejected with
   404 **before** the message reaches a tool, so a client retry after a server
   restart cannot double-apply a mutation.
+- DNS-rebinding protection: requests whose `Host` header is not the bound
+  loopback name/port (`127.0.0.1`, `localhost`, `[::1]`) are refused 403, so a
+  browser page on a rebound domain cannot reach the endpoints same-origin.
 - Tool output never contains credentials: `list_databases` /
   `get_active_database` return config metadata only (`httpApiConfigured` is a
   boolean, not the key). Log tools read the extension's own log file, which is
@@ -120,7 +135,11 @@ client for anything beyond the health check.)
 - All collection/field/index identifiers are backtick-quoted
   (`quoteIdentifier`/`quoteFieldPath`); nothing is interpolated raw into DQL.
 - Attachments never enter the conversation: `fetch_attachment` streams
-  store→disk via the SDK's native copy (512 MB cap).
+  store→disk via the SDK's native copy (512 MB cap). Because attachment
+  bytes and tool arguments can be steered by synced (untrusted) documents,
+  downloads are confined to an open workspace folder, the extension storage
+  directory, or the OS temp directory — symlink escapes are resolved away —
+  and `overwrite:false` claims the destination atomically.
 
 ## Error conventions
 
@@ -197,7 +216,7 @@ target connection is active. All four CRUD tools accept `database`
 | `get_app_logs` `{lines?, filter?}` | Extension log (all subsystems), newest last. |
 | `get_ditto_logs` `{lines?, filter?, level?}` | Ditto-origin tags (`sdk`, `transport`, `connection-request`) with optional minimum severity. |
 | `query_log_analyzer` `{level?, source?, search?, limit?, offset?}` | The Log Analyzer engine as a tool: pattern-flagged problems, level/source filters, paged results. First call per connection backfills to connect time. |
-| `fetch_attachment` `{token, save_to_path, overwrite?}` | Storage token from a query row → stream to an absolute path. Existence/`overwrite` guards. |
+| `fetch_attachment` `{token, save_to_path, overwrite?}` | Storage token from a query row → stream to an absolute path inside a workspace folder, extension storage, or the OS temp dir. Atomic existence/`overwrite` guards. |
 
 ## Resources (`resources/read`)
 

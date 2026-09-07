@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpToolContext } from './context.js';
 import { resolveConnection } from './guards.js';
-import { buildSyncStatusPayload } from './tools-sync.js';
+import { buildSyncStatusPayload, peerToJson } from './tools-sync.js';
 
 /**
  * Read-only MCP resources — point-in-time JSON snapshots agents can fetch
@@ -67,7 +67,15 @@ export function registerAllResources(server: McpServer, ctx: McpToolContext): vo
     async (uri) => {
       if (!ctx.manager.getActiveConfigId()) { return noConnection(uri.href, 'ditto://peers'); }
       const snap = ctx.manager.getLatestSnapshot();
-      return jsonContents(uri.href, snap);
+      // The snapshot's remote rows (PeerInfo) carry peerMetadata /
+      // identityMetadata BODIES; MCP ships counts only, same as the
+      // get_peers tool (LocalPeerInfo and RawPresenceGraph are already
+      // counts-only and can ride as-is).
+      return jsonContents(uri.href, {
+        local: snap.local,
+        remote: snap.remote.map(peerToJson),
+        presenceGraph: snap.presenceGraph,
+      });
     },
   );
 

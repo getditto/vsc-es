@@ -40,8 +40,8 @@
     "peer-to-peer",
     "database"
   ],
-    "activationEvents": [],
-    "contributes": {
+  "activationEvents": [],
+  "contributes": {
     "mcpServerDefinitionProviders": [
       { "id": "ditto-edge-studio", "label": "Ditto Edge Studio" }
     ],
@@ -518,7 +518,7 @@
           "minimum": 0,
           "maximum": 65535,
           "scope": "machine",
-          "description": "TCP port the MCP server binds on 127.0.0.1 (and ::1) while a connection with MCP Server enabled (Edit Configuration → Advanced) is active. Default 65270 — the SwiftUI Edge Studio app uses 65269, so both can run side by side. Applies on next start."
+          "description": "TCP port the MCP server binds on 127.0.0.1 (and ::1) while a connection with MCP Server enabled (Edit Configuration → Advanced) is active. Default 65270 — the SwiftUI Edge Studio app uses 65269, so both can run side by side. Applies immediately (restarts the listener when running) or on next start."
         },
         "dittoVsce.logAnalyzer.customPatternsFile": {
           "type": "string",

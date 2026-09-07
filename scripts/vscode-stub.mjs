@@ -68,6 +68,9 @@ export const Uri = {
 // __resetStub() clears it so overrides never leak between tests.
 export const workspace = {
   configValues: {},
+  // Open workspace folders (the fetch_attachment root allowlist reads
+  // this). Tests set it per case; __resetStub() clears it.
+  workspaceFolders: [],
   getConfiguration(section) {
     const values = workspace.configValues[section] ?? {};
     return {
@@ -329,6 +332,7 @@ export function __resetStub() {
   window.lastInputBoxValidate = undefined;
   workspace.fsStatSize = 0;
   workspace.configValues = {};
+  workspace.workspaceFolders = [];
   commands.executed.length = 0;
   commands.executeCommandError = undefined;
   env.clipboardText = '';

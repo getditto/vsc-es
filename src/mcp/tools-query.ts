@@ -77,12 +77,20 @@ async function insertDocumentsFromFile(ctx: McpToolContext, args: InsertFromFile
   requireActiveConfig(ctx);
   let raw: string;
   try {
-    const st = await fs.stat(args.file_path);
-    if (!st.isFile()) { return err(`Not a file: ${args.file_path}`); }
-    if (st.size > MAX_IMPORT_FILE_BYTES) {
-      return err(`File is ${Math.round(st.size / (1024 * 1024))} MB — the import cap is ${MAX_IMPORT_FILE_BYTES / (1024 * 1024)} MB.`);
+    // One descriptor for the size check AND the read: stat-then-readFile on
+    // a path is a file-system race (CodeQL js/file-system-race) — the target
+    // could be swapped to something larger or unreadable between the calls.
+    const handle = await fs.open(args.file_path);
+    try {
+      const st = await handle.stat();
+      if (!st.isFile()) { return err(`Not a file: ${args.file_path}`); }
+      if (st.size > MAX_IMPORT_FILE_BYTES) {
+        return err(`File is ${Math.round(st.size / (1024 * 1024))} MB — the import cap is ${MAX_IMPORT_FILE_BYTES / (1024 * 1024)} MB.`);
+      }
+      raw = await handle.readFile('utf8');
+    } finally {
+      void handle.close().catch(() => { /* read errors above already reported */ });
     }
-    raw = await fs.readFile(args.file_path, 'utf8');
   } catch (e) {
     return errFrom(e);
   }

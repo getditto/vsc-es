@@ -13,6 +13,9 @@ import * as path from 'node:path';
 
 const { makeContext, seedConfig } = await import('./fixtures/mcp-fakes.js');
 const { SystemMetricsHub } = await import('../ditto/SystemMetricsHub.js');
+const vscodeStub = await import('vscode') as unknown as {
+  workspace: { workspaceFolders: { uri: { fsPath: string } }[] };
+};
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolDef } from '../mcp/define-tool.js';
@@ -423,6 +426,40 @@ test('watch_query stops early at max_events', async () => {
   assert.equal(payload.eventCount, 2);
 });
 
+test('watch_query honors the MCP abort signal (notifications/cancelled, session close)', async () => {
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.observerHarness = {
+    cancelCalls: 0,
+    onRegister() { /* no events needed — the cancel path is under test */ },
+  };
+  const ac = new AbortController();
+  const run = find(observerTools, 'watch_query').handler(
+    bundle.ctx,
+    { query: 'SELECT * FROM t', duration_ms: 30_000, max_events: 100, max_rows_per_event: 5 },
+    { signal: ac.signal },
+  );
+  ac.abort();
+  const payload = obj(await run);
+  assert.equal(payload.stoppedBy, 'cancelled');
+  assert.equal(payload.eventCount, 0);
+  assert.equal(bundle.manager.state.observerHarness.cancelCalls, 1,
+    'the store observer is cancelled instead of outliving the aborted call');
+});
+
+test('watch_query with a pre-aborted signal finishes immediately', async () => {
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.observerHarness = { cancelCalls: 0, onRegister() { /* noop */ } };
+  const ac = new AbortController();
+  ac.abort();
+  const payload = obj(await find(observerTools, 'watch_query').handler(
+    bundle.ctx,
+    { query: 'SELECT * FROM t', duration_ms: 30_000, max_events: 100, max_rows_per_event: 5 },
+    { signal: ac.signal },
+  ));
+  assert.equal(payload.stoppedBy, 'cancelled');
+  assert.equal(bundle.manager.state.observerHarness.cancelCalls, 1);
+});
+
 test('watch_query rejects non-SELECT and errors without a session', async () => {
   const bundle = makeContext({ activeId: 'cfg-1' });
   const bad = await find(observerTools, 'watch_query').handler(bundle.ctx, {
@@ -498,7 +535,11 @@ test('fetch_attachment streams the blob to disk via the native copy path', async
   assert.equal(payload.savedTo, dest);
   assert.equal(payload.bytes, 7);
   assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
-  assert.deepEqual(bundle.manager.state.attachmentScript.savedTo, [dest]);
+  // The native copier receives the CANONICAL path (symlink-resolved): the
+  // root-containment check and the write must act on the same target.
+  // os.tmpdir() itself is symlinked on macOS (/var → /private/var).
+  const canonicalDest = path.join(fs.realpathSync(dir), 'photo.png');
+  assert.deepEqual(bundle.manager.state.attachmentScript.savedTo, [canonicalDest]);
 });
 
 test('fetch_attachment guards: bad len, relative path, no overwrite without the flag', async (t) => {
@@ -528,4 +569,94 @@ test('fetch_attachment guards: bad len, relative path, no overwrite without the 
   const missing = await tool.handler(bundle.ctx, { token: { id: 'a', len: 5 }, save_to_path: path.join(dir, 'fresh'), overwrite: true });
   assert.equal(missing.isError, true);
   assert.match(errText(missing), /could not be fetched/);
+});
+
+function pngScript(): NonNullable<ReturnType<typeof makeContext>['manager']['state']['attachmentScript']> {
+  const fetchCalls: { id: string }[] = [];
+  const savedTo: string[] = [];
+  return {
+    fetchCalls,
+    savedTo,
+    fetch: () => Promise.resolve({
+      copyToPath: (d: string) => { fs.writeFileSync(d, Buffer.from('PNGDATA')); return Promise.resolve(); },
+    }),
+  };
+}
+
+test('fetch_attachment confines downloads to workspace / extension-storage / OS-temp roots', async (t) => {
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.attachmentScript = pngScript();
+  const tool = find(attachmentTools, 'fetch_attachment');
+
+  // Attachment bytes come from SYNCED documents — another peer's content can
+  // steer this argument (prompt injection), so arbitrary user files must be
+  // unreachable. Nothing outside the owned roots may even be probed.
+  const outside = await tool.handler(bundle.ctx, {
+    token: { id: 'att-root', len: 7 }, save_to_path: '/etc/mcp-owned-test.bin', overwrite: true,
+  });
+  assert.equal(outside.isError, true);
+  assert.match(errText(outside), /workspace folder|temp directory/);
+  assert.equal(bundle.manager.state.attachmentScript.fetchCalls.length, 0, 'refused before any fetch');
+
+  // Symlinks cannot smuggle a path out of an allowed root either.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.symlinkSync('/etc', path.join(dir, 'etc-link'));
+  const viaSymlink = await tool.handler(bundle.ctx, {
+    token: { id: 'att-sym', len: 7 }, save_to_path: path.join(dir, 'etc-link', 'mcp-owned-test.bin'), overwrite: true,
+  });
+  assert.equal(viaSymlink.isError, true, 'a symlink component escaping the root is refused');
+  assert.equal(bundle.manager.state.attachmentScript.fetchCalls.length, 0, 'refused before any fetch');
+
+  // An open workspace folder IS an owned root.
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-ws-'));
+  t.after(() => fs.rmSync(workspaceDir, { recursive: true, force: true }));
+  vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: workspaceDir } }];
+  t.after(() => { vscodeStub.workspace.workspaceFolders = []; });
+  const inWorkspace = await tool.handler(bundle.ctx, {
+    token: { id: 'att-ws', len: 7 }, save_to_path: path.join(workspaceDir, 'ok.bin'), overwrite: false,
+  });
+  assert.equal(inWorkspace.isError ?? false, false, `workspace path should be allowed: ${errText(inWorkspace)}`);
+  assert.equal(fs.readFileSync(path.join(workspaceDir, 'ok.bin'), 'utf8'), 'PNGDATA');
+});
+
+test('fetch_attachment overwrite:false claims the destination atomically — concurrent pair, one winner', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dest = path.join(dir, 'race.bin');
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.attachmentScript = pngScript();
+  const tool = find(attachmentTools, 'fetch_attachment');
+  const args = { token: { id: 'att-race', len: 7 }, save_to_path: dest, overwrite: false };
+
+  const [first, second] = await Promise.all([
+    tool.handler(bundle.ctx, args),
+    tool.handler(bundle.ctx, args),
+  ]);
+  const outcomes = [first, second].map(r => r.isError ?? false);
+  assert.deepEqual(outcomes.sort(), [false, true], 'exactly one concurrent caller may win the path');
+  assert.match(errText([first, second].find(r => r.isError) as CallToolResult), /already exists/);
+  assert.equal(bundle.manager.state.attachmentScript.fetchCalls.length, 1, 'the loser never fetches');
+  assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
+});
+
+test('fetch_attachment removes its claim placeholder when the download fails', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dest = path.join(dir, 'will-fail.bin');
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.attachmentScript = {
+    fetchCalls: [],
+    savedTo: [],
+    fetch: () => Promise.resolve({
+      copyToPath: () => Promise.reject(new Error('disk full')),
+    }),
+  };
+  const tool = find(attachmentTools, 'fetch_attachment');
+  const res = await tool.handler(bundle.ctx, {
+    token: { id: 'att-fail', len: 7 }, save_to_path: dest, overwrite: false,
+  });
+  assert.equal(res.isError, true);
+  assert.match(errText(res), /disk full/);
+  assert.equal(fs.existsSync(dest), false, 'a failed download must not strand a 0-byte claim file');
 });

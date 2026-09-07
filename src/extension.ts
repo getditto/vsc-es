@@ -53,6 +53,7 @@ import { PatternEngine } from './logAnalyzer/PatternEngine.js';
 import { PatternStore } from './logAnalyzer/PatternStore.js';
 import { ConnectionTracker } from './logAnalyzer/ConnectionTracker.js';
 import { LogAnalyzerService } from './logAnalyzer/LogAnalyzerService.js';
+import { LogAnalyzerRegistry } from './logAnalyzer/LogAnalyzerRegistry.js';
 import { LogAnalyzerPanel } from './panels/LogAnalyzerPanel.js';
 import { PatternEditorPanel } from './panels/PatternEditorPanel.js';
 import {
@@ -372,20 +373,27 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const extensionVersion =
     (context.extension?.packageJSON as { version?: unknown } | undefined)?.version as string | undefined
     ?? '0.0.0';
+  // Tracks when each database last entered the 'active' lifecycle state.
+  // The Log Analyzer uses this as a backfill floor so its histograms only
+  // reflect the current connection — not weeks of rotated log history.
+  // The entry clears on disconnect so reconnecting gives a fresh timestamp.
+  const connectedAt = new Map<string, Date>();
+  let lastActiveConfigId: string | null = null;
+
   // MCP-owned analyzer services, one per connection, torn down with the
   // session (mirrors the panel's per-DB instances closing on disconnect).
-  const mcpAnalyzers = new Map<string, LogAnalyzerService>();
-  const openMcpLogAnalyzer = async (configId: string): Promise<LogAnalyzerService> => {
-    const existing = mcpAnalyzers.get(configId);
-    if (existing) { return existing; }
-    const service = makeAnalyzerService();
+  // The registry single-flights concurrent opens (an orphaned second
+  // service would leak its live sink subscription past disconnect) and
+  // rejects an open whose connection dropped mid-backfill.
+  const mcpAnalyzers = new LogAnalyzerRegistry<LogAnalyzerService>(
+    makeAnalyzerService,
     // Backfill to the connection's connect-time floor — otherwise a week's
     // rotated history belongs to this "session's" problem counts.
-    const backfill = await logger.readRecentLogLines(LogAnalyzerService.BACKFILL_LINE_LIMIT);
-    service.start({ backfillLines: backfill, minTimestamp: connectedAt.get(configId) });
-    mcpAnalyzers.set(configId, service);
-    return service;
-  };
+    () => logger.readRecentLogLines(LogAnalyzerService.BACKFILL_LINE_LIMIT),
+    (configId) => connectedAt.get(configId),
+    (configId) => manager.getActiveConfigId() === configId,
+  );
+  const openMcpLogAnalyzer = (configId: string): Promise<LogAnalyzerService> => mcpAnalyzers.open(configId);
 
   const mcpToolContext: McpToolContext = {
     manager,
@@ -417,14 +425,6 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     void mcpController.syncToActiveConnection();
   }));
 
-
-  // Tracks when each database last entered the 'active' lifecycle state.
-  // The Log Analyzer uses this as a backfill floor so its histograms only
-  // reflect the current connection — not weeks of rotated log history.
-  // Map clears the entry on disconnect so reconnecting gives a fresh
-  // timestamp.
-  const connectedAt = new Map<string, Date>();
-  let lastActiveConfigId: string | null = null;
 
   context.subscriptions.push(manager.onLifecycleStateChange(state => {
     if (state.kind === 'active') {
@@ -466,9 +466,10 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       // a fresh view rather than carrying stale problems across sessions.
       LogAnalyzerPanel.dispose();
       // MCP-owned analyzers die with the session too (same per-DB
-      // reasoning as the panel instances).
-      for (const svc of mcpAnalyzers.values()) { svc.dispose(); }
-      mcpAnalyzers.clear();
+      // reasoning as the panel instances). disposeAll also invalidates any
+      // open still awaiting its backfill — that open disposes its fresh
+      // service and rejects rather than resurrecting past teardown.
+      mcpAnalyzers.disposeAll();
       if (lastActiveConfigId) {
         connectedAt.delete(lastActiveConfigId);
         lastActiveConfigId = null;
@@ -537,11 +538,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         inspectorView.pushSettings();
       }
       if (e.affectsConfiguration('dittoVsce.mcpServer')) {
-        void mcpController.reconcile();
-      }
-      if (e.affectsConfiguration('dittoVsce.mcpServer.port')) {
-        // Port moves restart the listener when it's running (the flag's
-        // on/off state is per-connection, on StoredDittoConfig).
+        // Covers dittoVsce.mcpServer.port too (affectsConfiguration is a
+        // prefix match): port moves restart the listener when it's running
+        // (the flag's on/off state is per-connection, on StoredDittoConfig).
         void mcpController.reconcile();
       }
       if (e.affectsConfiguration('dittoVsce.logAnalyzer.customPatternsFile')) {

@@ -751,7 +751,7 @@ mode) for the last steps.
    The status bar shows `⎇ plug Ditto MCP :65270`.
 3. `curl http://127.0.0.1:65270/health` → `OK`.
 4. From another shell with nothing connected to the port, run a real client
-   (or the stateless check below). In **Claude Code**, Command Palette →
+   (or the initialize smoke test in `docs/MCP_SERVER.md`). In **Claude Code**, Command Palette →
    **Ditto: Copy MCP Client Config**, paste into `.mcp.json`, and ask it to
    run `list_databases` → your connections appear; `get_active_database` →
    shows the active one with `httpApiConfigured` boolean and **no token or

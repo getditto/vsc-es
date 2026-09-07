@@ -78,6 +78,9 @@ export class McpServerService {
    *  keep the listener port held open past server.close()). */
   private readonly sockets = new Set<import('node:net').Socket>();
   private boundPort: number | undefined;
+  /** Set while stop() is draining: a late session-initialized callback must
+   *  close immediately instead of re-populating the (cleared) session map. */
+  private stopping = false;
   private readonly log: Logger;
 
   constructor(private readonly opts: McpServerServiceOptions) {
@@ -96,6 +99,7 @@ export class McpServerService {
 
   async start(port: number): Promise<void> {
     if (this.httpServers.length > 0) { return; }
+    this.stopping = false;
     const primary = await this.listen(port, '127.0.0.1');
     this.httpServers.push(primary);
     // Honour OS-assigned ports (tests pass 0 for an ephemeral listener —
@@ -139,6 +143,7 @@ export class McpServerService {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     const servers = this.httpServers;
     this.httpServers = [];
     this.boundPort = undefined;
@@ -170,6 +175,16 @@ export class McpServerService {
       if (path === '/health' && method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('OK');
+        return;
+      }
+
+      // Loopback bind stops hostile networks, but a browser page on a
+      // DNS-rebinding domain arrives with a non-loopback Host as SAME-origin
+      // (bypassing CORS). Reject any Host we did not bind, before dispatch.
+      // (Per-session transports carry the SDK's own protection too.)
+      if (!this.hostAllowed(req)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end(`Invalid Host header: ${req.headers.host ?? '(none)'}`);
         return;
       }
 
@@ -256,7 +271,16 @@ export class McpServerService {
       // response). SwiftUI parity: curl and other simple clients read the
       // JSON-RPC response straight out of the body.
       enableJsonResponse: true,
+      // Belt-and-suspenders next to the router-level hostAllowed guard.
+      enableDnsRebindingProtection: true,
+      allowedHosts: this.allowedHosts(),
       onsessioninitialized: (sid) => {
+        // An initialize already in flight when stop() began must not
+        // re-populate the drained session map.
+        if (this.stopping) {
+          void transport.close().catch(() => { /* best effort */ });
+          return;
+        }
         this.sessions.set(sid, entry);
         // info (not debug): "did any agent ever reach us?" is the first
         // triage question when the server is up but a client is silent.
@@ -271,9 +295,15 @@ export class McpServerService {
     const server = this.newSessionServer();
     const entry: SessionEntry = { transport, server };
     transport.onclose = () => {
+      // StreamableHTTP transport.close() is _closed-guarded in the SDK, but
+      // keep this idempotent so no SDK change can re-open a close() ->
+      // onclose -> close() loop (the legacy SSE path needs exactly this —
+      // see handleLegacySseConnect).
       const sid = transport.sessionId;
-      if (sid) { this.sessions.delete(sid); }
-      void server.close().catch(() => { /* best effort */ });
+      const removed = sid !== undefined && this.sessions.delete(sid);
+      if (removed) {
+        void server.close().catch(() => { /* best effort */ });
+      }
     };
     await server.connect(transport as unknown as McpTransport);
     await transport.handleRequest(req, res, body);
@@ -282,12 +312,19 @@ export class McpServerService {
   // ─── Legacy HTTP+SSE (SwiftUI-spec transport) ───────────────
 
   private async handleLegacySseConnect(res: http.ServerResponse): Promise<void> {
-    const transport = new SSEServerTransport('/messages', res);
+    const transport = new SSEServerTransport('/messages', res, {
+      enableDnsRebindingProtection: true,
+      allowedHosts: this.allowedHosts(),
+    });
     const server = this.newSessionServer();
     const entry: SessionEntry = { transport, server };
     transport.onclose = () => {
-      this.sessions.delete(transport.sessionId);
-      void server.close().catch(() => { /* best effort */ });
+      // Idempotent: SSEServerTransport.close() re-fires onclose with no
+      // re-entrancy guard, and Protocol.close() -> transport.close() ->
+      // onclose -> server.close() recurses until RangeError otherwise.
+      if (this.sessions.delete(transport.sessionId)) {
+        void server.close().catch(() => { /* best effort */ });
+      }
     };
     this.sessions.set(transport.sessionId, entry);
     this.log.info('MCP client session initialized', { sessionId: transport.sessionId, transport: 'sse', sessions: this.sessions.size });
@@ -312,6 +349,22 @@ export class McpServerService {
   }
 
   // ─── helpers ────────────────────────────────────────────────
+
+  /** Host-header allowlist for the SDK's DNS-rebinding protection: exactly
+   *  the loopback names this service binds, with the bound port. */
+  private allowedHosts(): string[] {
+    const port = this.boundPort;
+    if (port === undefined) { return []; }
+    return [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
+  }
+
+  /** Router-level DNS-rebinding guard: only Host names this service bound
+   *  may reach the MCP endpoints (health stays open for liveness probes). */
+  private hostAllowed(req: http.IncomingMessage): boolean {
+    const hosts = this.allowedHosts();
+    const host = req.headers.host;
+    return hosts.length === 0 || (host !== undefined && hosts.includes(host));
+  }
 
   private newSessionServer(): McpServer {
     // Capabilities are declared by registration: McpServer.registerTool /
