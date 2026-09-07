@@ -399,7 +399,8 @@ interface DbMetricsCollectionStats {
   cborPayloadBytes: number;
 }
 
-interface DbMetricsSnapshot {
+/** Exported for the webview element — it renders this shape row by row. */
+export interface DbMetricsSnapshot {
   storeBytes: number;
   replicationBytes: number;
   attachmentsBytes: number;

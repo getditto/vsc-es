@@ -8,7 +8,7 @@ import type { Logger } from '../logging/types.js';
  *  only directive standing between an injected `<script>` and execution, and
  *  a predictable nonce is one an attacker who can inject markup can simply
  *  guess or replay. 128 bits, base64url so it needs no HTML escaping. */
-function nonce(): string {
+export function webviewNonce(): string {
   return randomBytes(16).toString('base64url');
 }
 
@@ -70,7 +70,7 @@ export function autoRevealInspectorOnce(context: vscode.ExtensionContext): void 
 }
 
 export function panelHtml({ title, scriptUri, cspSource, styleUri }: PanelHtmlOptions): string {
-  const n = nonce();
+  const n = webviewNonce();
   const styleLink = styleUri ? `<link rel="stylesheet" href="${styleUri.toString()}">` : '';
   return `<!DOCTYPE html>
 <html lang="en">

@@ -191,18 +191,28 @@ export class ImportSubscriptionsPanel {
       };
       try {
         await this.subs.save(this.databaseId, sub);
-        // Register the subscription with the running SDK if this is the
-        // active connection — keeps imported subscriptions live without
-        // requiring a reconnect, matching the new-subscription flow.
-        if (this.manager.getActiveConfigId() === this.databaseId) {
-          this.manager.registerSubscription(sub.id, sub.query);
-        }
-        imported += 1;
       } catch (err) {
         log.warn('Failed to save imported subscription', {
           query,
           err: err instanceof Error ? err.message : String(err),
         });
+        continue;
+      }
+      imported += 1;
+      // Register the subscription with the running SDK if this is the
+      // active connection — keeps imported subscriptions live without
+      // requiring a reconnect, matching the new-subscription flow.
+      // Registration throws on invalid DQL; that's a separate failure
+      // from the (successful) save, so don't mis-report it as one.
+      if (this.manager.getActiveConfigId() === this.databaseId) {
+        try {
+          this.manager.registerSubscription(sub.id, sub.query);
+        } catch (err) {
+          log.warn('Imported subscription saved but could not start on this connection', {
+            query,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     }
     // The CollectionsRepository's live __collections observer picks

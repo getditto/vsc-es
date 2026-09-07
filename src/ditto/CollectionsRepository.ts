@@ -45,9 +45,18 @@ export class CollectionsRepository {
   /** Synchronous reader for tree provider. */
   current(): DittoCollection[] { return this._collections; }
 
-  /** Initial cache load + start the live observer. Fired on lifecycle-active. */
+  /** Initial cache load + start the live observer. Fired on lifecycle-active.
+   *  Never rejects: a transient hydrate failure must not skip the observer —
+   *  it is what heals the cache once the store recovers, and skipping it
+   *  leaves collections dead for the whole session (nothing re-invokes
+   *  load()). */
   async load(): Promise<void> {
-    await this.hydrate('load');
+    try {
+      await this.hydrate('load');
+    } catch {
+      // Already logged + cache emptied inside hydrate(); the rethrow exists
+      // for the manual refresh command's error surface, not for this path.
+    }
     this.startObserver();
   }
 

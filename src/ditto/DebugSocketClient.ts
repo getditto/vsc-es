@@ -84,6 +84,12 @@ export class DebugSocketClient {
   private pending: PendingRequest[] = [];
   private socketPath = '';
   private currentState: DebugSocketState = 'disconnected';
+  /** Settles the in-flight connect()'s promise, if any. Held on the instance
+   *  (not just the socket closures) so disconnect() can settle a mid-flight
+   *  connect — the socket handlers bail on the stale-socket guard once
+   *  `this.socket` is cleared, so without this the caller's `await connect()`
+   *  would stay pending forever. */
+  private pendingConnectSettle: ((err?: Error) => void) | undefined;
 
   private readonly requestTimeoutMs: number;
   private readonly maxLineBytes: number;
@@ -129,6 +135,7 @@ export class DebugSocketClient {
       const settleConnect = (err?: Error): void => {
         if (settled) { return; }
         settled = true;
+        this.pendingConnectSettle = undefined;
         if (err) {
           // Never connected: 'close' will follow and run the normal teardown.
           reject(err);
@@ -153,6 +160,8 @@ export class DebugSocketClient {
         this.failAll(`Debug socket error: ${err.message}`);
         // 'close' fires after 'error'; the close handler ends the state.
       });
+      this.pendingConnectSettle = settleConnect;
+
       socket.on('close', () => {
         // A stale socket finishing its teardown after a reconnect must not
         // touch the replacement connection's decoder, pending queue, or state.
@@ -208,6 +217,13 @@ export class DebugSocketClient {
 
   /** Idempotent teardown. Pending requests resolve with an error result. */
   disconnect(): void {
+    // Settle a mid-flight connect BEFORE clearing `this.socket`: the socket
+    // event handlers only settle via their `this.socket === socket` guard,
+    // so once the socket is cleared nothing else can resolve connect()'s
+    // promise and the awaiting caller would hang.
+    const settleConnect = this.pendingConnectSettle;
+    this.pendingConnectSettle = undefined;
+    settleConnect?.(new Error('Disconnected while the debug socket was still connecting'));
     this.failAll('Disconnected from the debug socket');
     const socket = this.socket;
     this.socket = undefined;

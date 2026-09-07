@@ -11,30 +11,13 @@ import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost, HostMessages } from '../shared/messaging.js';
 
-interface CollectionStats {
-  name: string;
-  documentCount: number;
-  cborPayloadBytes: number;
-}
+// Wire shapes come straight from the IPC contract — hand-mirroring them
+// here would silently compile clean on both sides the day they drift.
+import type {
+  DbMetricsOut, DbMetricsSnapshot,
+} from '../../src/ipc/messages.js';
 
-interface DbMetricsSnapshot {
-  storeBytes: number;
-  replicationBytes: number;
-  attachmentsBytes: number;
-  authBytes: number;
-  walShmBytes: number;
-  logsBytes: number;
-  otherBytes: number;
-  collectionBreakdown: CollectionStats[];
-  collectionPayloadBytes: number;
-  totalDiskBytes: number;
-  computedAt: number;
-}
-
-type In =
-  | { type: 'dbMetrics.loading' }
-  | { type: 'dbMetrics.snapshot'; snapshot: DbMetricsSnapshot }
-  | { type: 'dbMetrics.error'; message: string };
+type In = DbMetricsOut;
 
 type ViewState =
   | { kind: 'idle' }

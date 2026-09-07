@@ -206,14 +206,22 @@ union. The webview-side wrapper is `webview-ui/shared/messaging.ts`
 
 Pattern when adding a new panel: add the message types to `messages.ts`,
 have the host call `webview.postMessage` with the typed payload, and have
-the Lit element listen on `window.addEventListener('message', ...)`. Both
-sides should pattern-match on `msg.type`.
+the Lit element subscribe through the `HostMessages` controller in
+`webview-ui/shared/messaging.ts` — never a hand-written
+`window.addEventListener('message', ...)`: VS Code re-parents webview
+panels between editor groups, and an undisposed listener means every later
+message is handled once per past mount. Both sides should pattern-match on
+`msg.type`, with the host-side handler wrapped in `webviewMessageHandler`
+(`src/panels/webview-utils.ts`) so a rejected promise surfaces as an error
+toast instead of a silent no-op.
 
 ### 4.5 Tree
 
 `DatabaseTreeProvider` implements `TreeDataProvider<DatabaseTreeNode>`.
-Nodes are a discriminated union (`kind: 'database' | 'subscriptionsParent'
-| 'subscription' | 'peerListing' | 'queryEditor'`). Children only exist
+Nodes are a discriminated union over `kind` (database, per-feature leaf
+rows, and parent grouping rows — the union lives in
+`src/tree/DatabaseTreeItem.ts` and is the source of truth; don't copy it
+into docs). Children only exist
 under an `active` database — idle databases render as a single collapsed
 row with no expand chevron. `getChildren()` switches on `kind`.
 

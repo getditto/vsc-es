@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { categorizeFiles, walkDataDir } from '../storage/DatabaseMetricsService.js';
+import { categorizeFiles, walkDataDir, snapshot } from '../storage/DatabaseMetricsService.js';
+import type { DittoManager } from '../ditto/DittoManager.js';
 
 // ─── categorizeFiles (pure) ────────────────────────────────────
 
@@ -113,6 +114,63 @@ test('walkDataDir + categorizeFiles end-to-end against a tmp tree', async () => 
     assert.equal(b.walShmBytes, 200);
     assert.equal(b.replicationBytes, 50);
     assert.equal(b.logsBytes, 25);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+// ─── snapshot: mid-switch active guard ─────────────────────────
+
+function fakeMetricsManager(collections: string[]): {
+  manager: DittoManager;
+  cborCalls: string[];
+  /** Flip to simulate a database switch mid-scan. */
+  activeCheck: { current: boolean };
+} {
+  const cborCalls: string[] = [];
+  const activeCheck = { current: true };
+  const manager = {
+    executeRaw: async (query: string) => {
+      if (query.includes('system:collections')) {
+        return collections.map(name => ({ name }));
+      }
+      return [];
+    },
+    cborBytesForCollection: async (quoted: string) => {
+      cborCalls.push(quoted);
+      // The second collection onwards find the connection switched away.
+      activeCheck.current = false;
+      return { documentCount: 1, totalBytes: 64 };
+    },
+  } as unknown as DittoManager;
+  return { manager, cborCalls, activeCheck };
+}
+
+test('snapshot stops scanning collections once the active connection changes mid-flight', async () => {
+  // Regression: computeCollectionBreakdown had no mid-switch guard, so a
+  // refresh that outlived a database switch kept running per-collection
+  // CBOR scans (the extension's most expensive operation) against the
+  // freshly-connected database for results the disposed panel discarded.
+  const { manager, cborCalls, activeCheck } = fakeMetricsManager(['a', 'b', 'c']);
+  activeCheck.current = true;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ditto-vsce-guard-'));
+  try {
+    const snap = await snapshot(manager, root, () => activeCheck.current);
+    assert.equal(cborCalls.length, 1,
+      'stopped after the switch instead of scanning b and c on the new database');
+    assert.deepEqual(snap.collectionBreakdown.map(c => c.name), ['a']);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('snapshot without a guard predicate scans every collection (back-compatible)', async () => {
+  const { manager, cborCalls } = fakeMetricsManager(['a', 'b']);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ditto-vsce-noguard-'));
+  try {
+    const snap = await snapshot(manager, root);
+    assert.equal(cborCalls.length, 2);
+    assert.equal(snap.collectionPayloadBytes, 128);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

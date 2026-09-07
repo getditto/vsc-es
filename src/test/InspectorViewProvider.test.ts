@@ -269,11 +269,15 @@ interface FullView {
   posted: { type: string; [k: string]: unknown }[];
   messageListeners: ((msg: unknown) => void)[];
   disposeListeners: (() => void)[];
+  /** The HTML document the provider assigned to the webview. */
+  html: string;
 }
 
 interface BuiltProvider {
   provider: InspectorViewProvider;
   posted: FullView['posted'];
+  /** The HTML document the provider assigned to the webview on resolve. */
+  readonly html: string;
   fire(msg: unknown): void;
   disposeView(): void;
   controller: {
@@ -311,7 +315,7 @@ function buildProvider(opts: {
   activeDbId?: string | null;
   fetchResult?: { data(): Promise<Buffer>; metadata?: unknown } | null | undefined;
 } = {}): BuiltProvider {
-  const view: FullView = { posted: [], messageListeners: [], disposeListeners: [] };
+  const view: FullView = { posted: [], messageListeners: [], disposeListeners: [], html: '' };
 
   const controller = {
     content: opts.content ?? { kind: 'none' },
@@ -407,7 +411,8 @@ function buildProvider(opts: {
   provider.resolveWebviewView({
     webview: {
       options: undefined,
-      html: '',
+      get html(): string { return view.html; },
+      set html(v: string) { view.html = v; },
       cspSource: 'vscode-webview://stub',
       asWebviewUri: (uri: { path?: string }) => ({
         toString: () => `https://stub${uri?.path ?? ''}`,
@@ -429,6 +434,7 @@ function buildProvider(opts: {
   return {
     provider,
     posted: view.posted,
+    get html() { return view.html; },
     fire(msg: unknown) { for (const l of [...view.messageListeners]) { l(msg); } },
     disposeView() { for (const l of [...view.disposeListeners]) { l(); } },
     controller,
@@ -464,6 +470,23 @@ test('resolve posts help URIs, preferences, settings, and the current content', 
   );
   const contents = p.posted.filter(m => m.type === 'inspector.contentChanged');
   assert.deepEqual(contents[0]?.content, { kind: 'none' });
+});
+
+test('the Inspector document carries a CSPRNG nonce in its CSP and script tag (panel parity)', () => {
+  // Regression: the Inspector hand-rolled its HTML with a nonce-less
+  // `script-src ${cspSource}` while all 16 panels use panelHtml's
+  // `script-src 'nonce-…'` — on the view that renders the most
+  // user-controlled content (arbitrary query-row JSON).
+  stubAll.__resetStub();
+  const p = buildProvider();
+
+  const cspMatch = p.html.match(/script-src 'nonce-([A-Za-z0-9_-]{22})'/);
+  assert.ok(cspMatch, `expected nonce-gated script-src in ${p.html}`);
+  assert.ok(
+    p.html.includes(`<script nonce="${cspMatch[1]}" src=`),
+    'the script tag carries the same nonce, or the document will not execute',
+  );
+  assert.match(p.html, /default-src 'none'/, 'baseline lock-down kept');
 });
 
 test('pushSettings reflects the collectMetrics workspace setting reactively', () => {
@@ -722,7 +745,7 @@ test('a null fetch result is reported rather than crashing', async () => {
 
 test('a rejecting fetch posts the error message and logs the stack', async () => {
   stubAll.__resetStub();
-  const view: FullView = { posted: [], messageListeners: [], disposeListeners: [] };
+  const view: FullView = { posted: [], messageListeners: [], disposeListeners: [], html: '' };
   const log = recordingLogger();
   const provider = new InspectorViewProvider(
     { extensionUri: vscode.Uri.file('/host') } as unknown as vscode.ExtensionContext,

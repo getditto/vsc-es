@@ -34,7 +34,8 @@ without leaving VS Code.
   Index** (or inline trash icon) on any index row. Both flows confirm
   before mutating.
 - **Log Analyzer** — live problem detection over the SDK + extension log
-  stream. Opens from the **Logging** sidebar → **Open Log Analyzer**. On
+  stream. Opens from a connected database's **Features → Log Analyzer**
+  row. On
   open, the panel backfills history from `ditto-edge-studio.log` and then
   subscribes to new lines. A bundled regex catalog (`problem_patterns.json`)
   flags known issues — deadlocks, expired certificates, OOM kills, query

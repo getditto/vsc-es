@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 /**
  * Assertions about `package.json` itself.
@@ -113,4 +113,23 @@ test('command ids are unique and namespaced', () => {
   );
   const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
   assert.deepEqual(dupes, [], 'duplicate command declarations');
+});
+
+test('package.json version has matching release notes (release gate pre-check)', () => {
+  // The release workflow hard-fails when the pushed tag ≠ package.json
+  // version. Repo convention is that a version and its
+  // docs/releases/v<version>.md notes land in the same commit — v0.9.5's
+  // notes shipped without the bump, so tagging would have red-screened
+  // the release. Assert both directions so neither half drifts again.
+  const { version } = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string };
+  assert.ok(
+    existsSync(`docs/releases/v${version}.md`),
+    `docs/releases/v${version}.md is missing — write the notes with the bump`,
+  );
+  const lock = JSON.parse(readFileSync('package-lock.json', 'utf8')) as {
+    version: string;
+    packages: Record<string, { version?: string }>;
+  };
+  assert.equal(lock.version, version, 'package-lock.json root version drifted from package.json');
+  assert.equal(lock.packages['']?.version, version, 'package-lock.json packages[""] version drifted');
 });

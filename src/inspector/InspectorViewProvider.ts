@@ -8,7 +8,7 @@ import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { InspectorIn, InspectorOut } from '../ipc/messages.js';
 import { attachmentContentType, attachmentFilename } from './inspector-state.js';
-import { webviewMessageHandler } from '../panels/webview-utils.js';
+import { webviewMessageHandler, webviewNonce } from '../panels/webview-utils.js';
 import type { MetricsPreferencesStore } from '../storage/MetricsPreferencesStore.js';
 import type { AttachmentCache } from './AttachmentCache.js';
 
@@ -402,11 +402,16 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     const codiconUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview-ui', 'codicon.css'),
     );
+    // Same CSP contract as panelHtml's panels: `script-src 'nonce-…'` with
+    // a CSPRNG nonce, not a bare origin allowlist — this view renders the
+    // highest volume of user-controlled content (query-row JSON), so it
+    // gets the stronger posture, not the weaker one.
+    const n = webviewNonce();
     const csp = [
       "default-src 'none'",
       `img-src ${webview.cspSource} data: blob:`,
       `style-src ${webview.cspSource} 'unsafe-inline'`,
-      `script-src ${webview.cspSource}`,
+      `script-src 'nonce-${n}'`,
       `font-src ${webview.cspSource}`,
       `connect-src ${webview.cspSource}`,
       "base-uri 'none'",
@@ -419,7 +424,7 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
 <link rel="stylesheet" href="${codiconUri.toString()}">
 </head><body>
 <ditto-inspector></ditto-inspector>
-<script src="${scriptUri.toString()}"></script>
+<script nonce="${n}" src="${scriptUri.toString()}"></script>
 </body></html>`;
   }
 }

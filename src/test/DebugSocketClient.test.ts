@@ -200,6 +200,43 @@ test('disconnect mid-flight fails the pending request and ends the state', async
   client.disconnect();
 });
 
+test('disconnect() while connect() is in flight rejects the connect promise instead of hanging it', async (t) => {
+  // Regression: disconnect() used to clear `this.socket` before destroy(),
+  // so the connect/error/close handlers all hit the stale-socket guard and
+  // the connect() promise never settled — `await client.connect(...)` in the
+  // Debug Console panel hung forever when Disconnect was clicked mid-connect.
+  const srv = await startFakeServer(t, { fallback: () => '[]' });
+  const client = makeClient(t);
+
+  const attempt = client.connect(srv.socketPath);
+  disconnectSynchronouslyAfterConnectStarts(client);
+
+  await assert.rejects(attempt, /still connecting/);
+  assert.equal(client.state, 'disconnected');
+});
+
+test('connect() racing the previous attempt settles it instead of leaking the promise', async (t) => {
+  // The reconnect path calls disconnect() on the old (possibly connecting)
+  // session first — the old connect() promise must reject, not hang.
+  const srv = await startFakeServer(t, { fallback: () => '[1]' });
+  const client = makeClient(t);
+
+  const first = client.connect(srv.socketPath);
+  disconnectSynchronouslyAfterConnectStarts(client);
+  await assert.rejects(first, /still connecting/);
+
+  await client.connect(srv.socketPath);
+  const r = await client.query('SELECT 1');
+  assert.deepEqual(r, { ok: true, items: [1] });
+});
+
+/** Call disconnect() after connect() has registered its handlers (executor
+ *  runs synchronously) but before the socket can fire 'connect'. */
+function disconnectSynchronouslyAfterConnectStarts(client: DebugSocketClient): void {
+  assert.equal(client.state, 'connecting');
+  client.disconnect();
+}
+
 test('reconnect: disconnect() then connect() to the same server works', async (t) => {
   const srv = await startFakeServer(t, { fallback: () => '[1]' });
   const client = makeClient(t);

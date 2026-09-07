@@ -147,6 +147,7 @@ export function categorizeFiles(
  */
 async function computeCollectionBreakdown(
   manager: DittoManager,
+  isExpectedActive?: () => boolean,
 ): Promise<CollectionStats[]> {
   const collections = await manager.executeRaw('SELECT * FROM system:collections');
   const names = collections
@@ -155,6 +156,14 @@ async function computeCollectionBreakdown(
 
   const stats: CollectionStats[] = [];
   for (const name of names) {
+    // Mid-switch guard: every executeRaw resolves against the CURRENT
+    // session, so a refresh that outlives a database switch would run a
+    // per-collection CBOR scan (the most expensive operation the
+    // extension can issue) against the freshly-connected database — for
+    // results the switch already discarded with the panel. Bail between
+    // collections instead. Same invariant ImportService.checkActive and
+    // SystemMetricsService.isExpectedActive uphold.
+    if (isExpectedActive && !isExpectedActive()) { break; }
     try {
       const cborRes = await manager.cborBytesForCollection(quoteIdentifier(name, 'collection'));
       stats.push({
@@ -181,10 +190,11 @@ async function computeCollectionBreakdown(
 export async function snapshot(
   manager: DittoManager,
   dataDir: string,
+  isExpectedActive?: () => boolean,
 ): Promise<StorageSnapshot> {
   const flatFiles = await walkDataDir(dataDir);
   const breakdown = categorizeFiles(flatFiles);
-  const collections = await computeCollectionBreakdown(manager);
+  const collections = await computeCollectionBreakdown(manager, isExpectedActive);
 
   const collectionPayloadBytes = collections.reduce(
     (acc, c) => acc + c.cborPayloadBytes,

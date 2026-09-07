@@ -149,7 +149,16 @@ export class ObserverPanel {
     // If currently active, the query may have changed — restart.
     if (this.cancelObserver) {
       this.stop();
-      void this.activate();
+      // activate() throws out of registerObserver() when the freshly saved
+      // query isn't valid DQL (SDK `query/invalid`). A floated rejection
+      // here would leave the observer stopped with no signal why events
+      // stopped arriving, so surface it like the Activate button does.
+      void this.activate().catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error('Observer restart after save failed', { err: message });
+        vscode.window.showErrorMessage(`Observer could not restart with the saved query: ${message}`);
+        this.post({ type: 'observer.statusChanged', active: false });
+      });
     }
   }
 

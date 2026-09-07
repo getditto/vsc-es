@@ -76,6 +76,9 @@ interface ManagerFake {
   }) => void) | null;
   /** When true, registerObserver returns null (as a session-less manager does). */
   refuseRegister: boolean;
+  /** When set, registerObserver throws Error(message) — as the real manager
+   *  does for invalid DQL (SDK `query/invalid`). */
+  failRegisterWith: string | null;
 }
 
 function fakeManager(over: Partial<ManagerFake> = {}): { manager: DittoManager; fake: ManagerFake } {
@@ -85,12 +88,14 @@ function fakeManager(over: Partial<ManagerFake> = {}): { manager: DittoManager; 
     cancels: 0,
     callback: null,
     refuseRegister: false,
+    failRegisterWith: null,
     ...over,
   };
   const manager = {
     getActiveConfigId: () => fake.activeConfigId,
     registerObserver: (query: string, cb: ManagerFake['callback']) => {
       fake.registerCalls.push(query);
+      if (fake.failRegisterWith) { throw new Error(fake.failRegisterWith); }
       if (fake.refuseRegister) { return null; }
       fake.callback = cb;
       return { cancel: () => { fake.cancels += 1; } };
@@ -429,6 +434,28 @@ test('refreshIfOpen restarts an ACTIVE observer against the new query', async ()
   // re-activate: the panel never reports active against the OLD query after
   // the refresh.
   assert.deepEqual(statuses.map(s => s.active), [false, true, true, false, true]);
+});
+
+test('saving over an ACTIVE observer with a query the SDK rejects surfaces the failure and reports inactive', async () => {
+  // Regression: updateObserver floated `void this.activate()`, so when
+  // registerObserver threw on the saved query (SDK `query/invalid`) the
+  // rejection was unobserved — the observer stayed stopped, the panel gave
+  // no signal, and the user never learned why events stopped arriving.
+  const { panel, fake } = showPanel();
+  await settled(panel);
+  panel.fireMessage({ type: 'observer.activate' });
+  await waitFor(() => fake.registerCalls.length === 1);
+
+  fake.failRegisterWith = 'query/invalid: expected an expression';
+  const updated: StoredObserver = { id: 'obs-1', name: 'watches', query: 'SELECT WHERE oops' };
+  ObserverPanel.refreshIfOpen(DB_ID, updated);
+
+  await waitFor(() => fake.registerCalls.length === 2);
+  await waitFor(() => stub.window.shownErrors.length > 0);
+  assert.match(stub.window.shownErrors[0]!, /could not restart/i);
+  const statuses = postedOfType<{ active: boolean }>(panel, 'observer.statusChanged');
+  assert.equal(statuses.at(-1)!.active, false, 'never reports the new query as active');
+  assert.equal(fake.cancels, 1, 'the old handle was still cancelled');
 });
 
 // ─── Error surfacing ───────────────────────────────────────────
