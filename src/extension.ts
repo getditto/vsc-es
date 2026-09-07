@@ -436,6 +436,14 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         lastActiveConfigId = state.configId;
       }
       void collectionsRepo.load();
+      // Start the system-metrics accumulator AT CONNECT: its samples carry
+      // "sinceConnect" totals, and without this pre-seed the zero point was
+      // the first panel-open/tool-call — the label lied. A no-op read when
+      // the setting/exporter is off (status discarded; real readers re-poll).
+      void systemMetricsHub
+        .acquireForToolCalls(state.configId)
+        .pollOnce()
+        .catch(() => { /* exporter unavailable — surfaced on real reads */ });
     } else {
       inspectorController.clearOnDisconnect();
       collectionsRepo.clear();

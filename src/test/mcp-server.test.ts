@@ -286,6 +286,11 @@ test('resources/list + resources/read: ditto:// schema, peers, sync-status, subs
 
   const sync = await read('ditto://sync-status');
   assert.equal(sync.sync, 'active');
+  // The resource now shares the get_sync_status contract exactly:
+  // transports present, cloud as boolean, peer count convention identical.
+  assert.ok(sync.transport && typeof (sync.transport as Record<string, unknown>).lan === 'boolean');
+  assert.equal(typeof sync.connectedPeers, 'number');
+  assert.equal(sync.cloudSyncConnected, false);
 
   const peers = await read('ditto://peers');
   assert.ok('remote' in peers);

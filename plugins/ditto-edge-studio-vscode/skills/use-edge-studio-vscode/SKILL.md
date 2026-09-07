@@ -48,16 +48,18 @@ Use the Ditto Edge Studio **VS Code extension** MCP server to query and manage t
 |---|---|---|
 | `list_collections` | — | + live counts + nested indexes. |
 | `list_indexes` | — | Flat list; `[]` when disconnected. |
-| `create_index` | `collection`, `field` **or** `fields` | `fields`: ordered composite `[{name, direction?}]`. Same name/same def → `already-exists`; same name/diff def → hard error. |
+| `create_index` | `collection`, `field` **or** `fields` | `fields`: ordered composite `[{name, direction?}]`. Response carries `index` (the generated name — pass it straight to `drop_index`). Same name/same def → `already-exists`; same name/diff def → hard error. |
 | `drop_index` | `index_name`, `collection?` | Ambiguity across collections is refused until you pass `collection`. |
 
 ### Sync / peers / transports
 | Tool | Arguments | Notes |
 |---|---|---|
-| `get_sync_status` | — | sync on/off, peer counts, cloud link, transports. |
+| `get_sync_status` | — | sync on/off, `connectedPeers`, `cloudSyncConnected`, transports. |
 | `set_sync` | `enabled` | Toolbar toggle. |
 | `configure_transport` | `lan?`, `ble?`, `awdl?` | Omit = unchanged; persists to the connection. |
 | `get_peers` | — | Direct peers + raw multi-hop `presenceGraph`; metadata as COUNTS. |
+
+**One peer-count convention everywhere** (get_sync_status, get_peers, `ditto://sync-status`): `connectedPeers` counts direct small peers only. The synthetic Ditto Cloud Server row is never a count — it's a flagged entry in `get_peers.peers[]` (`isDittoServer: true`) plus the `cloudSyncConnected` boolean. `presenceGraph.remotePeers` is the raw SDK graph (no cloud row, multi-hop edges).
 
 ### Subscriptions & observers (definitions persist; live only while that connection is active)
 | Tool | Arguments | Notes |
@@ -83,7 +85,7 @@ Use the Ditto Edge Studio **VS Code extension** MCP server to query and manage t
 
 ## The system:metrics contract (don't get confused by deltas)
 
-Every `system:metrics` read **flushes** the SDK registry. The extension funnels all readers through one shared per-connection accumulator, so:
+Every `system:metrics` read **flushes** the SDK registry. The extension funnels all readers through one shared per-connection accumulator, and that accumulator starts **at connect time** (the extension pre-reads on connect), so `sinceConnect`/`sinceMs` really do zero at connect — unless the exporter was disabled for that session, in which case the first successful read starts it and `sinceMs` marks that moment.
 
 - Report **`sinceConnect`** totals and the **`sinceMs`** zero point — those are the stable numbers.
 - Expect **`periodDelta`** to shrink immediately after any read (yours included).

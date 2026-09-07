@@ -35,7 +35,9 @@ async function addSubscription(ctx: McpToolContext, args: AddArgs): Promise<Call
   if (!isSelectStatement(args.query)) {
     return err('Subscriptions must be SELECT statements (DQL subscription constraint).');
   }
-  const sub = { id: randomId(12), name: args.name.trim() || args.query.slice(0, 60), query: args.query };
+  // randomId(16) = 32 hex chars, matching ids the Subscription Editor panel
+  // mints — an agent diffing MCP-created and UI-created rows can't tell.
+  const sub = { id: randomId(16), name: args.name.trim() || args.query.slice(0, 60), query: args.query };
   await ctx.subscriptionStore.save(cfg.id, sub);
   const activeId = ctx.manager.getActiveConfigId();
   if (activeId === cfg.id) {

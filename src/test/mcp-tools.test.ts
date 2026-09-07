@@ -426,11 +426,13 @@ test('create_index single field + composite + already-exists + conflict', async 
     collection: 'tasks', fields: [{ name: 'done' }, { name: 'title', direction: 'DESC' }],
   }));
   assert.equal(created.outcome, 'created');
+  assert.equal(created.index, 'idx_tasks_done_title', 'response carries the generated name (automation can drop it without a list call)');
   assert.ok(ddl.some(q => q.includes('ON `tasks`') && q.includes('`done` ASC') && q.includes('`title` DESC')),
     `composite DDL order preserved: ${ddl.join(' | ')}`);
 
   const again = obj(await find(collectionTools, 'create_index').handler(bundle.ctx, { collection: 'tasks', field: 'done' }));
   assert.equal(again.outcome, 'already-exists');
+  assert.equal(again.index, 'idx_tasks_done');
 
   const conflict = await find(collectionTools, 'create_index').handler(bundle.ctx, {
     collection: 'tasks', fields: [{ name: 'done', direction: 'DESC' }],
@@ -505,11 +507,16 @@ test('get_sync_status reports sync, peers, transports', async () => {
   });
   bundle.manager.state.snapshot = {
     local: null,
-    remote: [{ id: 'p', isDittoServer: false, deviceName: 'n', connections: [], syncSessionStatus: 'Connected' }],
+    remote: [
+      { id: 'p', isDittoServer: false, deviceName: 'n', connections: [], syncSessionStatus: 'Connected' },
+      { id: 'cloud', isDittoServer: true, deviceName: 'Ditto Cloud', connections: [], syncSessionStatus: 'Connected' },
+    ],
   };
   const payload = obj(await find(syncTools, 'get_sync_status').handler(bundle.ctx, {}));
   assert.equal(payload.sync, 'active');
+  // One convention across tools: the synthetic cloud row never counts as a peer.
   assert.equal(payload.connectedPeers, 1);
+  assert.equal(payload.cloudSyncConnected, true);
   assert.deepEqual(payload.transport, { lan: true, bluetoothLE: false, awdl: true });
 });
 
@@ -562,6 +569,11 @@ test('get_peers returns the merged snapshot without metadata bodies', async () =
   const result = await find(syncTools, 'get_peers').handler(bundle.ctx, {});
   const payload = obj(result);
   assert.equal(payload.count, 1);
+  // The shared count convention: get_peers.count === connectedPeers, and a
+  // synthetic cloud row must never inflate either.
+  assert.equal(payload.connectedPeers, 1);
+  assert.equal(payload.totalRowsIncludingCloudRow, 1);
+  assert.equal(payload.cloudSyncConnected, false);
   const peer = head(payload.peers as Record<string, unknown>[]);
   assert.equal(peer.peerKey, 'peer-9');
   assert.equal(peer.peerMetadataKeyCount, 1);

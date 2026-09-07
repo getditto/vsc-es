@@ -163,7 +163,7 @@ tool, or the Ditto sidebar in VS Code).
 | --- | --- |
 | `list_collections` | Names + live counts + indexes (nested). |
 | `list_indexes` | Flat index list; `[]` when disconnected. |
-| `create_index` `{collection, field? | fields?}` | `field` = single ASC (SwiftUI shape); `fields` = ordered composite `{name, direction?}[]` (SDK 5.1+). Same-name+same-def → `already-exists`; same-name+different-def → hard error (drop first). |
+| `create_index` `{collection, field? | fields?}` | `field` = single ASC (SwiftUI shape); `fields` = ordered composite `{name, direction?}[]` (SDK 5.1+). The response carries `index` — the generated name — so automation can drop/manage it without a `list_indexes` round-trip. Same-name+same-def → `already-exists`; same-name+different-def → hard error (drop first). |
 | `drop_index` `{index_name, collection?}` | Bare name resolving to multiple collections is refused until you pass `collection` (names aren't globally unique). |
 
 ### Sync, peers, transports
@@ -208,7 +208,7 @@ JSON body `{"error": "no_active_connection", …}` rather than a protocol error.
 | --- | --- |
 | `ditto://schema` | Collections + counts + indexes (freshly hydrated). |
 | `ditto://peers` | Latest presence snapshot (local, direct peers, multi-hop graph). |
-| `ditto://sync-status` | Sync state + peer counts. |
+| `ditto://sync-status` | The exact `get_sync_status` contract (sync, `connectedPeers`, `cloudSyncConnected`, transports) — tools and the resource never disagree about peer counts: the synthetic cloud row is a boolean, not a count. |
 | `ditto://system-metrics` | Latest accumulated snapshot — **side-effect-free** (no registry read; see below). |
 | `ditto://subscriptions` · `ditto://observers` | Persisted definitions for the active connection. |
 
@@ -220,6 +220,8 @@ Two independent accumulators would race — whichever reads second sees nothing.
 The extension therefore routes EVERY reader through one per-connection
 accumulator (`SystemMetricsHub`):
 
+- at **connect time** the extension pre-reads once, so the accumulator's
+  zero point is the connection, not the first consumer's curiosity;
 - the System Metrics panel polls every 5 s while visible;
 - `get_system_metrics` reads on demand per call;
 - `ditto://system-metrics` serves the accumulated state without reading.

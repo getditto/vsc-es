@@ -70,9 +70,10 @@ async function createIndex(ctx: McpToolContext, args: CreateIndexArgs): Promise<
     return err("Pass either 'field' (single field) or 'fields' (ordered composite).");
   }
   try {
-    const outcome = await ctx.collectionsRepo.createIndex(args.collection, fields);
+    const { outcome, name } = await ctx.collectionsRepo.createIndex(args.collection, fields);
     return ok({
       collection: args.collection,
+      index: name,
       fields: fields.map(f => `${f.name} ${f.ascending ? 'ASC' : 'DESC'}`),
       outcome,
       message: outcome === 'already-exists'

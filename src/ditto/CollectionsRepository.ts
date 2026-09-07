@@ -66,17 +66,24 @@ export class CollectionsRepository {
     await this.hydrate('refresh');
   }
 
-  /**
+  /** Result of {@link createIndex} — the generated index name is included so
+   *  automation callers (the MCP create_index tool) can drop/manage the index
+   *  without a list_indexes round-trip to learn what it was called.
+   *
+   *  Outcome semantics —
    * Create an index over one or more fields. More than one field produces a
    * composite index (SDK 5.1+); their order is preserved because the optimizer
    * only uses a composite index from its leading key onwards.
    *
-   * Returns 'created' when the DDL ran, 'already-exists' when an equivalent
-   * index was already present. `IF NOT EXISTS` compares index NAMES only, so
-   * the pre-check against system:indexes is what makes this distinction (and
-   * the same-name/different-definition conflict) observable.
+   * `outcome` is 'created' when the DDL ran, 'already-exists' when an
+   * equivalent index was already present. `IF NOT EXISTS` compares index NAMES
+   * only, so the pre-check against system:indexes is what makes this
+   * distinction (and the same-name/different-definition conflict) observable.
    */
-  async createIndex(collection: string, fields: readonly IndexField[]): Promise<'created' | 'already-exists'> {
+  async createIndex(
+    collection: string,
+    fields: readonly IndexField[],
+  ): Promise<{ outcome: 'created' | 'already-exists'; name: string }> {
     const cleaned = normalizeIndexFields(fields);
     const indexName = makeIndexName(collection, cleaned);
 
@@ -102,7 +109,7 @@ export class CollectionsRepository {
       const existingKeys = parseIndexKeys(firstExisting.fields);
       if (indexKeysMatch(existingKeys, cleaned)) {
         this.log.info('Index already exists with the same definition', { collection, indexName });
-        return 'already-exists';
+        return { outcome: 'already-exists', name: indexName };
       }
       throw new InvalidIndexError(
         `An index named "${indexName}" already exists on "${collection}" with a different `
@@ -118,7 +125,7 @@ export class CollectionsRepository {
     });
     await this.manager.executeRaw(query);
     await this.hydrate('createIndex');
-    return 'created';
+    return { outcome: 'created', name: indexName };
   }
 
   /**

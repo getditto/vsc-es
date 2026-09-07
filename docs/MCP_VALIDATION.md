@@ -53,8 +53,9 @@ S5. execute_dql "SELECT COUNT(*) AS n FROM mcp_tasks" → expect n = 6.
 S6. execute_dql "SELECT * FROM mcp_tasks WHERE assignee = 'ada' ORDER BY
     priority" → expect exactly 3 rows: mcp-task-1, mcp-task-3, mcp-task-6.
 S7. create_index { collection: "mcp_tasks", fields: [{name:"done"},
-    {name:"priority", direction:"DESC"}] } → expect outcome:"created".
-    Call it AGAIN → expect outcome:"already-exists".
+    {name:"priority", direction:"DESC"}] } → expect outcome:"created" AND a
+    top-level "index" field with the generated name (save it for S20).
+    Call it AGAIN → expect outcome:"already-exists" with the same name.
 S8. explain_query "SELECT * FROM mcp_tasks WHERE done = false ORDER BY
     priority DESC" → report whether the plan can use the new index.
 S9. execute_dql "UPDATE mcp_tasks SET done = true WHERE _id = 'mcp-task-6'"
@@ -62,9 +63,14 @@ S9. execute_dql "UPDATE mcp_tasks SET done = true WHERE _id = 'mcp-task-6'"
 S10. get_sync_status → report sync state and transport toggles.
 S11. get_peers → report peer count (0 is fine on a solo test rig) and confirm
     no metadata VALUES appear (only key counts).
-S12. add_subscription { name: "open tasks", query: "SELECT * FROM mcp_tasks
-    WHERE done = false" } → expect registered:true; then list_subscriptions
-    → exactly 1; then remove_subscription by id → removed:true.
+S12. list_subscriptions FIRST and note the baseline count N (any number is
+    fine — real connections may already have subscriptions). Then
+    add_subscription { name: "open tasks", query: "SELECT * FROM mcp_tasks
+    WHERE done = false" } → expect registered:true and an id in the response.
+    list_subscriptions again → N+1, and the new id is present. Then
+    remove_subscription by that id → removed:true, and a final list is back
+    to N. (If the active connection is brand new N will be 0, but never
+    assert that N is anything in particular.)
 S13. add_observer { name: "all tasks", query: "SELECT * FROM mcp_tasks" } →
     list_observers → 1 entry → remove_observer → removed:true.
 S14. get_system_metrics (call it twice, a few seconds apart) → report status
@@ -82,9 +88,9 @@ S19. watch_query { query: "SELECT * FROM mcp_tasks WHERE done = false",
     initial result set, not a change.
 S20. execute_dql "EVICT FROM mcp_tasks WHERE true" (cleanup) → 6 removed;
     then list_collections → mcp_tasks gone or 0 docs; then drop_index
-    { index_name: <the S7 index name>, collection: "mcp_tasks" } → dropped
-    (or "no index" if the collection vanished with it — both are acceptable;
-    say which happened).
+    { index_name: <the name S7 returned in its "index" field>, collection:
+    "mcp_tasks" } → dropped (or a clean "no such index" if the collection
+    carried it away — both acceptable; say which happened).
 
 If your client has no resources support, mark S18 SKIP and note it.
 Do NOT use connect_database, disconnect_database, debug_socket_query,

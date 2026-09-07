@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpToolContext } from './context.js';
 import { resolveConnection } from './guards.js';
+import { buildSyncStatusPayload } from './tools-sync.js';
 
 /**
  * Read-only MCP resources — point-in-time JSON snapshots agents can fetch
@@ -73,19 +74,15 @@ export function registerAllResources(server: McpServer, ctx: McpToolContext): vo
   server.registerResource(
     'sync-status',
     'ditto://sync-status',
-    { description: 'Sync on/off + peer counts for the active connection.', mimeType: JSON_MIME },
+    {
+      description: 'Sync on/off, cloud link, transports, and the direct-peer count for the active connection — the same contract as the get_sync_status tool.',
+      mimeType: JSON_MIME,
+    },
     async (uri) => {
       const id = ctx.manager.getActiveConfigId();
       const cfg = id ? ctx.configStore.get(id) : undefined;
       if (!id || !cfg) { return noConnection(uri.href, 'ditto://sync-status'); }
-      const snap = ctx.manager.getLatestSnapshot();
-      const cloud = snap.remote.find(p => p.isDittoServer);
-      return jsonContents(uri.href, {
-        database: { id: cfg.id, name: cfg.name, databaseId: cfg.databaseId },
-        sync: ctx.manager.getSyncState(),
-        connectedPeers: snap.remote.filter(p => !p.isDittoServer).length,
-        cloudSyncConnected: cloud?.syncSessionStatus === 'Connected',
-      });
+      return jsonContents(uri.href, buildSyncStatusPayload(ctx, cfg));
     },
   );
 

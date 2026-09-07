@@ -32,7 +32,8 @@ async function addObserver(ctx: McpToolContext, args: AddArgs): Promise<CallTool
   if (!isSelectStatement(args.query)) {
     return err('Observers must be SELECT statements (registerObserver returns a result set).');
   }
-  const observer = { id: randomId(12), name: args.name.trim() || args.query.slice(0, 60), query: args.query };
+  // randomId(16) = 32 hex chars, matching ids the Observer Editor panel mints.
+  const observer = { id: randomId(16), name: args.name.trim() || args.query.slice(0, 60), query: args.query };
   await ctx.observerStore.save(cfg.id, observer);
   return ok({
     observer,

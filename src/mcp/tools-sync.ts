@@ -4,7 +4,7 @@ import { ok } from './tool-result.js';
 import { requireActiveConfig } from './guards.js';
 import { tool, type ToolDef } from './define-tool.js';
 import type { McpToolContext } from './context.js';
-import type { PeerInfo } from '../models/DittoConfig.js';
+import type { PeerInfo, StoredDittoConfig } from '../models/DittoConfig.js';
 
 function peerToJson(p: PeerInfo): Record<string, unknown> {
   return {
@@ -26,11 +26,31 @@ function peerToJson(p: PeerInfo): Record<string, unknown> {
   };
 }
 
-async function getSyncStatus(ctx: McpToolContext): Promise<CallToolResult> {
-  const cfg = requireActiveConfig(ctx);
+/**
+ * THE peer-count contract — one definition for every surface (tools AND the
+ * ditto://sync-status resource), because an agent that gets different peer
+ * counts from two endpoints will contradict itself when reporting health:
+ *
+ *   merged Remote rows = direct peers + the SYNTHETIC Ditto Cloud Server row
+ *   presenceGraph.remotePeers = what the SDK's raw presence graph reports
+ *                               (no synthetic row)
+ *   connectedPeers = direct small peers, cloud row EXCLUDED
+ *
+ * Cloud state rides its own boolean (cloudSyncConnected) everywhere instead
+ * of inflating a count.
+ */
+export interface SyncStatusPayload {
+  database: { id: string; name: string; databaseId: string };
+  sync: 'active' | 'idle';
+  connectedPeers: number;
+  cloudSyncConnected: boolean;
+  transport: { lan: boolean; bluetoothLE: boolean; awdl: boolean };
+}
+
+export function buildSyncStatusPayload(ctx: McpToolContext, cfg: StoredDittoConfig): SyncStatusPayload {
   const snapshot = ctx.manager.getLatestSnapshot();
   const cloudPeer = snapshot.remote.find(p => p.isDittoServer);
-  return ok({
+  return {
     database: { id: cfg.id, name: cfg.name, databaseId: cfg.databaseId },
     sync: ctx.manager.getSyncState(),
     connectedPeers: snapshot.remote.filter(p => !p.isDittoServer).length,
@@ -40,7 +60,12 @@ async function getSyncStatus(ctx: McpToolContext): Promise<CallToolResult> {
       bluetoothLE: cfg.isBluetoothLeEnabled ?? false,
       awdl: cfg.isAwdlEnabled ?? false,
     },
-  });
+  };
+}
+
+async function getSyncStatus(ctx: McpToolContext): Promise<CallToolResult> {
+  const cfg = requireActiveConfig(ctx);
+  return ok(buildSyncStatusPayload(ctx, cfg));
 }
 
 async function setSync(ctx: McpToolContext, args: { enabled: boolean }): Promise<CallToolResult> {
@@ -72,12 +97,18 @@ async function configureTransport(ctx: McpToolContext, args: TransportArgs): Pro
 async function getPeers(ctx: McpToolContext): Promise<CallToolResult> {
   requireActiveConfig(ctx);
   const snapshot = ctx.manager.getLatestSnapshot();
+  const nonServerPeers = snapshot.remote.filter(p => !p.isDittoServer);
+  const cloudPeer = snapshot.remote.find(p => p.isDittoServer);
   return ok({
-    count: snapshot.remote.length,
+    // Same convention as get_sync_status / ditto://sync-status: the cloud
+    // server is NOT a peer count. `peers` still carries its row, flagged.
+    count: nonServerPeers.length,
+    connectedPeers: nonServerPeers.length,
+    cloudSyncConnected: cloudPeer?.syncSessionStatus === 'Connected',
+    totalRowsIncludingCloudRow: snapshot.remote.length,
     local: snapshot.local,
     peers: snapshot.remote.map(peerToJson),
-    // Full multi-hop graph (same shape the Presence Graph webview renders):
-    // remote peers + all edges, no direct-only filter.
+    // Raw SDK graph (no synthetic cloud row, multi-hop edges included).
     presenceGraph: snapshot.presenceGraph,
   });
 }
