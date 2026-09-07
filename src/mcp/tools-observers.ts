@@ -78,4 +78,83 @@ export const observerTools: ToolDef[] = [
     },
     handler: (ctx, args: RemoveArgs) => removeObserver(ctx, args),
   }),
+  tool({
+    name: 'watch_query',
+    description:
+      'Bounded live watch of a SELECT: registers a store observer and collects change events ' +
+      '(insertions/updates/deletions/moves + rows) until the duration elapses or max_events ' +
+      'fire, then unregisters. The FIRST event is always the full initial result set ' +
+      '(everything counts as inserted). Use for "wait for a row to change" automation loops.',
+    schema: {
+      query: z.string().min(1).describe('DQL SELECT statement.'),
+      duration_ms: z.number().int().min(250).max(30_000).default(5_000)
+        .describe('How long to watch (max 30 s per call — re-call to keep watching).'),
+      max_events: z.number().int().min(1).max(100).default(20)
+        .describe('Stop early after this many change events.'),
+      max_rows_per_event: z.number().int().min(1).max(200).default(25)
+        .describe('Rows shipped per event (events beyond this keep diff counts but drop rows).'),
+    },
+    handler: async (ctx, args: { query: string; duration_ms: number; max_events: number; max_rows_per_event: number }) => {
+      resolveConnection(ctx);
+      if (!isSelectStatement(args.query)) {
+        return err('watch_query needs a SELECT statement.');
+      }
+      interface WatchEvent {
+        atMs: number;
+        totalRows: number;
+        insertions: number[];
+        updates: number[];
+        deletions: number[];
+        moves: { from: number; to: number }[];
+        rows: Record<string, unknown>[];
+        rowsTruncated: boolean;
+      }
+      const events: WatchEvent[] = [];
+      let stoppedBy: string = 'duration';
+      const handle = ctx.manager.registerObserver(args.query, (ev) => {
+        events.push({
+          atMs: Date.now(),
+          totalRows: ev.totalRows,
+          insertions: ev.insertions,
+          updates: ev.updates,
+          deletions: ev.deletions,
+          moves: ev.moves,
+          rows: ev.rows.slice(0, args.max_rows_per_event),
+          rowsTruncated: ev.rows.length > args.max_rows_per_event,
+        });
+      });
+      if (!handle) { return err('No active session.'); }
+      try {
+        await new Promise<void>((resolve) => {
+          let finished = false;
+          let timer: NodeJS.Timeout;
+          let tick: NodeJS.Timeout;
+          const finish = (why: string): void => {
+            if (finished) { return; }
+            finished = true;
+            stoppedBy = why;
+            clearTimeout(timer);
+            clearInterval(tick);
+            resolve();
+          };
+          timer = setTimeout(() => finish('duration'), args.duration_ms);
+          tick = setInterval(() => {
+            if (events.length >= args.max_events) { finish('max_events'); }
+          }, 50);
+          // Never pin the (test-harness or extension-host) event loop open
+          // for a watch nobody is awaiting anymore.
+          timer.unref?.();
+          tick.unref?.();
+        });
+      } finally {
+        try { handle.cancel(); } catch { /* already torn down */ }
+      }
+      return ok({
+        events,
+        eventCount: events.length,
+        stoppedBy,
+        note: 'The first event is the initial result set (all rows count as inserted) — not a change.',
+      });
+    },
+  }),
 ];

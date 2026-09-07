@@ -83,6 +83,10 @@ const EXPECTED_TOOL_NAMES = [
   'debug_socket_query',
   'connect_database',
   'disconnect_database',
+  // extension-only, phase 3
+  'watch_query',
+  'fetch_attachment',
+  'query_log_analyzer',
 ];
 
 test('manifest: the registry exposes every tool exactly once', () => {

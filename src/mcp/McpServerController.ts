@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpServerService, McpPortInUseError } from './McpServerService.js';
 import { readMcpPort, mcpClientConfigSnippet } from './settings.js';
 import { registerAllTools } from './registry.js';
+import { registerAllResources } from './resources.js';
 import type { McpToolContext } from './context.js';
 import type { Logger } from '../logging/types.js';
 
@@ -80,7 +81,10 @@ export class McpServerController {
     const service = new McpServerService({
       name: 'ditto-edge-studio-vscode',
       version: this.extensionVersion,
-      register: (server: McpServer) => registerAllTools(server, this.toolContext),
+      register: (server: McpServer) => {
+        registerAllTools(server, this.toolContext);
+        registerAllResources(server, this.toolContext);
+      },
       log: this.log,
     });
     await service.start(port);

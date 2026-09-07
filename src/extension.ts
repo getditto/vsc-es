@@ -372,6 +372,21 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const extensionVersion =
     (context.extension?.packageJSON as { version?: unknown } | undefined)?.version as string | undefined
     ?? '0.0.0';
+  // MCP-owned analyzer services, one per connection, torn down with the
+  // session (mirrors the panel's per-DB instances closing on disconnect).
+  const mcpAnalyzers = new Map<string, LogAnalyzerService>();
+  const openMcpLogAnalyzer = async (configId: string): Promise<LogAnalyzerService> => {
+    const existing = mcpAnalyzers.get(configId);
+    if (existing) { return existing; }
+    const service = makeAnalyzerService();
+    // Backfill to the connection's connect-time floor — otherwise a week's
+    // rotated history belongs to this "session's" problem counts.
+    const backfill = await logger.readRecentLogLines(LogAnalyzerService.BACKFILL_LINE_LIMIT);
+    service.start({ backfillLines: backfill, minTimestamp: connectedAt.get(configId) });
+    mcpAnalyzers.set(configId, service);
+    return service;
+  };
+
   const mcpToolContext: McpToolContext = {
     manager,
     configStore,
@@ -384,6 +399,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     globalStorageFsPath: context.globalStorageUri.fsPath,
     systemMetricsHub,
     automation: mcpAutomation,
+    openLogAnalyzer: openMcpLogAnalyzer,
     log: logger.withTag('mcp'),
   };
   const mcpController = new McpServerController(mcpToolContext, extensionVersion, logger);
@@ -441,6 +457,10 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       // services dispose with them) so disconnect → reconnect produces
       // a fresh view rather than carrying stale problems across sessions.
       LogAnalyzerPanel.dispose();
+      // MCP-owned analyzers die with the session too (same per-DB
+      // reasoning as the panel instances).
+      for (const svc of mcpAnalyzers.values()) { svc.dispose(); }
+      mcpAnalyzers.clear();
       if (lastActiveConfigId) {
         connectedAt.delete(lastActiveConfigId);
         lastActiveConfigId = null;

@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { ok } from './tool-result.js';
 import { tool, type ToolDef } from './define-tool.js';
 import type { McpToolContext } from './context.js';
+import { requireActiveConfig } from './guards.js';
 import { shouldEmit, type LogLevel } from '../logging/types.js';
 
 /**
@@ -106,5 +107,52 @@ export const logTools: ToolDef[] = [
         .describe('Minimum severity — e.g. "warn" returns warnings and errors.'),
     },
     handler: (ctx, args: LogToolArgs) => getDittoLogs(ctx, args),
+  }),
+  tool({
+    name: 'query_log_analyzer',
+    description:
+      'Structured query over the Log Analyzer for the active connection (the same engine the ' +
+      'Log Analyzer panel uses: backfill to connect time + live tail, pattern-based problem ' +
+      'detection applied). Filter by level, source tab, or substring; page with offset/limit. ' +
+      'First call per connection backfills recent history, which can take a moment.',
+    schema: {
+      level: z.enum(['all', 'critical', 'error', 'warn', 'problem']).default('all')
+        .describe("'problem' = lines matching the problem-pattern catalog; 'critical' = errors + flagged fatal patterns."),
+      source: z.enum(['all', 'transport', 'connectionRequests']).default('all')
+        .describe('Analyzer source tab: main log, transport conditions, or connection requests.'),
+      search: z.string().optional().describe('Case-insensitive substring filter.'),
+      limit: z.number().int().min(1).max(1000).default(200),
+      offset: z.number().int().min(0).default(0),
+    },
+    handler: async (ctx, args: {
+      level: 'all' | 'critical' | 'error' | 'warn' | 'problem';
+      source: 'all' | 'transport' | 'connectionRequests';
+      search?: string;
+      limit: number;
+      offset: number;
+    }) => {
+      const cfg = requireActiveConfig(ctx);
+      const service = await ctx.openLogAnalyzer(cfg.id);
+      const { items, total } = service.queryLines({
+        filter: args.level,
+        source: args.source,
+        search: args.search,
+        limit: args.limit,
+        offset: args.offset,
+      });
+      return ok({
+        total,
+        returned: items.length,
+        offset: args.offset,
+        items: items.map(l => ({
+          id: l.id,
+          timestamp: l.timestamp ? l.timestamp.toISOString() : null,
+          level: l.level,
+          tag: l.tag,
+          text: l.text,
+          ...(l.userTags && l.userTags.length > 0 ? { userTags: l.userTags } : {}),
+        })),
+      });
+    },
   }),
 ];

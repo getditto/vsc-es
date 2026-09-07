@@ -7,6 +7,7 @@ import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
 import type { ObserverStore } from '../storage/ObserverStore.js';
 import type { QueryMetricsStore } from '../storage/QueryMetricsStore.js';
 import type { Logger } from '../logging/types.js';
+import type { LogAnalyzerService } from '../logAnalyzer/LogAnalyzerService.js';
 
 /**
  * The service graph every MCP tool handler receives. Assembled once in
@@ -39,6 +40,14 @@ export interface McpToolContext {
    *  commands use (panel teardown included), minus the modal UX: the AI
    *  caller has already been told the switch closes panels. */
   automation: McpAutomation;
+  /**
+   * Lazily create (or return) the MCP-owned Log Analyzer service for a
+   *  connection: backfilled once at creation to the connection's
+   *  connect-time floor, live-tailing after that via the shared
+   *  AnalyzerSink. MCP-owned instances are disposed on lifecycle teardown
+   *  by the extension wiring.
+   */
+  openLogAnalyzer: (configId: string) => Promise<LogAnalyzerService>;
   /** Tagged 'mcp' — tool-level audit logging (NEVER include args that may
    *  carry secrets or document payloads; log tool name + coarse facts only). */
   log: Logger;

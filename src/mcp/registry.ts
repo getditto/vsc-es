@@ -11,6 +11,7 @@ import { subscriptionTools } from './tools-subscriptions.js';
 import { observerTools } from './tools-observers.js';
 import { metricsTools } from './tools-metrics.js';
 import { logTools } from './tools-logs.js';
+import { attachmentTools } from './tools-attachments.js';
 
 export type { ToolDef } from './define-tool.js';
 
@@ -30,7 +31,8 @@ export function allTools(): ToolDef[] {
     ...subscriptionTools,
     ...observerTools,
     ...metricsTools,      // incl. system + database metrics
-    ...logTools,
+    ...logTools,          // incl. query_log_analyzer
+    ...attachmentTools,
   ];
 }
 

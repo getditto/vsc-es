@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { McpServerService, MCP_MAX_BODY_BYTES } from '../mcp/McpServerService.js';
 import { registerAllTools } from '../mcp/registry.js';
+import { registerAllResources } from '../mcp/resources.js';
 import { makeContext, makeFakeLogger, seedConfig, type FakeContextBundle } from './fixtures/mcp-fakes.js';
 
 /**
@@ -21,7 +22,8 @@ async function startServer(t: test.TestContext, opts: Parameters<typeof makeCont
   const service = new McpServerService({
     name: 'ditto-edge-studio-vscode',
     version: '0.0.0-test',
-    register: (s) => registerAllTools(s, bundle.ctx),
+    // Mirror production (McpServerController): tools AND resources.
+    register: (s) => { registerAllTools(s, bundle.ctx); registerAllResources(s, bundle.ctx); },
     log: makeFakeLogger(),
   });
   await service.start(0); // ephemeral port
@@ -105,7 +107,7 @@ test('tools/list exposes the full surface with schemas (both parity and extensio
   const names = result.tools.map(tl => tl.name).sort();
   // Lock the transport-level count; the exact set is asserted data-side in
   // mcp-tools.test.ts's manifest test.
-  assert.equal(names.length, 28);
+  assert.equal(names.length, 31);
   for (const required of ['execute_dql', 'get_system_metrics', 'connect_database', 'debug_socket_query']) {
     assert.ok(names.includes(required), `missing ${required}`);
   }
@@ -236,6 +238,89 @@ test('legacy SSE transport: endpoint hand-off, POST /messages round-trip, stale 
     events += await nextChunk();
   }
   assert.ok(events.includes('ditto-edge-studio-vscode'), `initialize reply should name the server: ${events}`);
+});
+
+test('resources/list + resources/read: ditto:// schema, peers, sync-status, subscriptions, system-metrics', async (t) => {
+  const { base, bundle } = await startServer(t, {
+    activeId: 'cfg-1',
+    manager: {
+      execute: (q) => {
+        if (q === 'SELECT * FROM __collections') {
+          return Promise.resolve({ rows: [{ _id: 'c1', name: 'tasks' }], mutatedDocumentIds: [], commitId: null });
+        }
+        if (q.startsWith('SELECT COUNT(*)')) {
+          return Promise.resolve({ rows: [{ numDocs: 3 }], mutatedDocumentIds: [], commitId: null });
+        }
+        return Promise.resolve({ rows: [], mutatedDocumentIds: [], commitId: null });
+      },
+    },
+  });
+  void bundle;
+  const sid = await openSession(t, base);
+
+  const listRes = await rpc(base, { jsonrpc: '2.0', id: 10, method: 'resources/list', params: {} }, sid);
+  assert.equal(listRes.status, 200);
+  const resources = (listRes.body.result as { resources: { uri: string; name: string }[] }).resources;
+  const uris = resources.map(r => r.uri).sort();
+  for (const expected of [
+    'ditto://schema', 'ditto://peers', 'ditto://sync-status',
+    'ditto://system-metrics', 'ditto://subscriptions', 'ditto://observers',
+  ]) {
+    assert.ok(uris.includes(expected), `missing resource ${expected}`);
+  }
+
+  const read = async (uri: string) => {
+    const r = await rpc(base, { jsonrpc: '2.0', id: 11, method: 'resources/read', params: { uri } }, sid);
+    assert.equal(r.status, 200, `${uri} read`);
+    const result = r.body.result as { contents: { text: string; mimeType?: string }[] };
+    const block = result.contents[0];
+    assert.ok(block, `${uri} must return a contents block`);
+    return JSON.parse(block.text) as Record<string, unknown>;
+  };
+
+  const schema = await read('ditto://schema');
+  assert.deepEqual((schema.collections as Record<string, unknown>[]).map(c => c.name), ['tasks']);
+
+  const subs = await read('ditto://subscriptions');
+  assert.deepEqual(subs.subscriptions, []);
+
+  const sync = await read('ditto://sync-status');
+  assert.equal(sync.sync, 'active');
+
+  const peers = await read('ditto://peers');
+  assert.ok('remote' in peers);
+
+  const metrics = await read('ditto://system-metrics');
+  assert.equal(metrics.status, 'no-data-yet', 'no accumulator has polled yet');
+
+  // After the tool forces a read, the same resource reports the snapshot.
+  await rpc(base, {
+    jsonrpc: '2.0', id: 12, method: 'tools/call',
+    params: { name: 'execute_dql', arguments: { query: 'SELECT 1' } },
+  }, sid);
+  await rpc(base, {
+    jsonrpc: '2.0', id: 13, method: 'tools/call',
+    params: { name: 'get_system_metrics', arguments: {} },
+  }, sid);
+  // get_system_metrics was answered 'unavailable' or 'exporterDisabled' for
+  // this fake (no system:metrics rows scripted) — either way the resource
+  // stays honest; when the exporter placeholder is present the resource
+  // reports that path too.
+  const metrics2 = await read('ditto://system-metrics');
+  assert.ok(metrics2.status === 'no-data-yet' || metrics2.status === 'ok');
+});
+
+test('resources return noConnection JSON (not protocol errors) while disconnected', async (t) => {
+  const { base } = await startServer(t); // nothing connected
+  const sid = await openSession(t, base);
+  const r = await rpc(base, { jsonrpc: '2.0', id: 14, method: 'resources/read', params: { uri: 'ditto://schema' } }, sid);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.error, undefined, 'a disconnected read is a normal response, not a protocol error');
+  const result = r.body.result as { contents: { text: string }[] };
+  const block = result.contents[0];
+  assert.ok(block);
+  const payload = JSON.parse(block.text) as Record<string, unknown>;
+  assert.equal(payload.error, 'no_active_connection');
 });
 
 test('stop() drains sessions and releases the port', async (t) => {

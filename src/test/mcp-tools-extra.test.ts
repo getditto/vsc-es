@@ -23,6 +23,8 @@ const { subscriptionTools } = await import('../mcp/tools-subscriptions.js');
 const { observerTools } = await import('../mcp/tools-observers.js');
 const { connectionTools } = await import('../mcp/tools-connections.js');
 const { debugSocketTools } = await import('../mcp/tools-debug-socket.js');
+const { logTools } = await import('../mcp/tools-logs.js');
+const { attachmentTools } = await import('../mcp/tools-attachments.js');
 
 function find(tools: ToolDef[], name: string): ToolDef {
   const tool = tools.find(t => t.name === name);
@@ -366,4 +368,164 @@ test('disconnect_database reports whether anything was connected', async () => {
   bundle.automationScript.disconnectImpl = () => Promise.resolve(false);
   const again = obj(await find(connectionTools, 'disconnect_database').handler(bundle.ctx, {}));
   assert.equal(again.wasConnected, false);
+});
+
+// ─── watch_query ─────────────────────────────────────────────
+
+test('watch_query captures events until the duration elapses, then cancels the observer', async () => {
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  let fire: ((ev: unknown) => void) | undefined;
+  bundle.manager.state.observerHarness = {
+    cancelCalls: 0,
+    onRegister(_q, cb) { fire = cb as (ev: unknown) => void; },
+  };
+  const tool = find(observerTools, 'watch_query');
+  const run = tool.handler(bundle.ctx, {
+    query: 'SELECT * FROM tasks', duration_ms: 400, max_events: 10, max_rows_per_event: 2,
+  });
+  assert.ok(fire, 'observer registered against the active session');
+  fire({
+    rows: [{ _id: '1' }, { _id: '2' }, { _id: '3' }], totalRows: 3,
+    insertions: [0, 1, 2], updates: [], deletions: [], moves: [],
+  });
+  fire({
+    rows: [{ _id: '1' }, { _id: '2' }], totalRows: 2,
+    insertions: [], updates: [1], deletions: [2], moves: [],
+  });
+  const payload = obj(await run);
+  assert.equal(payload.eventCount, 2);
+  assert.equal(payload.stoppedBy, 'duration');
+  assert.equal(bundle.manager.state.observerHarness.cancelCalls, 1, 'observer cancelled at the deadline');
+  const events = payload.events as Record<string, unknown>[];
+  assert.ok(events[0]);
+  assert.deepEqual(events[0].insertions, [0, 1, 2]);
+  assert.equal(events[0].rowsTruncated, true, 'row cap per event applied');
+  assert.equal((events[0].rows as unknown[]).length, 2);
+  assert.ok(events[1]);
+  assert.deepEqual(events[1].deletions, [2]);
+});
+
+test('watch_query stops early at max_events', async () => {
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  let fire: ((ev: unknown) => void) | undefined;
+  bundle.manager.state.observerHarness = {
+    cancelCalls: 0,
+    onRegister(_q, cb) { fire = cb as (ev: unknown) => void; },
+  };
+  const run = find(observerTools, 'watch_query').handler(bundle.ctx, {
+    query: 'SELECT * FROM t', duration_ms: 30_000, max_events: 2, max_rows_per_event: 5,
+  });
+  assert.ok(fire);
+  const ev = { rows: [], totalRows: 0, insertions: [], updates: [], deletions: [], moves: [] };
+  fire(ev); fire(ev);
+  const payload = obj(await run);
+  assert.equal(payload.stoppedBy, 'max_events');
+  assert.equal(payload.eventCount, 2);
+});
+
+test('watch_query rejects non-SELECT and errors without a session', async () => {
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  const bad = await find(observerTools, 'watch_query').handler(bundle.ctx, {
+    query: 'EVICT FROM t WHERE true', duration_ms: 500, max_events: 5, max_rows_per_event: 5,
+  });
+  assert.equal(bad.isError, true);
+  assert.match(errText(bad), /SELECT/);
+
+  const idle = makeContext(); // no active connection AND no observer harness
+  const noSession = await find(observerTools, 'watch_query').handler(idle.ctx, {
+    query: 'SELECT * FROM t', duration_ms: 500, max_events: 5, max_rows_per_event: 5,
+  });
+  assert.equal(noSession.isError, true);
+});
+
+// ─── query_log_analyzer ──────────────────────────────────────
+
+test('query_log_analyzer opens the MCP-owned analyzer for the active db and pages results', async () => {
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.logAnalyzerScript.queryLinesResult = {
+    total: 42,
+    items: [
+      { id: 7, timestamp: new Date('2026-09-06T10:00:00Z'), level: 'error', tag: 'sdk', raw: '...', text: 'handshake failed', userTags: ['auth'] },
+      { id: 8, timestamp: null, level: 'info', tag: null, raw: 'raw', text: 'context-free line' },
+    ],
+  };
+  const tool = find(logTools, 'query_log_analyzer');
+  const payload = obj(await tool.handler(bundle.ctx, {
+    level: 'error', source: 'all', search: 'handshake', limit: 50, offset: 5,
+  }));
+  assert.deepEqual(bundle.logAnalyzerScript.openCalls, ['cfg-1']);
+  assert.deepEqual(bundle.logAnalyzerScript.queryLinesCalls[0], {
+    filter: 'error', source: 'all', search: 'handshake', limit: 50, offset: 5,
+  });
+  assert.equal(payload.total, 42);
+  assert.equal(payload.returned, 2);
+  const items = payload.items as Record<string, unknown>[];
+  assert.ok(items[0]);
+  assert.equal(items[0].timestamp, '2026-09-06T10:00:00.000Z');
+  assert.deepEqual(items[0].userTags, ['auth']);
+  assert.ok(items[1]);
+  assert.equal(items[1].timestamp, null);
+});
+
+test('query_log_analyzer requires a connection', async () => {
+  const bundle = makeContext();
+  const res = await find(logTools, 'query_log_analyzer').handler(bundle.ctx, {
+    level: 'all', source: 'all', limit: 10, offset: 0,
+  });
+  assert.equal(res.isError, true);
+});
+
+// ─── fetch_attachment ────────────────────────────────────────
+
+test('fetch_attachment streams the blob to disk via the native copy path', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dest = path.join(dir, 'photo.png');
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.attachmentScript = {
+    fetchCalls: [],
+    savedTo: [],
+    fetch: () => Promise.resolve({
+      copyToPath: (d: string) => { fs.writeFileSync(d, Buffer.from('PNGDATA')); return Promise.resolve(); },
+    }),
+  };
+  const tool = find(attachmentTools, 'fetch_attachment');
+  const payload = obj(await tool.handler(bundle.ctx, {
+    token: { id: 'att-1', len: 7, metadata: { mime: 'image/png' } },
+    save_to_path: dest,
+    overwrite: false,
+  }));
+  assert.equal(payload.savedTo, dest);
+  assert.equal(payload.bytes, 7);
+  assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
+  assert.deepEqual(bundle.manager.state.attachmentScript.savedTo, [dest]);
+});
+
+test('fetch_attachment guards: bad len, relative path, no overwrite without the flag', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const existing = path.join(dir, 'exists.bin');
+  fs.writeFileSync(existing, 'x');
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.attachmentScript = {
+    fetchCalls: [], savedTo: [],
+    fetch: () => Promise.resolve(null),
+  };
+  const tool = find(attachmentTools, 'fetch_attachment');
+
+  const badLen = await tool.handler(bundle.ctx, { token: { id: 'a', len: 'NaN' }, save_to_path: path.join(dir, 'x'), overwrite: false });
+  assert.equal(badLen.isError, true);
+
+  const relative = await tool.handler(bundle.ctx, { token: { id: 'a', len: 5 }, save_to_path: 'relative.bin', overwrite: false });
+  assert.equal(relative.isError, true);
+  assert.match(errText(relative), /absolute/);
+
+  const clobber = await tool.handler(bundle.ctx, { token: { id: 'a', len: 5 }, save_to_path: existing, overwrite: false });
+  assert.equal(clobber.isError, true);
+  assert.match(errText(clobber), /already exists/);
+
+  // Attachment missing remotely.
+  const missing = await tool.handler(bundle.ctx, { token: { id: 'a', len: 5 }, save_to_path: path.join(dir, 'fresh'), overwrite: true });
+  assert.equal(missing.isError, true);
+  assert.match(errText(missing), /could not be fetched/);
 });

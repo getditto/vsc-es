@@ -13,6 +13,7 @@ import { ObserverStore } from '../../storage/ObserverStore.js';
 import { QueryMetricsStore } from '../../storage/QueryMetricsStore.js';
 import { CollectionsRepository } from '../../ditto/CollectionsRepository.js';
 import { SystemMetricsHub } from '../../ditto/SystemMetricsHub.js';
+import type { LogAnalyzerService } from '../../logAnalyzer/LogAnalyzerService.js';
 import type { PeerListSnapshot, StoredDittoConfig } from '../../models/DittoConfig.js';
 import { newConfig } from '../../models/DittoConfig.js';
 
@@ -98,6 +99,26 @@ export interface FakeManagerState {
   executeCalls: { query: string; args?: Record<string, unknown> }[];
   registeredSubscriptions: { id: string; query: string }[];
   cancelledSubscriptions: string[];
+  /** Scripted observer firehose for watch_query tests: when set, the fake
+   *  returns a handle and hands the callback back for manual driving. */
+  observerHarness?: {
+    onRegister(query: string, cb: (ev: {
+      rows: Record<string, unknown>[];
+      totalRows: number;
+      insertions: number[];
+      updates: number[];
+      deletions: number[];
+      moves: { from: number; to: number }[];
+    }) => void): void;
+    cancelCalls: number;
+  };
+  /** Scripted attachment fetch for fetch_attachment tests. */
+  attachmentScript?: {
+    fetch(token: { id: string; len: number | bigint; metadata: Record<string, string> }):
+      Promise<{ copyToPath(dest: string): Promise<void> } | null>;
+    fetchCalls: { id: string }[];
+    savedTo: string[];
+  };
 }
 
 export function makeFakeManager(partial: Partial<FakeManagerState> = {}): DittoManager & { state: FakeManagerState } {
@@ -143,7 +164,24 @@ export function makeFakeManager(partial: Partial<FakeManagerState> = {}): DittoM
       return state.execute(query, args);
     },
     registerStoreObserver: () => null,
-    registerObserver: () => null,
+    registerObserver: (query: string, cb: unknown) => {
+      if (!state.observerHarness) { return null; }
+      state.observerHarness.onRegister(query, cb as never);
+      return {
+        cancel: () => {
+          if (state.observerHarness) { state.observerHarness.cancelCalls += 1; }
+        },
+      };
+    },
+    fetchAttachment: (token: { id: string; len: number | bigint; metadata: Record<string, string> }, _onEvent?: unknown) => {
+      if (!state.attachmentScript || !state.activeId) { return null; }
+      state.attachmentScript.fetchCalls.push({ id: token.id });
+      return Promise.resolve(state.attachmentScript.fetch(token));
+    },
+    saveAttachmentToPath: async (attachment: { copyToPath(dest: string): Promise<void> }, destPath: string) => {
+      if (state.attachmentScript) { state.attachmentScript.savedTo.push(destPath); }
+      await attachment.copyToPath(destPath);
+    },
     cborBytesForCollection: async (collectionExpr: string) => {
       const r = await state.execute(`SELECT * FROM ${collectionExpr}`);
       return { documentCount: r.rows.length, totalBytes: r.rows.length * 10 };
@@ -214,6 +252,12 @@ export interface FakeContextBundle {
     connectCalls: string[];
     disconnectCalls: number;
   };
+  /** Scripted Log Analyzer responses for query_log_analyzer tests. */
+  logAnalyzerScript: {
+    queryLinesResult: unknown;
+    openCalls: string[];
+    queryLinesCalls: Record<string, unknown>[];
+  };
 }
 
 export function makeContext(opts: {
@@ -242,6 +286,12 @@ export function makeContext(opts: {
     disconnectCalls: 0,
   };
 
+  const logAnalyzerScript = {
+    queryLinesResult: { items: [], total: 0 } as unknown,
+    openCalls: [] as string[],
+    queryLinesCalls: [] as Record<string, unknown>[],
+  };
+
   const ctx: McpToolContext = {
     manager,
     configStore,
@@ -253,6 +303,15 @@ export function makeContext(opts: {
     logger,
     globalStorageFsPath: '/tmp/fake-globalstorage',
     systemMetricsHub,
+    openLogAnalyzer: (configId: string) => {
+      logAnalyzerScript.openCalls.push(configId);
+      return Promise.resolve({
+        queryLines: (opts: Record<string, unknown>) => {
+          logAnalyzerScript.queryLinesCalls.push(opts);
+          return logAnalyzerScript.queryLinesResult;
+        },
+      } as unknown as LogAnalyzerService);
+    },
     automation: {
       connect: (idOrName) => {
         automationScript.connectCalls.push(idOrName);
@@ -272,6 +331,7 @@ export function makeContext(opts: {
   return {
     ctx, manager, configStore, secretStore, secrets, collectionsRepo,
     queryMetrics, subscriptionStore, observerStore, systemMetricsHub, logger, automationScript,
+    logAnalyzerScript,
   };
 }
 
