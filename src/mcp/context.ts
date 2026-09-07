@@ -1,5 +1,6 @@
 import type { DittoManager } from '../ditto/DittoManager.js';
 import type { CollectionsRepository } from '../ditto/CollectionsRepository.js';
+import type { SystemMetricsHub } from '../ditto/SystemMetricsHub.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
 import type { SubscriptionStore } from '../storage/SubscriptionStore.js';
@@ -30,6 +31,9 @@ export interface McpToolContext {
   /** Extension globalStorage fsPath — the per-DB working directory lives
    *  at `<globalStorageFsPath>/dittoData/<configId>` (database metrics). */
   globalStorageFsPath: string;
+  /** Shared per-connection system:metrics accumulators (single-reader
+   *  invariant — reads flush the SDK registry). */
+  systemMetricsHub: SystemMetricsHub;
   /** Drives headless connect/switch/disconnect through the same
    *  switch-orchestrator + persistence-lock semantics the Connect/Disconnect
    *  commands use (panel teardown included), minus the modal UX: the AI

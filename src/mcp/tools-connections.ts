@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { StoredDittoConfig } from '../models/DittoConfig.js';
 import { ok, errFrom } from './tool-result.js';
@@ -79,7 +80,33 @@ export const connectionTools: ToolDef[] = [
     schema: {},
     handler: (ctx) => getActiveDatabase(ctx),
   }),
-  // NOTE: connect_database / disconnect_database are added by the
-  // headless-automation slice in a later commit; they exercise
-  // ctx.automation (switch orchestrator minus the modal UX).
+  tool({
+    name: 'connect_database',
+    description:
+      'Connect to a registered database connection by id or name. If another database is ' +
+      'active this SWITCHES: per-database panels for the old connection close (reopening ' +
+      'its state next time it connects). Fails cleanly if a switch or transport change is ' +
+      'in flight — wait and retry. Poll get_active_database to confirm afterwards.',
+    schema: {
+      id_or_name: z.string().min(1).describe('Registered connection id or exact name.'),
+    },
+    handler: async (ctx, args: { id_or_name: string }) => {
+      const result = await ctx.automation.connect(args.id_or_name);
+      if (result.kind === 'connect-failed') {
+        throw new Error(result.message);
+      }
+      return ok({ connected: true, id: result.configId, name: result.name });
+    },
+  }),
+  tool({
+    name: 'disconnect_database',
+    description:
+      'Disconnect the active database connection. Per-database panels close (state ' +
+      'preserved). Returns wasConnected=false when nothing was connected.',
+    schema: {},
+    handler: async (ctx) => ok({
+      disconnected: true,
+      wasConnected: await ctx.automation.disconnect(),
+    }),
+  }),
 ];

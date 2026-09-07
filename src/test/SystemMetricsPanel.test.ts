@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 import { SystemMetricsPanel } from '../panels/SystemMetricsPanel.js';
+import { SystemMetricsHub } from '../ditto/SystemMetricsHub.js';
 import type { Logger } from '../logging/types.js';
 import type { SystemMetricsStatus } from '../ipc/messages.js';
 
@@ -80,6 +81,7 @@ function showPanel(manager: unknown, store: Map<string, unknown> = new Map()): M
     'db-1',
     { setActiveFeature: () => {} } as never,
     noopLogger(),
+    new SystemMetricsHub(manager as never, noopLogger()),
   );
   return store;
 }

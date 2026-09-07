@@ -4,8 +4,11 @@ import { err as toolErr } from './tool-result.js';
 import type { ToolDef } from './define-tool.js';
 import { connectionTools } from './tools-connections.js';
 import { queryTools } from './tools-query.js';
+import { debugSocketTools } from './tools-debug-socket.js';
 import { collectionTools } from './tools-collections.js';
 import { syncTools } from './tools-sync.js';
+import { subscriptionTools } from './tools-subscriptions.js';
+import { observerTools } from './tools-observers.js';
 import { metricsTools } from './tools-metrics.js';
 import { logTools } from './tools-logs.js';
 
@@ -19,11 +22,14 @@ export type { ToolDef } from './define-tool.js';
  */
 export function allTools(): ToolDef[] {
   return [
-    ...connectionTools,
-    ...queryTools,
+    ...connectionTools,   // incl. connect/disconnect (headless automation)
+    ...queryTools,        // incl. explain_query / profile_query
+    ...debugSocketTools,
     ...collectionTools,
     ...syncTools,
-    ...metricsTools,
+    ...subscriptionTools,
+    ...observerTools,
+    ...metricsTools,      // incl. system + database metrics
     ...logTools,
   ];
 }

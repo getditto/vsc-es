@@ -51,28 +51,46 @@ function find(tools: ToolDef[], name: string): ToolDef {
   return tool;
 }
 
-test('manifest: the registry exposes every parity tool exactly once (SwiftUI manifest parity)', () => {
+/** Canonical manifest lock — update deliberately when tools ship. */
+const EXPECTED_TOOL_NAMES = [
+  // SwiftUI parity
+  'execute_dql',
+  'insert_documents_from_file',
+  'list_databases',
+  'get_active_database',
+  'list_collections',
+  'list_indexes',
+  'create_index',
+  'drop_index',
+  'get_query_metrics',
+  'get_sync_status',
+  'set_sync',
+  'configure_transport',
+  'get_peers',
+  'get_app_logs',
+  'get_ditto_logs',
+  // extension-only
+  'get_system_metrics',
+  'get_database_metrics',
+  'list_subscriptions',
+  'add_subscription',
+  'remove_subscription',
+  'list_observers',
+  'add_observer',
+  'remove_observer',
+  'explain_query',
+  'profile_query',
+  'debug_socket_query',
+  'connect_database',
+  'disconnect_database',
+];
+
+test('manifest: the registry exposes every tool exactly once', () => {
   // Data-level manifest check (no HTTP) — mirrors the SwiftUI suite's
-  // `tools/list returns 15 tools` assertion in MCPToolHandlersTests.
+  // MCPToolHandlersTests. 28 = 15 SwiftUI-parity tools + extension-only.
   const defs = allTools();
   const names = defs.map(d => d.name).sort();
-  assert.deepEqual(names, [
-    'configure_transport',
-    'create_index',
-    'drop_index',
-    'execute_dql',
-    'get_active_database',
-    'get_app_logs',
-    'get_ditto_logs',
-    'get_peers',
-    'get_query_metrics',
-    'get_sync_status',
-    'insert_documents_from_file',
-    'list_collections',
-    'list_databases',
-    'list_indexes',
-    'set_sync',
-  ].sort());
+  assert.deepEqual(names, EXPECTED_TOOL_NAMES.slice().sort());
   assert.equal(new Set(names).size, names.length, 'duplicate tool names would shadow each other');
   for (const def of defs) {
     assert.ok(def.description.length > 10, `${def.name} needs a real description`);

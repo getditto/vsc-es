@@ -12,6 +12,7 @@ import { SubscriptionStore } from '../../storage/SubscriptionStore.js';
 import { ObserverStore } from '../../storage/ObserverStore.js';
 import { QueryMetricsStore } from '../../storage/QueryMetricsStore.js';
 import { CollectionsRepository } from '../../ditto/CollectionsRepository.js';
+import { SystemMetricsHub } from '../../ditto/SystemMetricsHub.js';
 import type { PeerListSnapshot, StoredDittoConfig } from '../../models/DittoConfig.js';
 import { newConfig } from '../../models/DittoConfig.js';
 
@@ -83,11 +84,20 @@ export interface FakeManagerState {
   lifecycleKind: string;
   applyingTransports: boolean;
   snapshot: PeerListSnapshot;
-  /** Scripted store executor — drives executeRaw + executeRawDetailed. */
+  /** Scripted store executor — drives executeRaw + executeRawDetailed
+   *  (and seeds explainQuery/executeQuery defaults). */
   execute: (query: string, args?: Record<string, unknown>) => Promise<DetailedResult>;
+  /** Optional full control of the PROFILE pipeline result (executeQuery). */
+  runQuery?: (query: string, options?: { collectProfiling?: boolean; collectMetrics?: boolean }) => Promise<{
+    rows: Record<string, unknown>[];
+    durationMs: number;
+    metadata: Record<string, unknown>;
+  }>;
   toggleSyncCalls: number;
   appliedTransports: { isLanEnabled: boolean; isBluetoothLeEnabled: boolean; isAwdlEnabled: boolean }[];
   executeCalls: { query: string; args?: Record<string, unknown> }[];
+  registeredSubscriptions: { id: string; query: string }[];
+  cancelledSubscriptions: string[];
 }
 
 export function makeFakeManager(partial: Partial<FakeManagerState> = {}): DittoManager & { state: FakeManagerState } {
@@ -102,6 +112,8 @@ export function makeFakeManager(partial: Partial<FakeManagerState> = {}): DittoM
     toggleSyncCalls: 0,
     appliedTransports: [],
     executeCalls: [],
+    registeredSubscriptions: [],
+    cancelledSubscriptions: [],
     ...partial,
   };
   const fake = {
@@ -132,6 +144,36 @@ export function makeFakeManager(partial: Partial<FakeManagerState> = {}): DittoM
     },
     registerStoreObserver: () => null,
     registerObserver: () => null,
+    cborBytesForCollection: async (collectionExpr: string) => {
+      const r = await state.execute(`SELECT * FROM ${collectionExpr}`);
+      return { documentCount: r.rows.length, totalBytes: r.rows.length * 10 };
+    },
+    registerSubscription: (id: string, query: string) => {
+      state.registeredSubscriptions.push({ id, query });
+    },
+    cancelSubscription: (id: string) => {
+      state.cancelledSubscriptions.push(id);
+      state.registeredSubscriptions = state.registeredSubscriptions.filter(s => s.id !== id);
+    },
+    explainQuery: async (query: string) => {
+      state.executeCalls.push({ query: `EXPLAIN ${query}` });
+      const r = await state.execute(`EXPLAIN ${query}`);
+      const plan = r.rows[0];
+      if (!plan) { throw new Error('EXPLAIN returned no plan.'); }
+      return plan;
+    },
+    executeQuery: async (query: string, options?: { collectProfiling?: boolean; collectMetrics?: boolean }) => {
+      if (state.runQuery) { return state.runQuery(query, options); }
+      const r = await state.execute(query);
+      return {
+        rows: r.rows,
+        durationMs: 1,
+        metadata: {
+          dql: query, durationMs: 1, resultCount: r.rows.length,
+          explain: '', timestamp: Date.now(),
+        },
+      };
+    },
     onStatusChange: () => ({ dispose() { /* no-op */ } }),
     onPresence: () => ({ dispose() { /* no-op */ } }),
     onSyncChange: () => ({ dispose() { /* no-op */ } }),
@@ -163,6 +205,7 @@ export interface FakeContextBundle {
   queryMetrics: QueryMetricsStore;
   subscriptionStore: SubscriptionStore;
   observerStore: ObserverStore;
+  systemMetricsHub: SystemMetricsHub;
   logger: Logger & { written: string[] };
   /** Script connect outcomes for the automation seam. */
   automationScript: {
@@ -189,6 +232,7 @@ export function makeContext(opts: {
   const queryMetrics = new QueryMetricsStore();
   const subscriptionStore = new SubscriptionStore(memento);
   const observerStore = new ObserverStore(memento);
+  const systemMetricsHub = new SystemMetricsHub(manager, logger);
 
   const automationScript = {
     connectImpl: (idOrName: string): Promise<SwitchAttemptResult> =>
@@ -208,6 +252,7 @@ export function makeContext(opts: {
     observerStore,
     logger,
     globalStorageFsPath: '/tmp/fake-globalstorage',
+    systemMetricsHub,
     automation: {
       connect: (idOrName) => {
         automationScript.connectCalls.push(idOrName);
@@ -226,7 +271,7 @@ export function makeContext(opts: {
 
   return {
     ctx, manager, configStore, secretStore, secrets, collectionsRepo,
-    queryMetrics, subscriptionStore, observerStore, logger, automationScript,
+    queryMetrics, subscriptionStore, observerStore, systemMetricsHub, logger, automationScript,
   };
 }
 

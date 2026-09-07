@@ -63,6 +63,7 @@ import { deleteConnectionAtomically } from './panels/save-connection.js';
 import { McpServerController } from './mcp/McpServerController.js';
 import { registerCopilotMcpProvider } from './mcp/copilot.js';
 import type { McpToolContext, McpAutomation } from './mcp/context.js';
+import { SystemMetricsHub } from './ditto/SystemMetricsHub.js';
 
 let logger: Logger;
 /** Held for deactivate(): the context.subscriptions dispose of the manager
@@ -284,6 +285,13 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   // memory profile sane; see AttachmentCache for the LRU policy.
   const attachmentCache = new AttachmentCache();
 
+  // Per-connection system-metrics accumulators, shared between the System
+  // Metrics panel and the MCP get_system_metrics tool (system:metrics
+  // reads flush the SDK's registry — two independent accumulators would
+  // race each other for deltas; see SystemMetricsHub).
+  const systemMetricsHub = new SystemMetricsHub(manager, logger);
+  context.subscriptions.push({ dispose: () => systemMetricsHub.dispose() });
+
   // ─── MCP server (AI agent surface) ─────────────────────────
   // Shares the extension's live service graph with webview panels; the
   // automation adapter runs the SAME switch-orchestrator semantics as the
@@ -374,6 +382,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     observerStore,
     logger,
     globalStorageFsPath: context.globalStorageUri.fsPath,
+    systemMetricsHub,
     automation: mcpAutomation,
     log: logger.withTag('mcp'),
   };
@@ -414,6 +423,13 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     } else {
       inspectorController.clearOnDisconnect();
       collectionsRepo.clear();
+      // System metrics accumulators are per-connection since-connect
+      // totals; they belong to the session that just ended. (Both the
+      // System Metrics panel and the MCP get_system_metrics tool read
+      // through the hub.)
+      if (lastActiveConfigId) {
+        systemMetricsHub.disposeFor(lastActiveConfigId);
+      }
       // Lifecycle leaving 'active' === the previously-cached
       // attachments belong to a session that no longer exists; the
       // tokens won't work against a fresh session anyway. Belt-and-
@@ -948,7 +964,7 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     }),
     vscode.commands.registerCommand('dittoVsce.openSystemMetrics', (databaseId: string) => {
       if (!databaseId) { return; }
-      SystemMetricsPanel.show(context, configStore, manager, databaseId, inspectorController, logger);
+      SystemMetricsPanel.show(context, configStore, manager, databaseId, inspectorController, logger, systemMetricsHub);
     }),
     vscode.commands.registerCommand('dittoVsce.openDebugConsole', () => {
       // Standalone by design: the debug socket belongs to a RUNNING APP's

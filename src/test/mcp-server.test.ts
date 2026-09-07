@@ -96,30 +96,19 @@ test('initialize advertises serverInfo + tools capability', async (t) => {
   // via tools/list below.)
 });
 
-test('tools/list exposes the parity surface with schemas', async (t) => {
+test('tools/list exposes the full surface with schemas (both parity and extension-only)', async (t) => {
   const { base } = await startServer(t);
   const sid = await openSession(t, base);
   const res = await rpc(base, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }, sid);
   assert.equal(res.status, 200);
   const result = res.body.result as { tools: { name: string; description: string; inputSchema: unknown }[] };
   const names = result.tools.map(tl => tl.name).sort();
-  assert.deepEqual(names, [
-    'create_index',
-    'drop_index',
-    'execute_dql',
-    'get_active_database',
-    'get_app_logs',
-    'get_ditto_logs',
-    'get_peers',
-    'get_query_metrics',
-    'get_sync_status',
-    'insert_documents_from_file',
-    'list_collections',
-    'list_databases',
-    'list_indexes',
-    'set_sync',
-    'configure_transport',
-  ].sort());
+  // Lock the transport-level count; the exact set is asserted data-side in
+  // mcp-tools.test.ts's manifest test.
+  assert.equal(names.length, 28);
+  for (const required of ['execute_dql', 'get_system_metrics', 'connect_database', 'debug_socket_query']) {
+    assert.ok(names.includes(required), `missing ${required}`);
+  }
   for (const tool of result.tools) {
     assert.ok(tool.description.length > 10, `${tool.name} needs a real description`);
     assert.ok(tool.inputSchema && typeof tool.inputSchema === 'object', `${tool.name} needs an inputSchema`);

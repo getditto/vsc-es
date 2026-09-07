@@ -9,6 +9,7 @@ import { executeRemoteQuery, HttpQueryError } from '../ditto/HttpQueryService.js
 import {
   validateJsonDocuments, importDocuments, ImportValidationError,
 } from '../ditto/ImportService.js';
+import { isProfilableSelect } from '../ditto/QueryProfileParser.js';
 
 /** Row cap applied to SELECT results before they enter an LLM context.
  *  Matches MAX_QUERY_ROWS in src/ditto/query-projection.ts — the Query
@@ -141,5 +142,41 @@ export const queryTools: ToolDef[] = [
       mode: z.enum(['insert', 'insert_initial']).default('insert'),
     },
     handler: (ctx, args: InsertFromFileArgs) => insertDocumentsFromFile(ctx, args),
+  }),
+  tool({
+    name: 'explain_query',
+    description:
+      'Return the DQL query plan (EXPLAIN) for a statement WITHOUT executing it against the ' +
+      'store. Use before/after create_index to compare strategies.',
+    schema: { query: z.string().min(1) },
+    handler: async (ctx, args: { query: string }) => {
+      requireActiveConfig(ctx);
+      const plan = await ctx.manager.explainQuery(args.query);
+      return ok({ query: args.query, plan });
+    },
+  }),
+  tool({
+    name: 'profile_query',
+    description:
+      'Execute a SELECT with PROFILE and return the per-operator timing tree (plus rows and ' +
+      'row counts). NOTE: this RUNS the query — it is for tuning, not for reading data cheaply.',
+    schema: { query: z.string().min(1).describe('SELECT statement to profile.') },
+    handler: async (ctx, args: { query: string }) => {
+      requireActiveConfig(ctx);
+      if (!isProfilableSelect(args.query)) {
+        return err('Only SELECT statements can be profiled.');
+      }
+      const { rows, durationMs, metadata } = await ctx.manager.executeQuery(
+        args.query,
+        { collectProfiling: true, collectMetrics: false },
+      );
+      return ok({
+        durationMs,
+        resultCount: metadata.resultCount,
+        ...(metadata.truncated ? { truncated: true, totalResultCount: metadata.totalResultCount } : {}),
+        profile: metadata.profile ?? null,
+        rows,
+      });
+    },
   }),
 ];

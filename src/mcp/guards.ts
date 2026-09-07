@@ -15,3 +15,20 @@ export function requireActiveConfig(ctx: McpToolContext): StoredDittoConfig {
   if (!id || !cfg) { throw new Error(NO_ACTIVE_CONNECTION_MESSAGE); }
   return cfg;
 }
+
+/** Resolve a connection by id (or exact name) — defaults to the ACTIVE
+ *  connection when `idOrName` is omitted. Definition-level tools
+ *  (subscriptions, observers) accept a target so an agent can stage
+ *  definitions on a connection before connecting to it. */
+export function resolveConnection(
+  ctx: McpToolContext,
+  idOrName?: string,
+): StoredDittoConfig {
+  if (idOrName === undefined) { return requireActiveConfig(ctx); }
+  const found = ctx.configStore.list().find(c => c.id === idOrName || c.name === idOrName);
+  if (!found) {
+    const known = ctx.configStore.list().map(c => `"${c.name}" (${c.id})`).join(', ') || 'none registered';
+    throw new Error(`Unknown connection "${idOrName}". Known connections: ${known}.`);
+  }
+  return found;
+}
