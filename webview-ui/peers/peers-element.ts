@@ -3,7 +3,9 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { postToHost, HostMessages } from '../shared/messaging.js';
 import '../presence-graph/presence-graph-element.js';
-import type { PresenceGraphInput } from '../presence-graph/scene.js';
+import type { PresenceGraphElement } from '../presence-graph/presence-graph-element.js';
+import { CLOUD_PEER_KEY, type PresenceGraphInput } from '../presence-graph/scene.js';
+import type { PresencePeerCardDetail } from '../presence-graph/peer-detail.js';
 
 // ─── Types (mirror src/models/DittoConfig.ts; can't import from ext host) ──
 
@@ -37,6 +39,9 @@ interface PeerInfo {
   dittoSdkVersion?: string;
   peerMetadata?: Record<string, unknown>;
   identityMetadata?: Record<string, unknown>;
+  /** "This peer has a cloud link" (SDK 5.0 rename of
+   *  isConnectedToDittoCloud) — NOT "this peer is the Big Peer". */
+  isConnectedToDittoServer?: boolean;
   connections: ConnectionInfo[];
   syncSessionStatus: SyncSessionStatus;
   syncedUpToLocalCommitId?: number;
@@ -51,10 +56,31 @@ interface LocalPeerInfo {
   sdkLanguage: string;
   sdkPlatform: string;
   sdkVersion: string;
+  /** Presence-graph facts stamped once the first presence graph arrives —
+   *  they feed the local peer's detail card. Metadata arrives as host-
+   *  computed key COUNTS (the card only shows "N keys"; raw bodies from
+   *  remote SDKs are neither needed nor safe to ship). */
+  os?: PeerOS;
+  isConnectedToDittoServer?: boolean;
+  peerMetadataKeyCount?: number;
+  identityMetadataKeyCount?: number;
+}
+
+/** One presence-graph peer. Unlike PeerInfo rows these exist for
+ *  multi-hop peers too — that is what the graph detail card reads. */
+interface RawPresenceGraphPeer {
+  peerKey: string;
+  deviceName: string;
+  os?: PeerOS;
+  dittoSdkVersion?: string;
+  isConnectedToDittoServer: boolean;
+  isCompatible?: boolean;
+  peerMetadataKeyCount: number;
+  identityMetadataKeyCount: number;
 }
 
 interface RawPresenceGraph {
-  remotePeers: { peerKey: string; deviceName: string }[];
+  remotePeers: RawPresenceGraphPeer[];
   connections: { peer1: string; peer2: string; connectionType: ConnectionType }[];
 }
 
@@ -70,6 +96,20 @@ type Platform = 'macos' | 'windows' | 'linux' | 'other';
 interface TransportSupport { lan: boolean; bluetoothLE: boolean; awdl: boolean; }
 interface TransportPrefs { isLanEnabled: boolean; isBluetoothLeEnabled: boolean; isAwdlEnabled: boolean; }
 type ApplyStep = 'idle' | 'stoppingSync' | 'applyingConfig' | 'restartingSync' | 'complete' | 'error';
+
+/** One peer row in the graph-tab search results card. `isLocal` rows are
+ *  listed (so a full-opacity Me makes sense while the rest dims) but not
+ *  clickable — the scene deliberately rejects selecting the local peer. */
+interface GraphSearchMatch {
+  key: string;
+  name: string;
+  isLocal: boolean;
+}
+
+/** Compact peer-key column in the search results card. */
+function truncatePeerKey(key: string): string {
+  return key.length > 24 ? `${key.slice(0, 24)}…` : key;
+}
 
 type In =
   | { type: 'peer.state'; snapshot: PeerListSnapshot; sync: 'active' | 'idle' }
@@ -199,6 +239,9 @@ export class PeerListing extends LitElement {
   /** Owned here rather than in the graph element so the choice survives the
    *  graph tab being torn down and rebuilt on every tab switch. */
   @state() private graphControlsVisible = true;
+  /** Graph-tab peer search query. Parent-owned for the same reason as
+   *  `directConnectedOnly` — the graph element is rebuilt per tab switch. */
+  @state() private graphSearch = '';
   /** Local network interfaces pushed by the host. Empty until the
    *  initial post arrives (typically within ~50ms of webview reveal). */
   @state() private localInterfaces: LocalNetworkInterface[] = [];
@@ -317,6 +360,10 @@ export class PeerListing extends LitElement {
     .tabs {
       display: flex;
       gap: 4px;
+      align-items: center;
+      /* Narrow panes wrap the search below the tabs instead of squeezing
+         the tab labels to two lines or clipping the input. */
+      flex-wrap: wrap;
       margin-bottom: 16px;
       border-bottom: 1px solid var(--vscode-panel-border);
     }
@@ -380,6 +427,95 @@ export class PeerListing extends LitElement {
       min-height: 400px;
     }
     ditto-presence-graph { width: 100%; height: 100%; display: block; }
+
+    /* Peer search lives in the tab bar so it costs the graph no vertical
+       space. The wrapper anchors the results card, which drops down over
+       the canvas (absolute) so typing never reflows it. Input tokens
+       mirror the System Metrics search box. */
+    .graph-search {
+      position: relative;
+      display: flex;
+      align-items: center;
+      margin-left: auto;
+      padding-bottom: 4px;
+    }
+    .graph-search .search {
+      width: 260px;
+      max-width: 45vw;
+      min-width: 140px;
+      padding: 3px 8px;
+      font: inherit;
+      font-size: 12px;
+      color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+      border-radius: 2px;
+      box-sizing: border-box;
+    }
+    .graph-search .search::placeholder { color: var(--vscode-input-placeholderForeground); }
+    .graph-search .search:focus { outline: 1px solid var(--vscode-focusBorder); }
+
+    .search-results {
+      position: absolute;
+      top: calc(100% - 2px);
+      right: 0;
+      width: 320px;
+      max-width: 80vw;
+      max-height: 224px;
+      overflow-y: auto;
+      padding: 4px;
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      box-sizing: border-box;
+      z-index: 1000;
+    }
+    .search-result {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      padding: 6px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      box-sizing: border-box;
+    }
+    button.search-result {
+      background: transparent;
+      border: none;
+      color: var(--vscode-foreground);
+      font-family: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    button.search-result:hover { background: var(--vscode-list-hoverBackground); }
+    button.search-result:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: -1px;
+    }
+    .search-result-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .search-result-key {
+      flex-shrink: 0;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .search-result-tag {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .search-result-empty {
+      padding: 8px;
+      color: var(--vscode-descriptionForeground);
+      font-style: italic;
+      font-size: 12px;
+    }
 
     .grid {
       display: grid;
@@ -778,16 +914,41 @@ export class PeerListing extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     this.tickInterval = window.setInterval(() => { this.nowTick++; }, 30_000);
+    // Panel-wide Escape: the keydown handler bound on the search input only
+    // fires while the box is focused, but a mouse-pick moves focus onto the
+    // result button — and an open detail card never had an Escape route at
+    // all. One window listener covers every focus location inside the
+    // panel; each webview panel is its own window, so nothing leaks across
+    // panels.
+    window.addEventListener('keydown', this.onPanelKeydown);
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    window.removeEventListener('keydown', this.onPanelKeydown);
     if (this.tickInterval !== null) { window.clearInterval(this.tickInterval); }
     if (this.completeClearTimer !== null) {
       window.clearTimeout(this.completeClearTimer);
       this.completeClearTimer = null;
     }
   }
+
+  /** Escape unwinds the innermost context first: an open detail card, then
+   *  the search query. Ignores IME composition (Escape there cancels the
+   *  candidate) and only applies while the graph tab is showing. */
+  private onPanelKeydown = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape' || e.isComposing || this.tab !== 'graph') { return; }
+    const graph = this.shadowRoot?.querySelector<PresenceGraphElement>('ditto-presence-graph');
+    if (graph?.detailOpen) {
+      graph.closeDetail();
+      e.stopPropagation();
+      return;
+    }
+    if (this.graphSearch) {
+      this.graphSearch = '';
+      e.stopPropagation();
+    }
+  };
 
   private toggleSync() { postToHost({ type: 'peer.toggleSync' }); }
 
@@ -874,12 +1035,39 @@ export class PeerListing extends LitElement {
         </div>
       </div>
 
-      <div class="tabs" role="tablist">
+      <!-- No role="tablist": these buttons never had tab semantics (no
+           role=tab/aria-selected) and the search input now shares the row —
+           a tablist must own only tabs, so the honest markup is a plain
+           toolbar of buttons until real tab roles are implemented. -->
+      <div class="tabs">
         <button class=${this.tab === 'list' ? 'active' : ''} @click=${() => this.tab = 'list'}>Connected Peers</button>
         <button class=${this.tab === 'graph' ? 'active' : ''} @click=${() => this.tab = 'graph'}>Presence Graph</button>
+        ${this.tab === 'graph' ? this.renderGraphSearch() : nothing}
       </div>
 
       ${this.tab === 'list' ? this.renderList() : this.renderGraphTab()}
+    `;
+  }
+
+  /** The mesh search rides in the tab bar (right-aligned after the tabs)
+   *  instead of taking a row of its own — the graph keeps the vertical
+   *  space. The results card still drops below the box, over the canvas. */
+  private renderGraphSearch() {
+    const searchActive = this.graphSearch.trim() !== '';
+    const matches = searchActive ? this.graphSearchMatches() : [];
+    return html`
+      <div class="graph-search">
+        <input
+          class="search"
+          type="search"
+          placeholder="Search peers by name or ID…"
+          aria-label="Search peers in the mesh"
+          .value=${this.graphSearch}
+          @input=${(e: Event) => { this.graphSearch = (e.target as HTMLInputElement).value; }}
+          @keydown=${this.onGraphSearchKeydown}
+        />
+        ${searchActive ? this.renderSearchResults(matches) : nothing}
+      </div>
     `;
   }
 
@@ -1150,6 +1338,14 @@ export class PeerListing extends LitElement {
     if (!input) {
       return html`<div class="placeholder">Waiting for presence — connect to see the graph.</div>`;
     }
+    const searchActive = this.graphSearch.trim() !== '';
+    const matches = searchActive ? this.graphSearchMatches() : [];
+    // Fed to the scene as its search focus source: matched peers (and their
+    // connections) stay at full opacity while everything else dims to the
+    // same "unrelated" treatment a canvas selection would give. The search
+    // box itself lives up in the tab bar (renderGraphSearch) so it takes no
+    // vertical space from the canvas.
+    const matchKeys = searchActive ? new Set(matches.map(m => m.key)) : undefined;
     return html`
       <div class="graph-host">
         <!-- Property bindings, not boolean-attribute ones: switching tabs
@@ -1160,6 +1356,8 @@ export class PeerListing extends LitElement {
           .input=${input}
           .directConnectedOnly=${this.directConnectedOnly}
           .controlsVisible=${this.graphControlsVisible}
+          .searchMatchKeys=${matchKeys}
+          .peerDetails=${this.peerDetailMap()}
           @direct-connected-only-change=${(e: CustomEvent<boolean>) => {
             this.directConnectedOnly = e.detail;
           }}
@@ -1169,6 +1367,167 @@ export class PeerListing extends LitElement {
         ></ditto-presence-graph>
       </div>
     `;
+  }
+
+  private renderSearchResults(matches: GraphSearchMatch[]) {
+    // A plain action list, not a listbox: the rows trigger an action and no
+    // selection state exists ("aria-selected=false" would keep announcing a
+    // state that activating the row just contradicted).
+    return html`
+      <div class="search-results" role="list" aria-label="Matching peers">
+        ${matches.length === 0 ? html`
+          <div class="search-result-empty" role="listitem">No peers match “${this.graphSearch.trim()}”</div>
+        ` : matches.map(m => html`
+          <div role="listitem">
+            ${m.isLocal ? html`
+              <div class="search-result" title="The local device cannot be focused">
+                <span class="search-result-name">${m.name || '(unnamed)'} <span class="search-result-tag">(this device)</span></span>
+                <span class="search-result-key">${truncatePeerKey(m.key)}</span>
+              </div>
+            ` : html`
+              <button class="search-result"
+                      title="Focus ${m.name || m.key} in the mesh"
+                      @click=${() => this.onSearchResultClick(m.key)}>
+                <span class="search-result-name">${m.name || '(unnamed)'}</span>
+                <span class="search-result-key">${truncatePeerKey(m.key)}</span>
+              </button>
+            `}
+          </div>
+        `)}
+      </div>
+    `;
+  }
+
+  /**
+   * Every peer the search may find, in card order: remote peers (as the
+   * graph reports them), then the cloud node, then the local device last.
+   *
+   * The source is the FULL mesh, not the mode-filtered graph input — a
+   * multi-hop peer must be findable while "Direct Connected only" is on,
+   * because picking it is exactly how the user jumps the graph over to it.
+   */
+  private graphSearchCandidates(): GraphSearchMatch[] {
+    const { local, remote, presenceGraph } = this.snapshot;
+    const candidates: GraphSearchMatch[] = [];
+    const seen = new Set<string>();
+    const add = (key: string, name: string, isLocal: boolean): void => {
+      if (!key || seen.has(key)) { return; }
+      seen.add(key);
+      candidates.push({ key, name, isLocal });
+    };
+    if (presenceGraph) {
+      for (const p of presenceGraph.remotePeers) { add(p.peerKey, p.deviceName, false); }
+    } else {
+      // Pre-first-presence-emission fallback: only the direct peers are known.
+      for (const p of remote) {
+        if (!p.isDittoServer) { add(p.id, p.deviceName, false); }
+      }
+    }
+    if (remote.some(p => p.isDittoServer)) { add(CLOUD_PEER_KEY, 'Ditto Cloud', false); }
+    if (local) { add(local.peerKey, local.deviceName, true); }
+    return candidates;
+  }
+
+  /** Case-insensitive substring match over device name and peer key — the
+   *  same two fields the Log Analyzer and System Metrics searches filter. */
+  private graphSearchMatches(): GraphSearchMatch[] {
+    const query = this.graphSearch.trim().toLowerCase();
+    if (!query) { return []; }
+    return this.graphSearchCandidates().filter(c =>
+      c.name.toLowerCase().includes(query) || c.key.toLowerCase().includes(query));
+  }
+
+  private onGraphSearchKeydown = (e: KeyboardEvent): void => {
+    // Enter jumps straight to the first focusable hit — the "quickly find
+    // a peer" path that never touches the mouse. (Escape handling lives on
+    // panel-wide keydown so it works wherever focus is.) isComposing guards
+    // IME: Enter confirms a candidate, it must not also fire the focus jump.
+    if (e.key === 'Enter' && !e.isComposing) {
+      const first = this.graphSearchMatches().find(m => !m.isLocal);
+      if (first) { this.onSearchResultClick(first.key); }
+    }
+  };
+
+  /** Focus a search hit exactly as if its pill had been clicked in the
+   *  full-mesh view (the graph element flips Direct off itself when it has
+   *  to). The query is deliberately kept so another result can be picked. */
+  private onSearchResultClick(key: string): void {
+    const graph = this.shadowRoot?.querySelector<PresenceGraphElement>('ditto-presence-graph');
+    graph?.focusPeer(key);
+  }
+
+  /**
+   * The lookup behind the graph's peer detail card, rebuilt with every
+   * snapshot push so an open card tracks live presence/sync state (and its
+   * peer dropping out of the map is what auto-closes the card).
+   *
+   * Presence-graph facts come from `presenceGraph.remotePeers`, which cover
+   * multi-hop peers — a focus orbit is the *focused* peer's neighbourhood,
+   * not ours; the sync rows then overlay from the direct-only `remote`
+   * list. Before the first presence emission there is no graph, so the
+   * direct peers' merged rows stand in for both halves. The synthetic
+   * cloud node is deliberately absent: no card exists for it.
+   */
+  private peerDetailMap(): Map<string, PresencePeerCardDetail> {
+    const map = new Map<string, PresencePeerCardDetail>();
+    const { local, remote, presenceGraph } = this.snapshot;
+    const directByKey = new Map(remote.map(p => [p.id, p]));
+    const keyCount = (meta: Record<string, unknown> | undefined): number =>
+      meta ? Object.keys(meta).length : 0;
+    const addRemote = (base: Omit<PresencePeerCardDetail,
+      'isLocal' | 'isDirectlyConnected' | 'syncedUpToLocalCommitId' | 'lastUpdateReceivedTime'>): void => {
+      const direct = directByKey.get(base.peerKey);
+      map.set(base.peerKey, {
+        ...base,
+        isLocal: false,
+        isDirectlyConnected: direct !== undefined,
+        syncedUpToLocalCommitId: direct?.syncedUpToLocalCommitId,
+        lastUpdateReceivedTime: direct?.lastUpdateReceivedTime,
+      });
+    };
+    if (presenceGraph) {
+      for (const p of presenceGraph.remotePeers) {
+        addRemote({
+          peerKey: p.peerKey,
+          displayName: p.deviceName || p.peerKey.slice(0, 8),
+          os: p.os,
+          sdkVersion: p.dittoSdkVersion,
+          cloudLink: p.isConnectedToDittoServer,
+          isCompatible: p.isCompatible,
+          peerMetadataKeyCount: p.peerMetadataKeyCount,
+          identityMetadataKeyCount: p.identityMetadataKeyCount,
+        });
+      }
+    } else {
+      for (const p of remote) {
+        if (p.isDittoServer) { continue; } // Synthetic cloud peer: no card.
+        addRemote({
+          peerKey: p.id,
+          displayName: p.deviceName || p.id.slice(0, 8),
+          os: p.os,
+          sdkVersion: p.dittoSdkVersion,
+          cloudLink: p.isConnectedToDittoServer,
+          isCompatible: undefined,
+          peerMetadataKeyCount: keyCount(p.peerMetadata),
+          identityMetadataKeyCount: keyCount(p.identityMetadata),
+        });
+      }
+    }
+    if (local) {
+      map.set(local.peerKey, {
+        peerKey: local.peerKey,
+        displayName: 'Me',
+        isLocal: true,
+        os: local.os,
+        sdkVersion: local.sdkVersion || undefined,
+        cloudLink: local.isConnectedToDittoServer,
+        isCompatible: undefined,
+        peerMetadataKeyCount: local.peerMetadataKeyCount ?? 0,
+        identityMetadataKeyCount: local.identityMetadataKeyCount ?? 0,
+        isDirectlyConnected: false,
+      });
+    }
+    return map;
   }
 
   /**

@@ -42,7 +42,10 @@ export interface PresenceGraphInput {
 export const MIN_GRAPH_ZOOM = 0.25;
 export const MAX_GRAPH_ZOOM = 2.0;
 
-const CLOUD_KEY = 'ditto-cloud-node';
+/** Stable synthetic key of the "Ditto Cloud" node. Exported so the panel's
+ *  search can offer the cloud peer as a result that selectPeer accepts. */
+export const CLOUD_PEER_KEY = 'ditto-cloud-node';
+const CLOUD_KEY = CLOUD_PEER_KEY;
 
 /** Ring radius multiplier applied when "Direct Connected only" is OFF.
  *  Expanded layout also packs crowded BFS layers into progressively larger
@@ -127,6 +130,10 @@ export class PresenceGraphScene {
   /** Transient pointer focus. Used for the same dimming treatment until
    *  a click selection takes precedence. */
   hoveredPeerKey: string | undefined;
+  /** Peer keys matching the panel's graph search query. `undefined` means
+   *  no search is active; an EMPTY set is an active search with zero hits
+   *  and dims the whole graph — "nothing here" is useful feedback. */
+  private searchMatchKeys: ReadonlySet<string> | undefined;
   /** Drives scale/alpha for newly-added peers — rendered by drawPeer. */
 
   /** Star field is owned here so the same RAF loop ticks both. */
@@ -177,6 +184,10 @@ export class PresenceGraphScene {
     const key = this.focusedPeerKey;
     return key ? this.peers.get(key)?.label : undefined;
   }
+
+  /** Exposed for the detail card's "Focus this peer" visibility rule
+   *  (hidden for the already-focused peer). */
+  get focusedKey(): string | undefined { return this.focusedPeerKey; }
 
   setSize(w: number, h: number): void {
     this.width = w;
@@ -575,6 +586,14 @@ export class PresenceGraphScene {
     return changed;
   }
 
+  /** Feed the panel's graph search matches (peer keys). An active search is
+   *  the weakest focus source: an explicit click selection and the transient
+   *  hover inspect both still win over it, and clearing the query
+   *  (`undefined`) restores full opacity everywhere. */
+  setSearchMatches(keys: ReadonlySet<string> | undefined): void {
+    this.searchMatchKeys = keys;
+  }
+
   /** Enable/disable Direct mode and discard focus because the visible graph
    *  (and therefore the selected peer's neighbourhood) is changing. */
   setShowDirectConnectedOnly(value: boolean): void {
@@ -750,7 +769,15 @@ export class PresenceGraphScene {
   /** Exposed for focused tests and renderer decisions. */
   focusForPeer(key: string): { selected: boolean; alpha: number } {
     const focused = this.activeFocusKey();
-    if (!focused) { return { selected: false, alpha: 1 }; }
+    if (!focused) {
+      // No selection or hover: an active search takes over the dimming.
+      // Matches stay lit; every other peer takes the same "unrelated"
+      // treatment a selection would give it.
+      if (this.searchMatchKeys && !this.searchMatchKeys.has(key)) {
+        return { selected: false, alpha: UNRELATED_PEER_ALPHA };
+      }
+      return { selected: false, alpha: 1 };
+    }
     if (key === focused) {
       return { selected: this.selectedPeerKey === key, alpha: 1 };
     }
@@ -763,7 +790,14 @@ export class PresenceGraphScene {
   /** Exposed for focused tests and renderer decisions. */
   focusForLine(line: ConnectionLineData): { selected: boolean; alpha: number } {
     const focused = this.activeFocusKey();
-    if (!focused) { return { selected: false, alpha: 1 }; }
+    if (!focused) {
+      if (this.searchMatchKeys) {
+        const touchesMatch = this.searchMatchKeys.has(line.fromKey)
+          || this.searchMatchKeys.has(line.toKey);
+        return { selected: false, alpha: touchesMatch ? 1 : UNRELATED_LINE_ALPHA };
+      }
+      return { selected: false, alpha: 1 };
+    }
     const touchesFocus = line.fromKey === focused || line.toKey === focused;
     return {
       selected: touchesFocus && this.selectedPeerKey === focused,

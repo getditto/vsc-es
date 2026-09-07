@@ -633,6 +633,51 @@ test('a presence observer emission reaches listeners after the coalesce window',
     'firePresence stamps the peer key from the graph onto local info');
 });
 
+test('firePresence stamps presence-graph facts onto local info for the detail card', async t => {
+  // The local peer's detail card reads os/cloud-link/metadata off the
+  // presence graph — none of it exists in __small_peer_info.
+  const { mgr } = await stageSession(t, makeConfig());
+  const internal = internals(mgr);
+  const ditto = internal.session!.ditto;
+  let captured: ((g: unknown) => void) | undefined;
+  const realObserve = ditto.presence.observe.bind(ditto.presence);
+  ditto.presence.observe = ((cb: (g: unknown) => void) => { captured = cb; return { stop() {} }; }) as typeof ditto.presence.observe;
+  t.after(() => { ditto.presence.observe = realObserve; });
+  internal.attachPresenceObserver(ditto);
+  internal.localPeerInfo = {
+    peerKey: '', deviceName: 'VS Code', sdkLanguage: '', sdkPlatform: '', sdkVersion: '',
+  };
+
+  const payloads: {
+    local: {
+      peerKey: string;
+      os?: string;
+      isConnectedToDittoServer?: boolean;
+      peerMetadataKeyCount?: number;
+      identityMetadataKeyCount?: number;
+    } | null;
+  }[] = [];
+  const sub = mgr.onPresence(s => payloads.push(s as never));
+  t.after(() => sub.dispose());
+
+  captured!({
+    localPeer: {
+      peerKey: 'local-1', deviceName: 'VS Code', os: 'macOS',
+      connections: [], isConnectedToDittoServer: true,
+      peerMetadata: { role: 'ide' }, identityServiceMetadata: {},
+    },
+    remotePeers: [],
+    connections: [],
+  });
+
+  await waitFor(() => payloads.some(p => p.local?.peerKey === 'local-1'));
+  const local = payloads[payloads.length - 1]!.local!;
+  assert.equal(local.os, 'macOS');
+  assert.equal(local.isConnectedToDittoServer, true);
+  assert.equal(local.peerMetadataKeyCount, 1, 'metadata ships as a count, not a body');
+  assert.equal(local.identityMetadataKeyCount, 0);
+});
+
 test('the coalesce window collapses a burst of presence callbacks into one flush', async t => {
   // Stage the session WITHOUT an observer so no timer can come from the real
   // SDK, then capture the manager's observer callback and drive a burst

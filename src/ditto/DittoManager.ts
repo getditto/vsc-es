@@ -26,7 +26,7 @@ import type {
   SdkLogLevel,
 } from '../models/DittoConfig.js';
 import type { DatabaseStatus } from '../tree/DatabaseTreeProvider.js';
-import { mergePeerList, parseSyncStatusRow, type SyncStatusRow } from './peer-info.js';
+import { mergePeerList, metadataKeyCount, parseSyncStatusRow, type SyncStatusRow } from './peer-info.js';
 import type { Logger } from '../logging/types.js';
 import { normalizeDittoServerUrl } from './HttpQueryService.js';
 import {
@@ -1083,6 +1083,18 @@ export class DittoManager {
       const presenceLocalKey = this.latestPresence.localPeer?.peerKey;
       if (typeof presenceLocalKey === 'string' && presenceLocalKey) {
         this.localPeerInfo.peerKey = presenceLocalKey;
+      }
+      // Same stamp for the presence-graph facts the detail card shows for
+      // every other peer — the local device deserves its own card content
+      // (SwiftUI PeerDetailCardView parity), and none of it is knowable at
+      // __small_peer_info time. Metadata rides as counts only, per the
+      // RawPresenceGraphPeer rationale in DittoConfig.ts.
+      const presenceLocal = this.latestPresence.localPeer;
+      if (presenceLocal && typeof presenceLocal === 'object') {
+        this.localPeerInfo.os = presenceLocal.os;
+        this.localPeerInfo.isConnectedToDittoServer = presenceLocal.isConnectedToDittoServer;
+        this.localPeerInfo.peerMetadataKeyCount = metadataKeyCount(presenceLocal.peerMetadata);
+        this.localPeerInfo.identityMetadataKeyCount = metadataKeyCount(presenceLocal.identityServiceMetadata);
       }
     }
     if (this.latestPresence) {

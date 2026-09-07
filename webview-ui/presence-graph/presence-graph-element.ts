@@ -3,9 +3,14 @@
 // Lit element that mounts the canvas + scene + RAF loop, and wires
 // pointer/wheel events to the scene's interaction API.
 
-import { LitElement, html, css, type TemplateResult } from 'lit';
+import { LitElement, html, css, type TemplateResult, nothing } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { CONNECTION_STYLES, type ConnectionTypeName } from './colors.js';
+import {
+  formatLastUpdateMs,
+  metadataKeySummary,
+  type PresencePeerCardDetail,
+} from './peer-detail.js';
 import {
   MAX_GRAPH_ZOOM,
   MIN_GRAPH_ZOOM,
@@ -36,6 +41,30 @@ export class PresenceGraphElement extends LitElement {
   /** Also parent-owned, for the same reason: the element is torn down on
    *  every tab switch, so element-local state would not survive one. */
   @property({ attribute: false }) controlsVisible = true;
+
+  /** Peer keys matching the panel's search box; `undefined` when the box is
+   *  empty. Parent-owned and property-bound for the same lifecycle reason
+   *  as `directConnectedOnly`, and re-applied to every fresh scene. */
+  @property({ attribute: false }) searchMatchKeys: ReadonlySet<string> | undefined;
+
+  /** Card content for every presence peer, keyed by peer key — the parent's
+   *  snapshot-derived lookup behind the detail card. The element owns which
+   *  card is open; the parent owns the (live) data. */
+  @property({ attribute: false }) peerDetails: ReadonlyMap<string, PresencePeerCardDetail> | undefined;
+
+  /** The peer whose detail card is open, or none. Element-local state, like
+   *  the focus session it belongs to: both die together when the scene
+   *  does (tab switch) or when focus exits. */
+  @state() private detailPeerKey: string | undefined;
+
+  /** A detail card is currently open — the panel's Escape routing reads
+   *  this to decide whether the keypress dismisses the card first. */
+  get detailOpen(): boolean { return this.detailPeerKey !== undefined; }
+
+  /** Close the open detail card (panel Escape routing, card ✕). */
+  closeDetail(): void {
+    this.detailPeerKey = undefined;
+  }
 
   /** Decorative effects default to on and stay local to this graph element. */
   @state() private backgroundEffectsEnabled = true;
@@ -72,6 +101,9 @@ export class PresenceGraphElement extends LitElement {
   private isPanning = false;
   private pointerStart: { x: number; y: number; nodeKey?: string | undefined } | undefined;
   private pointerMoved = false;
+  /** A focusPeer() call that must wait for the next applied input — set
+   *  when focusing from search triggers a Direct → full-mesh switch. */
+  private pendingFocusKey: string | undefined;
   /** Whether the pointer is currently over the canvas. Maintained even while
    *  dragging, when hover updates themselves are suppressed. */
   private pointerOverCanvas = false;
@@ -231,7 +263,9 @@ export class PresenceGraphElement extends LitElement {
       color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
       font-size: 11px;
       pointer-events: auto;
-      z-index: 1;
+      /* Above the detail card (2): on short panes the centered card reaches
+         the banner's band, and the exit button must stay clickable. */
+      z-index: 3;
     }
     .focus-banner strong { font-weight: 600; }
     .focus-banner button {
@@ -254,6 +288,108 @@ export class PresenceGraphElement extends LitElement {
       outline-offset: 2px;
     }
     .focus-banner svg { width: 100%; height: 100%; fill: currentColor; }
+
+    /* Peer detail card — screen-space overlay centred in the host, above
+       the canvas rather than inside it: it must stay legible at any zoom
+       and never reach the layout engine's peer footprints. SwiftUI's
+       PeerDetailCardView makes the same call for the same reason. The
+       wrapper is click-transparent so taps beside the card keep reaching
+       the canvas (dismiss-or-exit routing lives in endDrag). */
+    .peer-detail-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .peer-detail-card {
+      pointer-events: auto;
+      width: 300px;
+      max-width: calc(100% - 32px);
+      max-height: calc(100% - 32px);
+      overflow-y: auto;
+      padding: 14px;
+      background: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.92));
+      border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, rgba(255, 255, 255, 0.1)));
+      border-radius: 12px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(12px);
+      font-size: 11px;
+      color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+    }
+    .peer-detail-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .peer-detail-header h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+    }
+    .peer-detail-close {
+      display: grid;
+      place-items: center;
+      width: 20px;
+      height: 20px;
+      padding: 3px;
+      flex-shrink: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--vscode-icon-foreground, inherit);
+      opacity: 0.7;
+      cursor: pointer;
+    }
+    .peer-detail-close:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
+    .peer-detail-close:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+    .peer-detail-close svg { width: 100%; height: 100%; fill: currentColor; }
+    .peer-detail-divider {
+      height: 1px;
+      background: var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+      margin: 8px 0;
+    }
+    .peer-detail-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 2px 0;
+    }
+    .peer-detail-row .label {
+      width: 108px;
+      flex-shrink: 0;
+      color: var(--vscode-descriptionForeground);
+    }
+    .peer-detail-row .value {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .peer-detail-row .value.mono { font-family: var(--vscode-editor-font-family); }
+    .peer-detail-row .value.missing { color: var(--vscode-descriptionForeground); }
+    .peer-detail-sync-title { margin: 0; }
+    .peer-detail-caption {
+      margin: 2px 0 0;
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .peer-detail-focus {
+      background: none;
+      border: 0;
+      padding: 0;
+      font: inherit;
+      color: var(--vscode-textLink-foreground, #3794ff);
+      cursor: pointer;
+    }
+    .peer-detail-focus:hover { text-decoration: underline; }
+    .peer-detail-focus:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
   `;
 
   override disconnectedCallback(): void {
@@ -295,6 +431,9 @@ export class PresenceGraphElement extends LitElement {
       showDirectConnectedOnly: this.directConnectedOnly,
       backgroundEffectsEnabled: this.backgroundEffectsEnabled,
     });
+    // The scene dies with the element (tab switches, panel reparenting) but
+    // the parent keeps the search query — re-apply it to the fresh scene.
+    this.scene.setSearchMatches(this.searchMatchKeys);
     this.fitCanvasToHost();
     this.resizeObserver = new ResizeObserver(() => { this.fitCanvasToHost(); });
     this.resizeObserver.observe(this);
@@ -308,7 +447,16 @@ export class PresenceGraphElement extends LitElement {
     if (modeChanged) {
       this.scene.setShowDirectConnectedOnly(this.directConnectedOnly);
     }
-    if (wasFocused !== this.scene.isFocusedView) { this.requestUpdate(); }
+    this.syncFocusChrome(wasFocused);
+    if (changed.has('searchMatchKeys')) {
+      this.scene.setSearchMatches(this.searchMatchKeys);
+      // The settled loop won't repaint the dimming on its own.
+      this.wake();
+    }
+    if (changed.has('peerDetails') && this.detailPeerKey && !this.peerDetails?.has(this.detailPeerKey)) {
+      // A card anchored to a peer that left the mesh must not survive it.
+      this.detailPeerKey = undefined;
+    }
     if (changed.has('input')) {
       this.applyInputAndStartRaf();
     } else if (modeChanged) {
@@ -330,8 +478,59 @@ export class PresenceGraphElement extends LitElement {
     // to keep the compact ring inside the viewport. Keep the overlay in sync
     // with the scene after that layout pass.
     this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
-    if (wasFocused !== this.scene.isFocusedView) { this.requestUpdate(); }
+    if (this.pendingFocusKey) {
+      // A search-result click that flipped Direct → full-mesh lands here,
+      // once the rebuilt input guarantees the peer exists in the scene.
+      const key = this.pendingFocusKey;
+      this.pendingFocusKey = undefined;
+      this.scene.selectPeer(key);
+      this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
+    }
+    this.syncFocusChrome(wasFocused);
     this.wake();
+  }
+
+  /** Focus-session bookkeeping shared by every observe point (`updated`,
+   *  input pushes, the RAF tick): leaving the focused view takes any open
+   *  detail card with it — the card belongs to a focus session — and any
+   *  flip repaints the overlay chrome. */
+  private syncFocusChrome(wasFocused: boolean): void {
+    if (!this.scene || wasFocused === this.scene.isFocusedView) { return; }
+    if (!this.scene.isFocusedView) { this.detailPeerKey = undefined; }
+    this.requestUpdate();
+  }
+
+  /** Select a peer exactly as if the user had clicked it in the full mesh
+   *  (focus view included) — the entry point for the panel's search results.
+   *  Focus view only exists with Direct off, so when Direct is on this
+   *  defers the selection until the parent's rebuilt full-mesh input has
+   *  been applied (otherwise the peer may not even be in the scene yet).
+   *  The mode flip rides the same event the Direct checkbox dispatches. */
+  focusPeer(key: string): void {
+    if (!this.scene) {
+      this.pendingFocusKey = key;
+      return;
+    }
+    if (this.directConnectedOnly) {
+      this.pendingFocusKey = key;
+      this.directConnectedOnly = false;
+      this.dispatchEvent(new CustomEvent<boolean>('direct-connected-only-change', {
+        detail: false,
+        bubbles: true,
+        composed: true,
+      }));
+      return;
+    }
+    this.wake();
+    // selectPeer TOGGLES focus off when the search re-picks the currently
+    // focused peer — so this call can leave the focus view. Capture/forward
+    // the flip or the open detail card would be orphaned over the full mesh
+    // (every other exit path goes through syncFocusChrome or clears it).
+    const wasFocused = this.scene.isFocusedView;
+    this.scene.selectPeer(key);
+    this.syncFocusChrome(wasFocused);
+    this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
+    this.requestUpdate();
   }
 
   private fitCanvasToHost(): void {
@@ -391,7 +590,7 @@ export class PresenceGraphElement extends LitElement {
       if (!this.scene) { this.rafHandle = undefined; return; }
       const wasFocused = this.scene.isFocusedView;
       const stillAnimating = this.scene.tick(now, dt);
-      if (wasFocused !== this.scene.isFocusedView) { this.requestUpdate(); }
+      this.syncFocusChrome(wasFocused);
       this.renderScene();
       if (stillAnimating) {
         // Layout transitions in flight (or a live drag): the loop must stay
@@ -524,9 +723,34 @@ export class PresenceGraphElement extends LitElement {
     if (wasDragging) { this.scene.unpin(wasDragging); }
     this.scene.endInteraction();
     if (commitClick && !moved) {
-      this.scene.selectPeer(clickedKey);
-      this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
-      this.requestUpdate();
+        if (this.scene.isFocusedView) {
+        // In the focused neighbourhood a tap means "tell me about this peer"
+        // (SwiftUI PresenceNetworkScene.handlePeerTap parity): it opens the
+        // peer's detail card — accordion, so a re-tap closes — for every
+        // peer with card data, including the focused one and the local
+        // device. A tap on the synthetic cloud node or on empty canvas acts
+        // like a canvas tap: dismiss an open card first (closing an
+        // inspector, not backing out of the investigation) and only exit
+        // focus when no card was up. Divergence credit: the reference
+        // routes the cloud tap to a detail request its model guard silently
+        // drops — the dismiss-or-exit choice here is deliberate (every route
+        // out stays reachable).
+        if (clickedKey && this.peerDetails?.has(clickedKey)) {
+          this.detailPeerKey = this.detailPeerKey === clickedKey ? undefined : clickedKey;
+          this.requestUpdate();
+        } else if (this.detailPeerKey) {
+          this.detailPeerKey = undefined;
+          this.requestUpdate();
+        } else {
+          this.scene.selectPeer(undefined);
+          this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
+          this.requestUpdate();
+        }
+      } else {
+        this.scene.selectPeer(clickedKey);
+        this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
+        this.requestUpdate();
+      }
     }
     // Hover is suppressed while dragging, so resolve it from the release
     // point: a drag that ends off-canvas must not leave the graph dimmed,
@@ -620,9 +844,25 @@ export class PresenceGraphElement extends LitElement {
   private exitFocusedView = (): void => {
     if (!this.scene) { return; }
     this.scene.exitFocusView();
+    // The banner exit also ends the card's focus session.
+    this.detailPeerKey = undefined;
     this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
     this.requestUpdate();
     this.wake();
+  };
+
+  /** The card's labelled focus action: close the card, then refocus on its
+   *  peer. Replaces tap-to-refocus, which the card tap now owns.
+   *
+   *  Divergence credit: SwiftUI's equivalent is inert in steady state (its
+   *  scene's restore guard rejects the call while any focus session is
+   *  active); selectPeer refocuses unconditionally here, which is clearly
+   *  the reference's intent. */
+  private focusDetailPeer = (): void => {
+    const key = this.detailPeerKey;
+    if (!key) { return; }
+    this.detailPeerKey = undefined;
+    this.focusPeer(key);
   };
 
   private toggleControls(): void {
@@ -667,8 +907,99 @@ export class PresenceGraphElement extends LitElement {
         @wheel=${this.onWheel}
       ></canvas>
       ${this.scene?.isFocusedView ? this.renderFocusBanner() : null}
+      ${this.renderPeerDetailCard()}
       ${this.controlsVisible ? this.renderLegend() : null}
       ${this.renderControls()}
+    `;
+  }
+
+  /** The detail card for the tapped peer — SwiftUI PeerDetailCardView
+   *  parity, row for row. Rows are always present, even when empty: a
+   *  missing value shows an explicit reason rather than disappearing,
+   *  because the absence is itself the information. */
+  private renderPeerDetailCard(): TemplateResult | typeof nothing {
+    const key = this.detailPeerKey;
+    const detail = key ? this.peerDetails?.get(key) : undefined;
+    if (!detail) { return nothing; }
+    return html`
+      <div class="peer-detail-overlay">
+        <section class="peer-detail-card" role="region"
+                 aria-label="Details for ${detail.displayName}">
+          <div class="peer-detail-header">
+            <h3>${detail.displayName}</h3>
+            <button class="peer-detail-close" aria-label="Close details"
+                    title="Close"
+                    @click=${this.closeDetail}>${this.closeIcon()}</button>
+          </div>
+
+          <div class="peer-detail-divider"></div>
+
+          ${this.detailRow('Peer key', detail.peerKey, 'not reported', true)}
+          ${this.detailRow('OS', detail.os, 'not yet known')}
+          ${this.detailRow('Ditto SDK', detail.sdkVersion, 'not yet known')}
+          ${this.detailRow('Cloud link', detail.cloudLink === undefined
+            ? undefined
+            : detail.cloudLink ? 'Connected' : 'None')}
+          ${this.detailRow('Compatible', detail.isCompatible === undefined
+            ? undefined
+            : detail.isCompatible ? 'Yes' : 'No', 'not yet known')}
+
+          <div class="peer-detail-divider"></div>
+
+          ${this.detailRow('Peer metadata', metadataKeySummary(detail.peerMetadataKeyCount))}
+          ${this.detailRow('Identity metadata', metadataKeySummary(detail.identityMetadataKeyCount))}
+
+          <div class="peer-detail-divider"></div>
+
+          ${this.renderSyncSection(detail)}
+
+          ${detail.peerKey !== this.scene?.focusedKey && !detail.isLocal ? html`
+            <div class="peer-detail-divider"></div>
+            <button class="peer-detail-focus" @click=${this.focusDetailPeer}>Focus this peer</button>
+          ` : nothing}
+        </section>
+      </div>
+    `;
+  }
+
+  private detailRow(
+    label: string,
+    value: string | undefined,
+    missing = '—',
+    mono = false,
+  ): TemplateResult {
+    return html`
+      <div class="peer-detail-row">
+        <span class="label">${label}</span>
+        <span class="value ${mono ? 'mono' : ''} ${value === undefined ? 'missing' : ''}"
+              title=${value ?? missing}>${value ?? missing}</span>
+      </div>
+    `;
+  }
+
+  /** Three states, and the distinction is the point: `system:data_sync_info`
+   *  is a local table computed from where this device actually receives
+   *  data. It has no row for a peer we hold no session with, and none for
+   *  ourselves — a blank here would read as a bug rather than as the fact
+   *  it is. */
+  private renderSyncSection(detail: PresencePeerCardDetail): TemplateResult {
+    if (detail.isLocal) {
+      return html`
+        <p class="peer-detail-sync-title">This device</p>
+        <p class="peer-detail-caption">Sync progress is tracked per remote peer, not for the local device.</p>
+      `;
+    }
+    if (detail.isDirectlyConnected) {
+      return html`
+        ${this.detailRow('Synced to commit',
+          detail.syncedUpToLocalCommitId?.toString(), 'nothing yet')}
+        ${this.detailRow('Last update',
+          formatLastUpdateMs(detail.lastUpdateReceivedTime, Date.now()), 'never')}
+      `;
+    }
+    return html`
+      <p class="peer-detail-sync-title">No sync session — not directly connected</p>
+      <p class="peer-detail-caption">Commit progress is only tracked for peers this device syncs with directly.</p>
     `;
   }
 
@@ -688,6 +1019,10 @@ export class PresenceGraphElement extends LitElement {
 
   private focusExitIcon(): TemplateResult {
     return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 9.6 6.4 14.2 11H3v2h11.2l-4.6 4.6L11 19l7-7-7-7Zm7.5-2H21v18h-2.5V3Z"/></svg>`;
+  }
+
+  private closeIcon(): TemplateResult {
+    return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6 6.4 5Z"/></svg>`;
   }
 
   private renderLegend(): TemplateResult {

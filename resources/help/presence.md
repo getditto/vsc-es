@@ -93,6 +93,35 @@ This is the easiest way to spot issues like one device being a hub for
 all the others, or a connection silently downgrading from LAN to
 Bluetooth.
 
+> **Finding a peer with the search box**
+>
+> The search box in the Presence Graph tab bar matches peers by device
+> name or peer ID (case-insensitive). While a query is active, matching
+> peers and their connections stay at full opacity and everything else
+> is dimmed — the same treatment a click selection gives. Matches are
+> listed in a card below the box; clicking one (or pressing **Enter**
+> for the first hit) jumps the graph into the focused-neighbourhood
+> view on that peer, switching **Direct Connected only** off if
+> needed — exactly like clicking its pill in the full mesh. The query
+> is kept so you can hop between results; **Escape** (anywhere in the
+> panel) or clearing the box restores the normal graph.
+
+> **The peer detail card**
+>
+> Tap a peer once in the full mesh (**Direct** off) to focus it, then
+> tap any peer in the focus ring — including the focused peer itself
+> or **Me** — to open its detail card. The card shows everything the
+> presence graph API reports about that peer (peer key, OS, SDK
+> version, Cloud link, compatibility, and metadata key counts), even
+> for peers only reachable through other peers. Commit and last-update
+> rows are the one exception: those come from a local sync table, so
+> they exist only for directly connected peers — indirect peers say
+> so explicitly, and **Me** explains that local sync isn't tracked.
+> Tap the same peer again, press **Escape**, or click open canvas to
+> close the card (the focus is kept); the banner ✕ exits focus and
+> takes the card with it. When a card's peer isn't the focused one,
+> **Focus this peer** moves the orbit to it.
+
 > **About the "Direct Connected only" toggle**
 >
 > The toggle in the top-right of the graph defaults to **on** — only

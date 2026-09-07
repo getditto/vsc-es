@@ -60,6 +60,9 @@ export class PeerListingPanel {
    *  with stable key order, so serialising it IS the comparison (no deep
    *  clone of presenceGraph needed). */
   private lastStateFingerprint: string | null = null;
+  /** Dedupes the warn we log when a snapshot refuses to stringify (one log
+   *  per distinct failure, not one per 250ms beat). */
+  private lastFingerprintError: string | undefined;
   /** See the static dispose's preserveState option. */
   private preserveStateOnDispose = false;
 
@@ -149,7 +152,23 @@ export class PeerListingPanel {
       ? this.manager.getLatestSnapshot()
       : { local: null, remote: [] };
     const sync = active ? this.manager.getSyncState() : 'idle';
-    const fingerprint = `${sync}\n${JSON.stringify(snapshot)}`;
+    let fingerprint: string;
+    try {
+      fingerprint = `${sync}\n${JSON.stringify(snapshot)}`;
+    } catch (err) {
+      // A non-JSON-safe value inside presence data (a BigInt crossing the
+      // napi boundary, …) must not wedge the panel: skip this beat and keep
+      // the last good frame rather than throwing out of the 250ms flush —
+      // the fingerprint slot is only ever written on success, so the next
+      // changed snapshot retries, and a same-message failure logs once.
+      const reason = err instanceof Error ? err.message : String(err);
+      if (reason !== this.lastFingerprintError) {
+        this.lastFingerprintError = reason;
+        this.logger.warn('Presence snapshot is not JSON-serializable; skipping state push', { err: reason });
+      }
+      return;
+    }
+    this.lastFingerprintError = undefined;
     if (fingerprint === this.lastStateFingerprint) { return; }
     this.lastStateFingerprint = fingerprint;
     this.post({ type: 'peer.state', snapshot, sync });

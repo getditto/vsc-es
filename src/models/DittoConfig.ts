@@ -139,6 +139,10 @@ export interface PeerInfo {
   dittoSdkVersion?: string | undefined;
   peerMetadata?: Record<string, unknown> | undefined;
   identityMetadata?: Record<string, unknown> | undefined;
+  /** Presence-graph field renamed from `isConnectedToDittoCloud` in SDK 5.0 —
+   *  "this peer has a cloud link", NOT "this peer is the Big Peer" (that is
+   *  `isDittoServer`). Feeds the detail card's Cloud link row. */
+  isConnectedToDittoServer?: boolean | undefined;
   connections: ConnectionInfo[];
   syncSessionStatus: SyncSessionStatus;
   syncedUpToLocalCommitId?: number | undefined;
@@ -156,6 +160,40 @@ export interface LocalPeerInfo {
   sdkLanguage: string;
   sdkPlatform: string;
   sdkVersion: string;
+  /** Presence-graph enrichment stamped by DittoManager.firePresence once a
+   *  real presence graph has arrived (os / cloud link / metadata key
+   *  counts) so the local peer's detail card reports the same facts as a
+   *  remote peer's. Metadata ships as COUNTS, not bodies: the detail card
+   *  only ever renders "N keys", and the raw values cross the napi boundary
+   *  unvalidated (a BigInt would detonate the panel's JSON fingerprint). */
+  os?: PeerOS | undefined;
+  isConnectedToDittoServer?: boolean | undefined;
+  peerMetadataKeyCount?: number | undefined;
+  identityMetadataKeyCount?: number | undefined;
+}
+
+/**
+ * One remote peer as reported by the SDK presence graph. Unlike the
+ * merged `PeerInfo` rows, these are available for MULTI-HOP peers too —
+ * the presence graph reports the same shape for every peer it knows.
+ * That is exactly what the Presence Graph's detail card needs: a focus
+ * orbit is the *focused* peer's neighbourhood, so most of it is usually
+ * not directly connected to this device.
+ */
+interface RawPresenceGraphPeer {
+  peerKey: string;
+  deviceName: string;
+  os?: PeerOS | undefined;
+  dittoSdkVersion?: string | undefined;
+  /** See `PeerInfo.isConnectedToDittoServer`. */
+  isConnectedToDittoServer: boolean;
+  /** `undefined` while the SDK has not determined compatibility. */
+  isCompatible?: boolean | undefined;
+  /** Top-level key counts, computed host-side. The detail card only ever
+   *  shows "N keys", so the (unvalidated, up to 4 KB each) metadata bodies
+   *  for multi-hop peers stay off the wire entirely. */
+  peerMetadataKeyCount: number;
+  identityMetadataKeyCount: number;
 }
 
 /**
@@ -168,7 +206,7 @@ export interface LocalPeerInfo {
  * peer cards on every presence event.
  */
 interface RawPresenceGraph {
-  remotePeers: { peerKey: string; deviceName: string }[];
+  remotePeers: RawPresenceGraphPeer[];
   /** Undirected edges as the SDK reports them. Includes peer↔peer
    *  edges that don't involve local. Caller is responsible for the
    *  same (pair-sorted + type) dedupe the listing card does. */
