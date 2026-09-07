@@ -1,0 +1,48 @@
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpToolContext } from './context.js';
+import { err as toolErr } from './tool-result.js';
+import type { ToolDef } from './define-tool.js';
+import { connectionTools } from './tools-connections.js';
+import { queryTools } from './tools-query.js';
+import { collectionTools } from './tools-collections.js';
+import { syncTools } from './tools-sync.js';
+import { metricsTools } from './tools-metrics.js';
+import { logTools } from './tools-logs.js';
+
+export type { ToolDef } from './define-tool.js';
+
+/**
+ * The full tool manifest, in display groups. Kept data-shaped (no
+ * registerTool calls inside the tool modules): the `tools/list` shape
+ * test counts + inspects this table without needing to stand a server
+ * up, mirroring the SwiftUI suite's manifest assertions.
+ */
+export function allTools(): ToolDef[] {
+  return [
+    ...connectionTools,
+    ...queryTools,
+    ...collectionTools,
+    ...syncTools,
+    ...metricsTools,
+    ...logTools,
+  ];
+}
+
+/** Register every tool on one (per-session) McpServer. Handlers never
+ *  throw — define-tool's tool() wrapper converts throws to `isError`
+ *  results; the guard here is belt-and-suspenders. */
+export function registerAllTools(server: McpServer, ctx: McpToolContext): void {
+  for (const def of allTools()) {
+    server.registerTool(
+      def.name,
+      { description: def.description, inputSchema: def.schema },
+      async (args) => {
+        try {
+          return await def.handler(ctx, args);
+        } catch (e) {
+          return toolErr(e instanceof Error ? e.message : String(e));
+        }
+      },
+    );
+  }
+}

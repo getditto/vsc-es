@@ -60,11 +60,31 @@ import {
   withConnectionPersistenceLock,
 } from './storage/connection-persistence-lock.js';
 import { deleteConnectionAtomically } from './panels/save-connection.js';
+import { McpServerController } from './mcp/McpServerController.js';
+import { registerCopilotMcpProvider } from './mcp/copilot.js';
+import type { McpToolContext, McpAutomation } from './mcp/context.js';
 
 let logger: Logger;
 /** Held for deactivate(): the context.subscriptions dispose of the manager
  *  is fire-and-forget, so shutdown awaits disconnect through this instead. */
 let shutdownManager: DittoManager | undefined;
+/** Same discipline as shutdownManager for the embedded MCP listener. */
+let shutdownMcp: McpServerController | undefined;
+
+/** Switch orchestrator deps for the MCP automation surface: identical
+ *  teardown/restore mechanics as the interactive path, but the
+ *  confirmation modal auto-accepts its first button (the AI's own UX owns
+ *  the consent conversation) and progress reporting goes nowhere. */
+function buildHeadlessSwitchDeps(base: SwitchDeps): SwitchDeps {
+  return {
+    ...base,
+    ui: {
+      ...base.ui,
+      showModalWarn: async ({ buttons }) => buttons[0],
+      withProgress: (_title, work) => work({ report: () => { /* headless — no notification UI */ } }),
+    },
+  };
+}
 
 function buildSwitchDeps(
   context: vscode.ExtensionContext,
@@ -264,6 +284,115 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   // memory profile sane; see AttachmentCache for the LRU policy.
   const attachmentCache = new AttachmentCache();
 
+  // ─── MCP server (AI agent surface) ─────────────────────────
+  // Shares the extension's live service graph with webview panels; the
+  // automation adapter runs the SAME switch-orchestrator semantics as the
+  // Connect/Disconnect commands, minus the modal UX. See src/mcp/ and
+  // docs/MCP_SERVER.md.
+  const mcpAutomation: McpAutomation = {
+    async connect(idOrName) {
+      if (manager.isApplyingTransports()) {
+        throw new Error('A transport change is in progress — wait for it to finish and retry.');
+      }
+      if (manager.isSwitchInProgress()) {
+        throw new Error('A database switch is in progress — wait for it to finish and retry.');
+      }
+      const target = configStore.list().find(c => c.id === idOrName || c.name === idOrName);
+      if (!target) {
+        const known = configStore.list().map(c => `"${c.name}" (${c.id})`).join(', ') || 'none registered';
+        throw new Error(`Unknown connection "${idOrName}". Known connections: ${known}.`);
+      }
+      const atEntry = manager.getCurrentLifecycleState();
+      if (atEntry.kind === 'active' && atEntry.configId === target.id) {
+        return { kind: 'connected', configId: target.id, name: target.name };
+      }
+      // Visibility: an agent-initiated connect must not be invisible.
+      vscode.window.showInformationMessage(`Ditto MCP: connecting to "${target.name}"…`);
+      const deps = buildHeadlessSwitchDeps(buildSwitchDeps(
+        context, manager, configStore, secretStore, subscriptionStore,
+        tracker, inspectorController, historyStore, favoritesStore, queryMetricsStore, logger,
+      ));
+      const outcome = await withConnectionPersistenceLock(async () => {
+        // Recompute inside the lock — another connect could have landed
+        // while we queued. (Same re-check discipline as the command.)
+        const cur = manager.getCurrentLifecycleState();
+        if (cur.kind === 'active' && cur.configId === target.id) {
+          return { kind: 'already' } as const;
+        }
+        const lockedFrom = cur.kind === 'active'
+          ? { id: cur.configId, name: configStore.get(cur.configId)?.name ?? 'Unknown' }
+          : null;
+        return performSwitch(deps, lockedFrom, target);
+      });
+      if (outcome.kind === 'connected' || outcome.kind === 'already') {
+        return { kind: 'connected', configId: target.id, name: target.name };
+      }
+      // Headless equivalent of the rollback modal: bring the previously
+      // active database back rather than leaving the window torn down.
+      const rollbackTarget = outcome.rollback;
+      let rollbackNote = '';
+      if (rollbackTarget) {
+        try {
+          await withConnectionPersistenceLock(() => rollbackSwitch(deps, rollbackTarget));
+          rollbackNote = ` Rolled back to "${rollbackTarget.name}".`;
+        } catch {
+          rollbackNote = ' Automatic rollback failed — both connections are offline.';
+        }
+      }
+      return { kind: 'connect-failed', message: `${outcome.message}${rollbackNote}` };
+    },
+    async disconnect() {
+      if (manager.getCurrentLifecycleState().kind !== 'active') { return false; }
+      await withConnectionPersistenceLock(async () => {
+        // Mirror the Disconnect command's panel teardown exactly.
+        QueryEditorPanel.dispose({ preserveTabs: true });
+        PeerListingPanel.dispose({ preserveState: true });
+        SubscriptionEditorPanel.dispose();
+        QueryMetricsPanel.dispose();
+        DatabaseMetricsPanel.dispose();
+        SystemMetricsPanel.dispose();
+        ImportDataPanel.dispose();
+        ObserverEditorPanel.dispose();
+        ObserverPanel.disposeAll();
+        AddIndexPanel.dispose();
+        ImportSubscriptionsPanel.dispose();
+        await manager.disconnect();
+      });
+      return true;
+    },
+  };
+  const extensionVersion =
+    (context.extension?.packageJSON as { version?: unknown } | undefined)?.version as string | undefined
+    ?? '0.0.0';
+  const mcpToolContext: McpToolContext = {
+    manager,
+    configStore,
+    secretStore,
+    collectionsRepo,
+    queryMetrics: queryMetricsStore,
+    subscriptionStore,
+    observerStore,
+    logger,
+    globalStorageFsPath: context.globalStorageUri.fsPath,
+    automation: mcpAutomation,
+    log: logger.withTag('mcp'),
+  };
+  const mcpController = new McpServerController(mcpToolContext, extensionVersion, logger);
+  context.subscriptions.push({ dispose: () => mcpController.dispose() });
+  context.subscriptions.push(registerCopilotMcpProvider(mcpController, extensionVersion));
+  shutdownMcp = mcpController;
+  // Follow the active connection's mcpServerEnabled flag: lifecycle flips
+  // (connect/switch/disconnect) and editor saves both re-evaluate it.
+  context.subscriptions.push(manager.onLifecycleStateChange((state) => {
+    if (state.kind === 'active' || state.kind === 'idle' || state.kind === 'error') {
+      void mcpController.syncToActiveConnection();
+    }
+  }));
+  context.subscriptions.push(configStore.onDidChange(() => {
+    void mcpController.syncToActiveConnection();
+  }));
+
+
   // Tracks when each database last entered the 'active' lifecycle state.
   // The Log Analyzer uses this as a backfill floor so its histograms only
   // reflect the current connection — not weeks of rotated log history.
@@ -362,6 +491,14 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         // setting on each Run), but re-push to the Inspector in case
         // we add a profile-specific tab there later.
         inspectorView.pushSettings();
+      }
+      if (e.affectsConfiguration('dittoVsce.mcpServer')) {
+        void mcpController.reconcile();
+      }
+      if (e.affectsConfiguration('dittoVsce.mcpServer.port')) {
+        // Port moves restart the listener when it's running (the flag's
+        // on/off state is per-connection, on StoredDittoConfig).
+        void mcpController.reconcile();
       }
       if (e.affectsConfiguration('dittoVsce.logAnalyzer.customPatternsFile')) {
         // Repoint PatternStore at the new user file (or fall back to
@@ -1048,6 +1185,9 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     vscode.commands.registerCommand('dittoVsce.openLogPatternEditor', () => {
       PatternEditorPanel.show(context, patternStore, logger, inspectorController);
     }),
+    vscode.commands.registerCommand('dittoVsce.mcpServerStart', () => mcpController.startCommand()),
+    vscode.commands.registerCommand('dittoVsce.mcpServerStop', () => mcpController.stopCommand()),
+    vscode.commands.registerCommand('dittoVsce.mcpServerCopyConfig', () => mcpController.copyConfigCommand()),
     vscode.commands.registerCommand('dittoVsce.toggleInspector', async () => {
       await vscode.commands.executeCommand('dittoVsce.inspector.focus');
     }),
@@ -1200,6 +1340,16 @@ export async function deactivate() {
       ]);
     } catch { /* disconnect() already logged the failure */ }
     finally { if (timer) { clearTimeout(timer); } }
+  }
+  // MCP listener: bounded drain so open SSE sessions don't hold the port.
+  const mcp = shutdownMcp;
+  if (mcp) {
+    try {
+      await Promise.race([
+        mcp.stop(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2_500)),
+      ]);
+    } catch { /* stop() is best-effort at shutdown */ }
   }
   // logger.dispose() runs via context.subscriptions
 }

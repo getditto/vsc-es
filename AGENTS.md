@@ -4,6 +4,10 @@
 
 - This is a Node 22+, TypeScript, ESM-source VS Code extension.
 - Extension-host code lives in `src/`; Lit webviews live in `webview-ui/`.
+- The embedded MCP server (AI-agent surface) lives in `src/mcp/`; tools are
+  data records (`define-tool.ts`) over the same services panels use, served
+  by `McpServerService` (loopback HTTP, stateful sessions) and gated per
+  connection by `advancedConfig.mcpServerEnabled` (default off).
 - Host/webview messages are discriminated unions in `src/ipc/messages.ts`.
 - `package.json` is the source of truth for commands, views, menus, settings, and scripts.
 - `engines.vscode` is `^1.106.0` because `contributes.viewsContainers.secondarySidebar`

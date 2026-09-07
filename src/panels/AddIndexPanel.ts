@@ -9,7 +9,8 @@ import type { Logger } from '../logging/types.js';
  *  trivially fakeable). */
 export interface AddIndexCollectionsShim {
   current(): DittoCollection[];
-  createIndex(collection: string, fields: readonly IndexField[]): Promise<void>;
+  /** Panel ignores the outcome; the MCP create_index tool reports it. */
+  createIndex(collection: string, fields: readonly IndexField[]): Promise<'created' | 'already-exists'>;
   refresh(): Promise<void>;
 }
 

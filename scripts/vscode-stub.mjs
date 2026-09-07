@@ -36,6 +36,7 @@ export class MarkdownString {
 
 export class Disposable {
   constructor(callOnDispose) { this._cb = callOnDispose; }
+  static from(...items) { return new Disposable(() => { for (const i of items) i?.dispose?.(); }); }
   dispose() { this._cb?.(); }
 }
 
@@ -72,6 +73,10 @@ export const workspace = {
     return {
       get(key, defaultValue) {
         return Object.hasOwn(values, key) ? values[key] : defaultValue;
+      },
+      update(key, value) {
+        (workspace.configValues[section] ??= {})[key] = value;
+        return Promise.resolve();
       },
     };
   },
@@ -222,6 +227,17 @@ export const window = {
   withProgress(_options, task) {
     return task({ report() {} }, { isCancellationRequested: false, onCancellationRequested() { return { dispose() {} }; } });
   },
+  createStatusBarItem(alignment, priority) {
+    const item = {
+      alignment, priority, text: '', tooltip: '', command: undefined,
+      shown: false,
+      show() { item.shown = true; },
+      hide() { item.shown = false; },
+      dispose() { item.shown = false; },
+    };
+    createdStatusBarItems.push(item);
+    return item;
+  },
   shownErrors: [],
   shownWarnings: [],
   shownInfos: [],
@@ -232,6 +248,53 @@ export const window = {
   inputBoxResult: undefined,
   warningResponse: undefined,
   lastInputBoxValidate: undefined,
+};
+
+export const StatusBarAlignment = { Left: 1, Right: 2 };
+
+export const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 };
+
+/** Status bar item fake — records text/tooltip so tests can assert the
+ *  MCP controller's running indicator. */
+export const createdStatusBarItems = [];
+
+export const env = {
+  clipboard: {
+    writeText(text) { env.clipboardText = text; return Promise.resolve(); },
+    readText() { return Promise.resolve(env.clipboardText ?? ''); },
+  },
+  clipboardText: '',
+  openExternal() { return Promise.resolve(true); },
+};
+
+/** MCP definition-provider fake: registrations land here so tests can
+ *  interrogate what an extension would have published to vscode.lm. */
+export class McpHttpServerDefinition {
+  constructor(label, uri, headers, version) {
+    this.label = label;
+    this.uri = uri;
+    this.headers = headers ?? {};
+    this.version = version;
+  }
+}
+
+export class McpStdioServerDefinition {
+  constructor(label, command, args = [], envVars = {}, version) {
+    this.label = label;
+    this.command = command;
+    this.args = args;
+    this.env = envVars;
+    this.version = version;
+  }
+}
+
+export const lm = {
+  registeredMcpProviders: [],
+  registerMcpServerDefinitionProvider(id, provider) {
+    const entry = { id, provider };
+    lm.registeredMcpProviders.push(entry);
+    return { dispose() { lm.registeredMcpProviders = lm.registeredMcpProviders.filter(e => e !== entry); } };
+  },
 };
 
 export const commands = {
@@ -268,4 +331,7 @@ export function __resetStub() {
   workspace.configValues = {};
   commands.executed.length = 0;
   commands.executeCommandError = undefined;
+  env.clipboardText = '';
+  lm.registeredMcpProviders.length = 0;
+  createdStatusBarItems.length = 0;
 }

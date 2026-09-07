@@ -336,6 +336,10 @@ function validate(
   )) {
     return { message: 'Advanced configuration is invalid.', field: 'advancedConfig' };
   }
+  if (config.advancedConfig?.mcpServerEnabled !== undefined
+    && typeof config.advancedConfig.mcpServerEnabled !== 'boolean') {
+    return { message: 'Advanced configuration is invalid.', field: 'advancedConfig' };
+  }
   const syncScopeError = validateCollectionSyncScopes(
     config.advancedConfig?.collectionSyncScopes,
   );

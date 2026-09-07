@@ -46,6 +46,14 @@ export interface SystemSettingOption {
 interface AdvancedConfig {
   collectionSyncScopes?: CollectionSyncScopeEntry[];
   systemSettings?: SystemSetting[];
+  /**
+   * Run the embedded MCP server (loopback HTTP; see docs/MCP_SERVER.md)
+   * while THIS connection is active. Default false: the server lets any
+   * local process drive the database (reads AND writes), so it must be an
+   * explicit per-database opt-in. Not an SDK setting — evaluated by the
+   * McpServerController on lifecycle changes, no reconnect needed.
+   */
+  mcpServerEnabled?: boolean;
 }
 
 export interface StoredDittoConfig {
