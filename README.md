@@ -57,6 +57,15 @@ without leaving VS Code.
   editor will read it correctly.
 - **Two auth modes** — Server (Big Peer with URL) and
   Small Peers Only (offline token + optional shared-secret key).
+- **MCP server (AI access)** — an embedded Model Context Protocol server lets
+  AI assistants (Claude Code, Cursor, Copilot agent mode, …) automate the
+  active database: DQL against the local store or the HTTP API, index and
+  subscription management, bounded live watches, system/database metrics,
+  presence, logs and the Log Analyzer, attachments to disk, and one-shot DQL
+  against a running app's debug socket. **Off by default**; enabled per
+  connection in Edit Configuration → Advanced Configuration → MCP Server.
+  Loopback-only on `127.0.0.1:65270`. See [docs/MCP_SERVER.md](docs/MCP_SERVER.md)
+  for the full tool reference and client setup snippets.
 - **Get Quickstarts** — one click clones the official
   [Ditto quickstart repo](https://github.com/getditto/quickstart) into a
   folder you choose and pre-fills `.env` files for every quickstart project
@@ -137,6 +146,11 @@ code --install-extension ditto-vsce-darwin-arm64-<version>.vsix
 4. Hover **Subscriptions** → click `＋` to register a DQL subscription.
 5. Click **Peer Listing** to watch peers join and leave in real time.
 6. Click **Query Editor** to run ad-hoc DQL. `Cmd+Enter` runs the query.
+7. To drive it all from an AI assistant instead: Edit Configuration →
+   Advanced → **Start MCP server while this connection is active**, connect,
+   then point your client at `http://127.0.0.1:65270/mcp` (Command Palette →
+   **Ditto: Copy MCP Client Config** copies a ready-made snippet; in VS Code's
+   own Copilot agent mode the tools appear automatically).
 
 For end-to-end test recipes, see [`docs/MANUAL_TESTING.md`](docs/MANUAL_TESTING.md).
 
