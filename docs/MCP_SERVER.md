@@ -37,6 +37,13 @@ Streamable HTTP (current spec) is served at `POST /mcp`; the legacy HTTP+SSE
 transport (spec 2024-11-05, what the SwiftUI app serves on `/mcp`) is at
 `GET /sse` + `POST /messages` for older clients. Always loopback-only.
 
+**Agent onboarding bundle** (`plugins/ditto-edge-studio-vscode/`): an
+agent-facing [skill](../plugins/ditto-edge-studio-vscode/skills/use-edge-studio-vscode/SKILL.md)
+describing every tool, the safety rules, and the system:metrics contract, plus
+per-client setup snippets. **Acceptance testing against any agent:** the
+scripted run with agent-independent verification lives in
+[MCP_VALIDATION.md](./MCP_VALIDATION.md).
+
 Claude Code (project `.mcp.json`):
 
 ```json

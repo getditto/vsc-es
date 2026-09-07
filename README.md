@@ -65,7 +65,10 @@ without leaving VS Code.
   against a running app's debug socket. **Off by default**; enabled per
   connection in Edit Configuration → Advanced Configuration → MCP Server.
   Loopback-only on `127.0.0.1:65270`. See [docs/MCP_SERVER.md](docs/MCP_SERVER.md)
-  for the full tool reference and client setup snippets.
+  for the full tool reference and client setup snippets,
+  [plugins/ditto-edge-studio-vscode/](plugins/ditto-edge-studio-vscode/) for the
+  agent skill bundle, and [docs/MCP_VALIDATION.md](docs/MCP_VALIDATION.md) for a
+  scripted acceptance run you can hand to any agent to prove the surface works.
 - **Get Quickstarts** — one click clones the official
   [Ditto quickstart repo](https://github.com/getditto/quickstart) into a
   folder you choose and pre-fills `.env` files for every quickstart project
