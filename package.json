@@ -524,7 +524,7 @@
     "validate": "npm run typecheck && npm run lint && npm test",
     "build:integration": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
-    "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/*.test.ts' 'src/test/webview/*.test.ts'",
+    "test": "node --expose-gc --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/*.test.ts' 'src/test/webview/*.test.ts'",
     "injector:generate": "node scripts/test-injector/generate-data.mjs",
     "injector:run": "node scripts/test-injector/injector.mjs",
     "test:integration:load": "DITTO_CI_DEPTH=load node dist/test/integration/runTests.js",

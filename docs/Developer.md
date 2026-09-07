@@ -271,8 +271,9 @@ Output is visible in the host's `View → Output → Ditto Edge Studio` channel.
 npm test
 ```
 
-This runs `node --test` over `src/test/*.test.ts` and
-`src/test/webview/*.test.ts` with two import shims:
+This runs `node --test --expose-gc` over `src/test/*.test.ts` and
+`src/test/webview/*.test.ts` with two import shims (`--expose-gc` backs the
+leak-validation layer in §6.4):
 
 - `tsx` — TypeScript execution (no compile step). Note that it does **not**
   typecheck; `npm run typecheck` is what does.
@@ -325,7 +326,39 @@ The SDK-touching parts of `DittoManager` — anything needing a live `Ditto`
 instance — are still covered by the recipes in
 [`MANUAL_TESTING.md`](MANUAL_TESTING.md) and the integration suites.
 
-### 6.4 Adding a test
+### 6.4 Memory & lifecycle leak validation
+
+Leak discipline is enforced in layers, cheapest first:
+
+1. **Structural** — `panel-lifecycle-contract.test.ts` proves per panel that
+   disposing removes every webview listener, that static teardown closes the
+   webview, that dispose is idempotent, and that re-`show()` after dispose
+   builds a fresh panel (stale-singleton check). A new panel `show()` without
+   a contract entry fails the suite, so the layer can't silently skip a panel.
+2. **Timer accounting** — `lifecycle-leaks.test.ts` patches the global timer
+   functions per test and asserts construct→use→dispose leaves *zero*
+   outstanding `setTimeout`/`setInterval` handles. Covers the recurring
+   timers (`SystemMetricsService` poll, `ObserverPanel` flush coalescing,
+   `LogAnalyzerService` trailing flush) — a leaked interval pins its closure
+   forever and re-fires against dead objects.
+3. **GC proofs** — same file, WeakRef assertions that a disposed
+   `DebugSocketClient` / `ObserverPanel` / `LogAnalyzerService` is actually
+   collected, not merely "dispose-called". Includes a negative control (an
+   object rooted in a live `Set` must NOT be reported collected) so the
+   harness can't degrade into vacuity.
+4. **Heap flattening** — 400 real socket connect/query/disconnect cycles
+   against an in-process server assert the post-warmup heap stays flat,
+   catching accumulation leaks (reachable-but-growing containers) that the
+   layers above can't see.
+
+Layers 2–4 need `--expose-gc`, wired into both `npm test` and
+`scripts/check-coverage.mjs`; without it the GC/heap tests skip cleanly.
+Known benign retentions these tests work around rather than fail on: the
+50 ms deferred-init timer every panel schedules (retains the panel until it
+fires) and the `unref`'d ≤10 s timeout arms on `Ditto.close()` races — both
+self-release; the assertions wait them out rather than forbid them.
+
+### 6.5 Adding a test
 
 Add a `*.test.ts` file under `src/test/` (or `src/test/webview/` for a Lit
 component), import from the relative source path with the `.js` extension (TS

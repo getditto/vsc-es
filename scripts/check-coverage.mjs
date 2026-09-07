@@ -80,6 +80,7 @@ const loadList = [...listSources(path.join(ROOT, 'src'), 'src'),
 
 // ─── Run the suite with coverage ────────────────────────────────
 const report = execFileSync('node', [
+  '--expose-gc', // lifecycle-leaks tests assert real collection; keep parity with npm test
   '--import', 'tsx',
   '--import', pathToFileURL(path.join(ROOT, 'scripts', 'register-vscode-stub.mjs')).href,
   '--test', '--experimental-test-coverage',
