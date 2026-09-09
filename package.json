@@ -541,15 +541,15 @@
   "devDependencies": {
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/language": "^6.12.4",
-    "@codemirror/state": "^6.7.1",
-    "@codemirror/view": "^6.43.9",
+    "@codemirror/state": "^6.7.2",
+    "@codemirror/view": "^6.43.10",
     "@cyclonedx/cyclonedx-npm": "^6.0.1",
     "@eslint/js": "^10.0.1",
     "@lezer/highlight": "^1.2.3",
     "@types/jsdom": "^30.0.0",
     "@types/mocha": "^10.0.10",
-    "@types/node": "26.4.0",
-    "@types/vscode": "~1.106.0",
+    "@types/node": "26.4.1",
+    "@types/vscode": "~1.134.0",
     "@vscode/codicons": "^0.0.45",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
@@ -559,14 +559,14 @@
     "eslint-plugin-security": "^4.0.1",
     "glob": "^13.0.6",
     "jsdom": "^30.0.1",
-    "knip": "^6.33.0",
+    "knip": "^6.34.0",
     "license-checker": "^25.0.1",
     "lit": "^3.3.2",
     "markdown-it": "^15.0.0",
     "mocha": "^11.8.0",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.13",
     "typescript": "^6.0.3",
-    "typescript-eslint": "8.68.0"
+    "typescript-eslint": "8.69.0"
   },
   "dependencies": {
     "@dittolive/ditto": "5.1.0"
