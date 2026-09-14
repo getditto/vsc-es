@@ -140,7 +140,14 @@ export class DatabaseMetricsPanel {
     const log = this.logger.withTag('ext:DatabaseMetrics');
     this.post({ type: 'dbMetrics.loading' });
     try {
-      const snap = await snapshot(this.manager, this.dataDir);
+      const snap = await snapshot(
+        this.manager,
+        this.dataDir,
+        // A mid-refresh database switch disposes this panel but cannot
+        // cancel the in-flight snapshot — stop burning per-collection
+        // CBOR scans against the new session.
+        () => this.manager.getActiveConfigId() === this.databaseId,
+      );
       this.post({
         type: 'dbMetrics.snapshot',
         snapshot: { ...snap, computedAt: Date.now() },

@@ -124,7 +124,21 @@ export class SubscriptionEditorPanel {
       // manual refresh wiring needed here.
       if (this.manager.getActiveConfigId() === this.databaseId) {
         this.manager.cancelSubscription(sub.id);
-        this.manager.registerSubscription(sub.id, sub.query);
+        // registerSubscription throws on invalid DQL (SDK `query/invalid`).
+        // The save above ALREADY persisted, so don't let that throw escape
+        // to the wrapper's "Save subscription failed" — say what actually
+        // happened: stored now, live after a fix + reconnect.
+        try {
+          this.manager.registerSubscription(sub.id, sub.query);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.error('Saved subscription but registration failed', { err: message });
+          vscode.window.showWarningMessage(
+            `Saved subscription "${sub.name}", but it could not start on this connection: ${message}`,
+          );
+          this.panel.dispose();
+          return;
+        }
       }
       vscode.window.showInformationMessage(`Saved subscription "${sub.name}".`);
       this.panel.dispose();

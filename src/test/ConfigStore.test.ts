@@ -150,3 +150,26 @@ test('list() degrades to [] on a corrupted non-array blob', async () => {
   assert.deepEqual(store.list(), []);
   assert.equal(store.get('anything'), undefined);
 });
+
+test('member-level corruption is filtered instead of throwing out of every caller forever', async () => {
+  // Regression: list() only type-checked the top-level blob, so a stored
+  // `[null, validConfig]` made get()/save()/delete() throw TypeErrors on
+  // every subsequent call — bricking the tree and making the damage
+  // unrecoverable from inside the extension.
+  const memento = new FakeMemento();
+  const good = makeConfig({ name: 'Good', databaseId: 'db-good' });
+  await memento.update('dittoConfigs.v1', [null, good, undefined, 42, 'oops', { id: 7 }]);
+  const store = new ConfigStore(memento);
+
+  assert.deepEqual(store.list(), [good], 'only the well-formed member survives');
+  assert.equal(store.get('missing'), undefined);
+  assert.equal(store.get(good.id)?.name, 'Good');
+
+  // save() and delete() work again — and persist the sanitized list.
+  const added = makeConfig({ name: 'New', databaseId: 'db-new' });
+  await store.save(added);
+  assert.deepEqual(store.list(), [good, added]);
+  assert.deepEqual(memento.get('dittoConfigs.v1'), [good, added]);
+  await store.delete(good.id);
+  assert.deepEqual(store.list(), [added]);
+});

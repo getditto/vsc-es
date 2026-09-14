@@ -21,41 +21,14 @@ import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost, HostMessages } from '../shared/messaging.js';
 
-// ─── Wire shapes (mirror of src/ipc/messages.ts) ───────────────
-interface SystemMetricSample {
-  key: string;
-  labels: Record<string, string>;
-  description: string;
-  unit: string;
-  kind: 'counter' | 'histogram';
-  sinceConnect: number;
-  periodDelta: number;
-  sumSinceConnect?: number;
-  absMax?: number;
-}
+// Wire shapes come straight from the IPC contract — hand-mirroring them
+// here would silently compile clean on both sides the day they drift.
+import type {
+  SystemMetricSample, SystemMetricsSnapshot, SystemMetricsStatus,
+  SystemMetricSeriesRef, SysMetricsOut,
+} from '../../src/ipc/messages.js';
 
-interface SystemMetricsSnapshot {
-  samples: SystemMetricSample[];
-  sinceMs: number;
-  polledAtMs: number;
-  pollIntervalMs: number;
-}
-
-type SystemMetricsStatus =
-  | { kind: 'working'; snapshot: SystemMetricsSnapshot }
-  | { kind: 'settingDisabled' }
-  | { kind: 'exporterDisabled' }
-  | { kind: 'noConnection' }
-  | { kind: 'unavailable'; message: string };
-
-interface SystemMetricSeriesRef {
-  key: string;
-  labels: Record<string, string>;
-}
-
-type In =
-  | { type: 'sysMetrics.status'; status: SystemMetricsStatus }
-  | { type: 'sysMetrics.pins'; pins: SystemMetricSeriesRef[] };
+type In = SysMetricsOut;
 
 // ─── Namespace segment filter (parity with the SwiftUI app's
 //     SystemMetricsNamespaceFilter) ─────────────────────────────

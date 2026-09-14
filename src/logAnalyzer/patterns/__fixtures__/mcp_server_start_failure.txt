@@ -1,0 +1,1 @@
+2026-09-07T09:00:00.000Z  ERROR  [mcp]  MCP server failed to start  {"err":"Port 65270 is already in use. Change the dittoVsce.mcpServer.port setting and try again (the SwiftUI Edge Studio app defaults to 65269 — this extension to 65270, so check whether another VS Code window is already running the server)."}

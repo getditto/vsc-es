@@ -270,6 +270,33 @@ test('PresenceGraphElement: a click under the drag threshold selects a peer', as
   el.remove();
 });
 
+test('PresenceGraphElement: scaled canvas hit-testing opens a focused peer card', async () => {
+  const el = await mountFocused();
+  const canvas = el.shadowRoot.querySelector('canvas');
+  const originalRect = canvas.getBoundingClientRect;
+  canvas.getBoundingClientRect = () => ({
+    left: 100, top: 50, width: 400, height: 300,
+    right: 500, bottom: 350, x: 100, y: 50,
+    toJSON: () => ({}),
+  } as DOMRect);
+
+  const at = focusScreenPos(el, 'beta');
+  const scaled = { clientX: 100 + at.clientX / 2, clientY: 50 + at.clientY / 2 };
+  canvas.dispatchEvent(mouse('mousemove', scaled));
+  assert.equal(el.hoveringNode, true, 'scaled pointer position should be over beta');
+  assert.equal(el.scene.hoveredPeerKey, 'beta');
+  await el.updateComplete;
+  assert.equal(canvas.classList.contains('hover-node'), true, 'peer hover uses the pointer cursor class');
+
+  canvas.dispatchEvent(mouse('mousedown', { ...scaled, button: 0, buttons: 1 }));
+  window.dispatchEvent(mouse('mouseup', { ...scaled, button: 0, buttons: 0 }));
+  await el.updateComplete;
+  assert.equal(detailCard(el)?.getAttribute('aria-label'), 'Details for Beta');
+
+  canvas.getBoundingClientRect = originalRect;
+  el.remove();
+});
+
 test('PresenceGraphElement: a drag past the threshold does not select', async () => {
   const el = await mount();
   clickPeer(el, 'alpha', 5, 0);
@@ -633,7 +660,7 @@ test('PresenceGraphElement: focusPeer() out of Direct mode defers to the rebuilt
   el.remove();
 });
 
-// ─── Peer detail card (focus view) ─────────────────────────────
+// ─── Peer detail card ───────────────────────────────────────────
 
 /** Alpha's focus orbit is {alpha, local, beta}: local↔alpha and alpha↔beta. */
 const FOCUS_INPUT = {
@@ -710,6 +737,89 @@ function clickCanvas(el: any): void {
 function detailCard(el: any): any {
   return el.shadowRoot.querySelector('.peer-detail-card');
 }
+
+/** Read the foreground pill's painted location, independently of hit-testing. */
+function paintedFocusPeer(el: any, label: string): { clientX: number; clientY: number } {
+  const ctx = contextFor(el.shadowRoot.querySelector('canvas'));
+  // Settle this scene without advancing the shared RAF clock for later tests.
+  el.scene.tick(performance.now() + 700, 0);
+  ctx.__reset();
+  el.renderScene();
+  const text = ctx.__ops.filter(op => op.op === 'fillText' && op.args[0] === label).at(-1);
+  assert.ok(text, `the focused layer paints ${label}`);
+  return { clientX: text.tx, clientY: text.ty };
+}
+
+function clickAt(el: any, at: { clientX: number; clientY: number }): void {
+  el.shadowRoot.querySelector('canvas').dispatchEvent(mouse('mousedown', { ...at, button: 0, buttons: 1 }));
+  window.dispatchEvent(mouse('mouseup', { ...at, button: 0, buttons: 0 }));
+}
+
+test('PresenceGraphElement: rendered focus peers open their cards after panning and zooming the mesh', async () => {
+  const el = await mount({
+    directConnectedOnly: false,
+    input: structuredClone(FOCUS_INPUT),
+    peerDetails: detailFixture(),
+  });
+  try {
+    el.scene.setZoom(0.75);
+    el.scene.panBy(145, -85);
+    const backgroundCamera = { ...el.scene.camera };
+    clickPeer(el, 'alpha');
+    await el.updateComplete;
+
+    for (const [key, label] of [['beta', 'Beta'], ['alpha', 'Alpha'], ['local', 'Me']] as const) {
+      const at = paintedFocusPeer(el, label);
+      el.shadowRoot.querySelector('canvas').dispatchEvent(mouse('mousemove', { ...at, buttons: 0 }));
+      assert.equal(el.scene.hoveredPeerKey, key, 'hover follows the painted pill');
+      clickAt(el, at);
+      await el.updateComplete;
+      assert.equal(detailCard(el)?.getAttribute('aria-label'), `Details for ${label}`);
+      assert.equal(el.scene.focusedKey, 'alpha', 'inspection preserves focus');
+      el.closeDetail();
+      await el.updateComplete;
+    }
+
+    el.shadowRoot.querySelector('[aria-label="Exit focused node view and show full mesh"]').click();
+    await el.updateComplete;
+    assert.deepEqual(el.scene.camera, backgroundCamera, 'inspection preserves the full-mesh camera');
+    assert.equal(el.scene.activeZoom, 0.75);
+  } finally {
+    el.remove();
+  }
+});
+
+test('PresenceGraphElement: panning focus moves the visible peers and keeps their cards clickable', async () => {
+  const el = await mountFocused();
+  try {
+    const backgroundCamera = { ...el.scene.camera };
+    const before = paintedFocusPeer(el, 'Beta');
+    const canvas = el.shadowRoot.querySelector('canvas');
+    canvas.dispatchEvent(mouse('mousedown', { clientX: 5, clientY: 5, button: 0, buttons: 1 }));
+    window.dispatchEvent(mouse('mousemove', { clientX: 65, clientY: 30, buttons: 1 }));
+    window.dispatchEvent(mouse('mouseup', { clientX: 65, clientY: 30, button: 0, buttons: 0 }));
+    const after = paintedFocusPeer(el, 'Beta');
+    assert.ok(Math.abs(after.clientX - before.clientX - 60) < 1e-6, 'visible focus pans horizontally');
+    assert.ok(Math.abs(after.clientY - before.clientY - 25) < 1e-6, 'visible focus pans vertically');
+    assert.deepEqual(el.scene.camera, backgroundCamera, 'focus panning preserves the background camera');
+    clickAt(el, after);
+    await el.updateComplete;
+    assert.equal(detailCard(el)?.getAttribute('aria-label'), 'Details for Beta');
+    el.closeDetail();
+    await el.updateComplete;
+    el.shadowRoot.querySelector('[aria-label="Reset zoom and center local device"]').click();
+    await el.updateComplete;
+    const centred = paintedFocusPeer(el, 'Alpha');
+    assert.deepEqual(centred, { clientX: 400, clientY: 300 }, 'reset recentres the focused peer');
+    assert.equal(el.scene.activeZoom, 1);
+    clickAt(el, centred);
+    await el.updateComplete;
+    assert.equal(detailCard(el)?.getAttribute('aria-label'), 'Details for Alpha');
+    assert.deepEqual(el.scene.camera, backgroundCamera);
+  } finally {
+    el.remove();
+  }
+});
 
 function rowValue(card: any, label: string): { text: string | null; missing: boolean } {
   const row = [...card.querySelectorAll('.peer-detail-row')]
@@ -824,6 +934,75 @@ test('PresenceGraphElement: a directly connected peer gets sync rows with placeh
   el.remove();
 });
 
+test('PresenceGraphElement: the copy icon copies the entire peer key and confirms without closing the card', async t => {
+  const writes: string[] = [];
+  const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true, value: { writeText: async (key: string) => { writes.push(key); } },
+  });
+  t.after(() => {
+    if (original) { Object.defineProperty(navigator, 'clipboard', original); }
+    else { Reflect.deleteProperty(navigator, 'clipboard'); }
+  });
+  const key = 'abcdef0123456789'.repeat(8);
+  const el = await mountFocused();
+  t.after(() => el.remove());
+  // Keep the graph key and card record consistent, as a real snapshot does.
+  el.input = {
+    ...structuredClone(FOCUS_INPUT),
+    remotePeers: [{ peerKey: 'alpha', deviceName: 'Alpha' }, { peerKey: key, deviceName: 'Beta' }],
+    connections: [{ from: 'local', to: 'alpha', type: 'AccessPoint' }, { from: 'alpha', to: key, type: 'Bluetooth' }],
+  };
+  const details = detailFixture();
+  details.set(key, { ...details.get('beta')!, peerKey: key });
+  details.delete('beta');
+  el.peerDetails = details;
+  await el.updateComplete;
+  clickPeerInFocus(el, key);
+  await el.updateComplete;
+  assert.equal(rowValue(detailCard(el), 'Peer key').text, key);
+  detailCard(el).querySelector('[aria-label="Copy peer key"]').click();
+  await Promise.resolve();
+  await el.updateComplete;
+  assert.deepEqual(writes, [key]);
+  assert.equal(detailCard(el).querySelector('[role="status"]').textContent, 'Copied');
+  assert.equal(el.scene.focusedKey, 'alpha');
+  el.closeDetail();
+  await el.updateComplete;
+  clickPeerInFocus(el, key);
+  await el.updateComplete;
+  assert.equal(detailCard(el).querySelector('[role="status"]').textContent, '', 'reopening clears feedback');
+});
+
+test('PresenceGraphElement: clipboard errors are visible and a late result cannot change another peer card', async t => {
+  let rejectCopy!: (reason: Error) => void;
+  const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true, value: { writeText: () => new Promise<void>((_resolve, reject) => { rejectCopy = reject; }) },
+  });
+  t.after(() => {
+    if (original) { Object.defineProperty(navigator, 'clipboard', original); }
+    else { Reflect.deleteProperty(navigator, 'clipboard'); }
+  });
+  const el = await mountFocused();
+  t.after(() => el.remove());
+  clickPeerInFocus(el, 'beta');
+  await el.updateComplete;
+  detailCard(el).querySelector('[aria-label="Copy peer key"]').click();
+  clickPeerInFocus(el, 'local');
+  await el.updateComplete;
+  rejectCopy(new Error('Clipboard denied'));
+  await Promise.resolve();
+  await el.updateComplete;
+  assert.equal(detailCard(el).querySelector('[role="status"]').textContent, '', 'old request is ignored');
+  detailCard(el).querySelector('[aria-label="Copy peer key"]').click();
+  rejectCopy(new Error('Clipboard denied'));
+  await Promise.resolve();
+  await el.updateComplete;
+  assert.match(detailCard(el).querySelector('[role="status"]').textContent, /Could not copy/);
+  assert.equal(rowValue(detailCard(el), 'Peer key').text, 'local', 'key remains available to select manually');
+});
+
 test('PresenceGraphElement: "Focus this peer" refocuses the scene and closes the card', async () => {
   const el = await mountFocused();
   clickPeerInFocus(el, 'beta');
@@ -882,14 +1061,58 @@ test('PresenceGraphElement: the local device card has no focus action and explai
   el.remove();
 });
 
-test('PresenceGraphElement: Direct-mode taps keep the dim-only selection — no card', async () => {
+test('PresenceGraphElement: Direct-mode selection opens, swaps, and dismisses peer cards', async t => {
   const el = await mount({ peerDetails: detailFixture() });
+  t.after(() => el.remove());
   clickPeer(el, 'alpha');
   await el.updateComplete;
 
   assert.equal(el.scene.selectedPeerKey, 'alpha', 'direct selection still works');
-  assert.equal(detailCard(el), null, 'detail cards are a focus-view feature');
-  el.remove();
+  assert.equal(el.scene.isFocusedView, false, 'stays in Direct mode');
+  assert.equal(detailCard(el)?.getAttribute('aria-label'), 'Details for Alpha');
+  assert.equal(rowValue(detailCard(el), 'Synced to commit').text, '42');
+  assert.ok(detailCard(el).querySelector('[aria-label="Copy peer key"]'));
+  clickPeer(el, 'beta');
+  await el.updateComplete;
+  assert.equal(el.scene.selectedPeerKey, 'beta');
+  assert.equal(detailCard(el)?.getAttribute('aria-label'), 'Details for Beta');
+  clickPeer(el, 'beta');
+  await el.updateComplete;
+  assert.equal(el.scene.selectedPeerKey, undefined);
+  assert.equal(detailCard(el), null, 'clicking the selected peer again dismisses its card');
+  clickPeer(el, 'alpha');
+  await el.updateComplete;
+  clickCanvas(el);
+  await el.updateComplete;
+  assert.equal(el.scene.selectedPeerKey, undefined);
+  assert.equal(detailCard(el), null, 'empty canvas clears the card and selection');
+  clickPeer(el, 'alpha', 20, 0);
+  await el.updateComplete;
+  assert.equal(detailCard(el), null, 'dragging does not open a card');
+});
+
+test('PresenceGraphElement: Direct-mode cards close on a mode switch or selected peer removal', async t => {
+  const el = await mount({ peerDetails: detailFixture() });
+  t.after(() => el.remove());
+  clickPeer(el, 'alpha');
+  await el.updateComplete;
+  el.shadowRoot.querySelector('.direct-control input').click();
+  await el.updateComplete;
+  assert.equal(detailCard(el), null, 'a mode change clears the selection card');
+  assert.equal(el.scene.selectedPeerKey, undefined);
+  el.directConnectedOnly = true;
+  el.input = structuredClone(INPUT);
+  await el.updateComplete;
+  settleLayout(el);
+  clickPeer(el, 'alpha');
+  await el.updateComplete;
+  assert.ok(detailCard(el));
+  // A peer may leave the visible Direct graph before its detail data expires.
+  el.input = { ...structuredClone(INPUT), remotePeers: [], connections: [] };
+  await el.updateComplete;
+  await el.updateComplete; // input is applied in updated(); card dismissal renders next
+  assert.equal(detailCard(el), null);
+  assert.equal(el.scene.selectedPeerKey, undefined);
 });
 
 test('PresenceGraphElement: a peer with no card data (the cloud node) stays a canvas tap', async () => {

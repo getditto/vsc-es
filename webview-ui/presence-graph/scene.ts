@@ -532,9 +532,13 @@ export class PresenceGraphScene {
   canvasToWorld(canvasX: number, canvasY: number): Point {
     const cx = canvasX - this.width / 2;
     const cy = canvasY - this.height / 2;
+    // Invert the camera used to paint the interactive layer. The full-mesh
+    // camera is preserved behind focus, so using it here offsets every hit
+    // target after a pan even though the focused pills are still centred.
+    const camera = this.isFocusedView ? this.focusCamera() : this.camera;
     return {
-      x: cx / this.activeZoom - this.camera.x,
-      y: cy / this.activeZoom - this.camera.y,
+      x: cx / this.activeZoom - camera.x,
+      y: cy / this.activeZoom - camera.y,
     };
   }
 
@@ -732,6 +736,10 @@ export class PresenceGraphScene {
   resetViewToLocal(): void {
     if (this.isFocusedView) {
       this.focusViewZoom = 1;
+      if (this.focusAnimation) {
+        this.focusAnimation.fromCamera = { x: 0, y: 0 };
+        this.focusAnimation.toCamera = { x: 0, y: 0 };
+      }
       return;
     }
     this.zoom = 1;
@@ -1008,9 +1016,20 @@ export class PresenceGraphScene {
   /** Pan the camera by a delta in canvas (CSS) pixels. Adjust by zoom
    *  so panning feels 1:1 at any zoom level. */
   panBy(dxCanvas: number, dyCanvas: number): void {
+    const dx = dxCanvas / this.activeZoom;
+    const dy = dyCanvas / this.activeZoom;
+    // Focus owns its camera just as it owns its zoom. Move both animation
+    // endpoints so a pan during the fade also tracks the pointer 1:1.
+    if (this.isFocusedView && this.focusAnimation) {
+      for (const camera of [this.focusAnimation.fromCamera, this.focusAnimation.toCamera]) {
+        camera.x += dx;
+        camera.y += dy;
+      }
+      return;
+    }
     this.camera = {
-      x: this.camera.x + dxCanvas / this.activeZoom,
-      y: this.camera.y + dyCanvas / this.activeZoom,
+      x: this.camera.x + dx,
+      y: this.camera.y + dy,
     };
   }
 

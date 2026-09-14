@@ -45,9 +45,18 @@ export class CollectionsRepository {
   /** Synchronous reader for tree provider. */
   current(): DittoCollection[] { return this._collections; }
 
-  /** Initial cache load + start the live observer. Fired on lifecycle-active. */
+  /** Initial cache load + start the live observer. Fired on lifecycle-active.
+   *  Never rejects: a transient hydrate failure must not skip the observer —
+   *  it is what heals the cache once the store recovers, and skipping it
+   *  leaves collections dead for the whole session (nothing re-invokes
+   *  load()). */
   async load(): Promise<void> {
-    await this.hydrate('load');
+    try {
+      await this.hydrate('load');
+    } catch {
+      // Already logged + cache emptied inside hydrate(); the rethrow exists
+      // for the manual refresh command's error surface, not for this path.
+    }
     this.startObserver();
   }
 
@@ -57,12 +66,24 @@ export class CollectionsRepository {
     await this.hydrate('refresh');
   }
 
-  /**
+  /** Result of {@link createIndex} — the generated index name is included so
+   *  automation callers (the MCP create_index tool) can drop/manage the index
+   *  without a list_indexes round-trip to learn what it was called.
+   *
+   *  Outcome semantics —
    * Create an index over one or more fields. More than one field produces a
    * composite index (SDK 5.1+); their order is preserved because the optimizer
    * only uses a composite index from its leading key onwards.
+   *
+   * `outcome` is 'created' when the DDL ran, 'already-exists' when an
+   * equivalent index was already present. `IF NOT EXISTS` compares index NAMES
+   * only, so the pre-check against system:indexes is what makes this
+   * distinction (and the same-name/different-definition conflict) observable.
    */
-  async createIndex(collection: string, fields: readonly IndexField[]): Promise<void> {
+  async createIndex(
+    collection: string,
+    fields: readonly IndexField[],
+  ): Promise<{ outcome: 'created' | 'already-exists'; name: string }> {
     const cleaned = normalizeIndexFields(fields);
     const indexName = makeIndexName(collection, cleaned);
 
@@ -88,7 +109,7 @@ export class CollectionsRepository {
       const existingKeys = parseIndexKeys(firstExisting.fields);
       if (indexKeysMatch(existingKeys, cleaned)) {
         this.log.info('Index already exists with the same definition', { collection, indexName });
-        return;
+        return { outcome: 'already-exists', name: indexName };
       }
       throw new InvalidIndexError(
         `An index named "${indexName}" already exists on "${collection}" with a different `
@@ -104,6 +125,32 @@ export class CollectionsRepository {
     });
     await this.manager.executeRaw(query);
     await this.hydrate('createIndex');
+    return { outcome: 'created', name: indexName };
+  }
+
+  /**
+   * Fresh lookup of every index whose DISPLAY name (the `_id` minus its
+   * "<collection>." prefix) equals `displayName`, optionally narrowed to
+   * one collection. Reads `system:indexes` live — the cache in
+   * `current()` would answer the same question only for the hydrated
+   * collections and can lag a DDL statement issued out-of-band (e.g. by
+   * an MCP create_index earlier in the same agent conversation).
+   *
+   * Used by the MCP drop_index tool to reproduce the SwiftUI server's
+   * ambiguity rule: a bare name that exists on multiple collections must
+   * be rejected unless the caller passes `collection`, because DROP's
+   * target would otherwise be ambiguous.
+   */
+  async findIndexesByDisplayName(displayName: string, collection?: string): Promise<DittoIndex[]> {
+    const rows = await this.manager.executeRaw('SELECT * FROM system:indexes');
+    const matches: DittoIndex[] = [];
+    for (const row of rows) {
+      const idx = parseSystemIndexRow(row);
+      if (!idx || idx.displayName !== displayName) { continue; }
+      if (collection !== undefined && idx.collection !== collection) { continue; }
+      matches.push(idx);
+    }
+    return matches;
   }
 
   /** Drops an index by its bare name + collection. DQL requires the

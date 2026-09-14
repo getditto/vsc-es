@@ -18,6 +18,9 @@ export interface MementoLike {
 const KEY_PREFIX = 'dittoTreeExpansion.v1.';
 
 export class TreeExpansionStore {
+  /** Serializes read-modify-write ops — see {@link enqueue}. */
+  private queue: Promise<void> = Promise.resolve();
+
   constructor(private readonly memento: MementoLike) {}
 
   /** All currently-tracked expanded node IDs for this database. */
@@ -26,24 +29,48 @@ export class TreeExpansionStore {
   }
 
   /** Mark a node id as expanded. Idempotent. */
-  async add(databaseId: string, nodeId: string): Promise<void> {
-    const cur = this.list(databaseId);
-    if (cur.includes(nodeId)) { return; }
-    const next = [...cur, nodeId];
-    await this.memento.update(KEY_PREFIX + databaseId, next);
+  add(databaseId: string, nodeId: string): Promise<void> {
+    return this.enqueue(async () => {
+      const cur = this.list(databaseId);
+      if (cur.includes(nodeId)) { return; }
+      const next = [...cur, nodeId];
+      await this.memento.update(KEY_PREFIX + databaseId, next);
+    });
   }
 
   /** Remove a node id from the expanded set. Idempotent. */
-  async remove(databaseId: string, nodeId: string): Promise<void> {
-    const cur = this.list(databaseId);
-    if (!cur.includes(nodeId)) { return; }
-    const next = cur.filter(id => id !== nodeId);
-    await this.memento.update(KEY_PREFIX + databaseId, next);
+  remove(databaseId: string, nodeId: string): Promise<void> {
+    return this.enqueue(async () => {
+      const cur = this.list(databaseId);
+      if (!cur.includes(nodeId)) { return; }
+      const next = cur.filter(id => id !== nodeId);
+      await this.memento.update(KEY_PREFIX + databaseId, next);
+    });
   }
 
   /** Drop every expansion record for this database. Used by the
    *  delete-connection handler so deleted DBs don't leave orphan keys. */
-  async clearAll(databaseId: string): Promise<void> {
-    await this.memento.update(KEY_PREFIX + databaseId, undefined);
+  clearAll(databaseId: string): Promise<void> {
+    return this.enqueue(async () => {
+      await this.memento.update(KEY_PREFIX + databaseId, undefined);
+    });
+  }
+
+  /**
+   * Run `op` after every previously-queued write. The expand/collapse
+   * event handlers fire-and-forget (`void store.add(...)`), so without
+   * serialization a rapid expand/collapse burst — including the
+   * programmatic reveal loop in the restore path — can interleave two
+   * read-modify-write cycles whose later update loses the earlier one's
+   * node. Same contract and shape as the sibling stores
+   * (ConfigStore/SubscriptionStore/ObserverStore/QueryHistoryStore).
+   */
+  private enqueue<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(op);
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 }

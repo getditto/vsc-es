@@ -72,3 +72,26 @@ test('TreeExpansionStore: clearAll wipes one DB only', async () => {
   assert.deepEqual(s.list('A'), []);
   assert.deepEqual(s.list('B'), ['subs.B']);
 });
+
+test('TreeExpansionStore: concurrent add bursts do not lose node ids', async () => {
+  // Regression: add/remove each did an unserialized read-modify-write,
+  // unlike every sibling store. A memento whose update applies
+  // asynchronously (next tick) makes the interleaving deterministic:
+  // without the enqueue queue both adds read the same pre-state and the
+  // second write dropped the first node from the restored tree.
+  const backing = new Map<string, unknown>();
+  const slowMemento = {
+    get: <T,>(k: string): T | undefined => backing.get(k) as T | undefined,
+    update: async (k: string, v: unknown): Promise<void> => {
+      await new Promise(r => setTimeout(r, 1)); // apply a tick later
+      if (v === undefined) { backing.delete(k); } else { backing.set(k, v); }
+    },
+  };
+  const s = new TreeExpansionStore(slowMemento);
+
+  await Promise.all([s.add('A', 'subs.A'), s.add('A', 'col.A.tasks'), s.add('A', 'obs.A')]);
+  assert.deepEqual(s.list('A').sort(), ['col.A.tasks', 'obs.A', 'subs.A']);
+
+  await Promise.all([s.remove('A', 'obs.A'), s.add('A', 'idx.A.tasks')]);
+  assert.deepEqual(s.list('A').sort(), ['col.A.tasks', 'idx.A.tasks', 'subs.A']);
+});

@@ -2,7 +2,7 @@
   "name": "ditto-vsce",
   "displayName": "Ditto Edge Studio",
   "description": "Debug and inspect Ditto databases from VS Code.",
-  "version": "0.9.1",
+  "version": "0.9.5",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -42,6 +42,9 @@
   ],
   "activationEvents": [],
   "contributes": {
+    "mcpServerDefinitionProviders": [
+      { "id": "ditto-edge-studio", "label": "Ditto Edge Studio" }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -250,6 +253,22 @@
         "command": "dittoVsce.openLogPatternEditor",
         "title": "Ditto: Manage Log Patterns",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "dittoVsce.mcpServerStart",
+        "title": "Ditto: Start MCP Server"
+      },
+      {
+        "command": "dittoVsce.mcpServerStop",
+        "title": "Ditto: Stop MCP Server"
+      },
+      {
+        "command": "dittoVsce.mcpServerStatus",
+        "title": "Ditto: MCP Server Status"
+      },
+      {
+        "command": "dittoVsce.mcpServerCopyConfig",
+        "title": "Ditto: Copy MCP Client Config"
       }
     ],
     "keybindings": [
@@ -493,6 +512,14 @@
           "default": true,
           "description": "Enable Ditto's startup-gated system:metrics virtual collection for connections this extension opens (sets DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED around Ditto.open), feeding the System Metrics panel. Changes apply at the NEXT connect — the SDK parameter is startup-only."
         },
+        "dittoVsce.mcpServer.port": {
+          "type": "number",
+          "default": 65270,
+          "minimum": 0,
+          "maximum": 65535,
+          "scope": "machine",
+          "description": "TCP port the MCP server binds on 127.0.0.1 (and ::1) while a connection with MCP Server enabled (Edit Configuration → Advanced) is active. Default 65270 — the SwiftUI Edge Studio app uses 65269, so both can run side by side. Applies immediately (restarts the listener when running) or on next start."
+        },
         "dittoVsce.logAnalyzer.customPatternsFile": {
           "type": "string",
           "default": "",
@@ -507,7 +534,8 @@
       "supported": "limited",
       "description": "Connection credentials, log analyzer patterns, and the SDK working directory are all machine-scoped and never read from workspace settings, but the extension loads the native Ditto SDK and writes to global storage. Trust the workspace before connecting.",
       "restrictedConfigurations": [
-        "dittoVsce.logAnalyzer.customPatternsFile"
+        "dittoVsce.logAnalyzer.customPatternsFile",
+        "dittoVsce.mcpServer.port"
       ]
     },
     "virtualWorkspaces": {
@@ -524,7 +552,7 @@
     "validate": "npm run typecheck && npm run lint && npm test",
     "build:integration": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
-    "test": "node --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/*.test.ts' 'src/test/webview/*.test.ts'",
+    "test": "node --expose-gc --import tsx --import ./scripts/register-vscode-stub.mjs --test 'src/test/*.test.ts' 'src/test/webview/*.test.ts'",
     "injector:generate": "node scripts/test-injector/generate-data.mjs",
     "injector:run": "node scripts/test-injector/injector.mjs",
     "test:integration:load": "DITTO_CI_DEPTH=load node dist/test/integration/runTests.js",
@@ -569,7 +597,9 @@
     "typescript-eslint": "8.68.0"
   },
   "dependencies": {
-    "@dittolive/ditto": "5.1.0"
+    "@dittolive/ditto": "5.1.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "3.25.76"
   },
   "overrides": {
     "brace-expansion@1": "1.1.18",
@@ -579,7 +609,7 @@
     "esbuild": "$esbuild",
     "fast-uri": "3.1.6",
     "form-data": "4.0.6",
-    "js-yaml": "4.3.1",
+    "js-yaml": "4.3.2",
     "linkify-it": "5.0.2",
     "markdown-it@^15.0.0": {
       "linkify-it": "6.1.0"

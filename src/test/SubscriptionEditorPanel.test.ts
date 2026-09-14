@@ -79,14 +79,20 @@ interface ManagerFake {
   activeConfigId: string | null;
   cancelled: string[];
   registered: { id: string; query: string }[];
+  /** When set, registerSubscription throws Error(message) — as the real
+   *  manager does for invalid DQL (SDK `query/invalid`). */
+  failRegisterWith: string | null;
 }
 
 function fakeManager(over: Partial<ManagerFake> = {}): { manager: DittoManager; fake: ManagerFake } {
-  const fake: ManagerFake = { activeConfigId: DB_ID, cancelled: [], registered: [], ...over };
+  const fake: ManagerFake = { activeConfigId: DB_ID, cancelled: [], registered: [], failRegisterWith: null, ...over };
   const manager = {
     getActiveConfigId: () => fake.activeConfigId,
     cancelSubscription: (id: string) => { fake.cancelled.push(id); },
-    registerSubscription: (id: string, query: string) => { fake.registered.push({ id, query }); },
+    registerSubscription: (id: string, query: string) => {
+      if (fake.failRegisterWith) { throw new Error(fake.failRegisterWith); }
+      fake.registered.push({ id, query });
+    },
   } as unknown as DittoManager;
   return { manager, fake };
 }
@@ -251,6 +257,25 @@ test('saving while the database is not active persists without touching the SDK'
   assert.equal(subs.saved.length, 1, 'still persisted');
   assert.deepEqual(manager.cancelled, [], 'no live registration to replace');
   assert.deepEqual(manager.registered, [], 'nothing registered against another session');
+});
+
+test('a registration failure after a successful save says "saved but not started" — not "save failed"', async () => {
+  // Regression: registration errors escaped into the wrapper's generic
+  // "Save subscription failed" toast while the subscription HAD persisted —
+  // the user re-saved in circles and the sub stayed live-inactive until
+  // reconnect without anyone saying so.
+  const { panel, subs, log } = showEditor({ manager: { failRegisterWith: 'query/invalid: expected an expression' } });
+  await settled(panel);
+
+  panel.fireMessage({ type: 'sub.save', name: 'broken', query: 'SELECT WHERE oops' });
+  await waitFor(() => stub.window.shownWarnings.length > 0);
+
+  assert.equal(subs.saved.length, 1, 'the subscription WAS persisted');
+  assert.match(stub.window.shownWarnings[0]!, /Saved subscription "broken", but it could not start/);
+  assert.match(stub.window.shownWarnings[0]!, /query\/invalid/);
+  assert.deepEqual(stub.window.shownErrors, [], 'never reported as a failed save');
+  assert.ok(log.errors.some(m => m.includes('registration failed')), 'the real cause is logged');
+  assert.equal(panel.disposed, true, 'the editor still closes');
 });
 
 // ─── Cancel ────────────────────────────────────────────────────

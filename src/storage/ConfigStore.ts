@@ -19,8 +19,19 @@ export class ConfigStore {
   list(): StoredDittoConfig[] {
     // A corrupted blob (extension crash mid-update, hand-edited state)
     // must degrade to "no configs" rather than throw out of every caller.
+    // That promise has to hold at the MEMBER level too: with `[null]` stored,
+    // get()/save()/delete() would throw TypeErrors on `c.id`/`c.databaseId`
+    // forever, bricking the tree and making the damage unrepairable from the
+    // extension itself. Malformed members are filtered out; the next write
+    // persists the sanitized list.
     const raw = this.memento.get<unknown>(STORAGE_KEY);
-    return Array.isArray(raw) ? raw : [];
+    if (!Array.isArray(raw)) { return []; }
+    return raw.filter(
+      (c): c is StoredDittoConfig =>
+        typeof c === 'object' && c !== null &&
+        typeof (c as StoredDittoConfig).id === 'string' &&
+        typeof (c as StoredDittoConfig).databaseId === 'string',
+    );
   }
 
   get(id: string): StoredDittoConfig | undefined {

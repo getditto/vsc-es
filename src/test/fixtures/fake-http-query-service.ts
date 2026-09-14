@@ -29,6 +29,15 @@ export function __resetFakeHttp(): void {
   impl = () => Promise.resolve({ items: [] });
 }
 
+/** Mirror of the real class shape so importing modules can `instanceof`
+ *  it; scripted impls may throw this to exercise error paths. */
+export class HttpQueryError extends Error {
+  constructor(message: string, readonly status?: number, readonly body?: string) {
+    super(message);
+    this.name = 'HttpQueryError';
+  }
+}
+
 export async function executeRemoteQuery(req: HttpQueryRequest): Promise<HttpQueryResponse> {
   return impl(req);
 }

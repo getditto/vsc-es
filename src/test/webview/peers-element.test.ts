@@ -331,7 +331,8 @@ test('PeerListing: Escape unwinds the innermost context — an open card first, 
   const el = await mountGraphTab(t);
   const g = graph(el);
   typeSearch(el, 'alp');
-  g.detailPeerKey = 'alpha'; // card state is element-owned; stage it directly
+  g.scene.selectPeer('alpha');
+  g.detailPeerKey = 'alpha'; // stage the card for the selected Direct-mode peer
   await el.updateComplete;
   assert.equal(g.shadowRoot.querySelector('.peer-detail-card') === null, false, 'card showing');
 

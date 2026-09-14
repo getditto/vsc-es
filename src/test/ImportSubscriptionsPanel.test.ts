@@ -89,6 +89,7 @@ function makeDeps(opts: {
   secretsImpl?: () => Promise<unknown>;
   existing?: StoredSubscription[];
   failSaveOn?: (query: string) => boolean;
+  failRegisterOn?: (query: string) => boolean;
 } = {}): Deps {
   const saved: Deps['saved'] = [];
   const registered: Deps['registered'] = [];
@@ -113,7 +114,10 @@ function makeDeps(opts: {
     },
     manager: {
       getActiveConfigId: () => state.activeId,
-      registerSubscription: (id: string, query: string) => { registered.push({ id, query }); },
+      registerSubscription: (id: string, query: string) => {
+        if (opts.failRegisterOn?.(query)) { throw new Error('query/invalid: expected an expression'); }
+        registered.push({ id, query });
+      },
     },
   };
 }
@@ -367,6 +371,31 @@ test('ImportSubscriptionsPanel: a per-row save failure does not sink the rest of
   const done = postedOfType<{ count: number }>(firstPanel().webview.posted, 'importSubs.imported');
   assert.deepEqual(done.map(d => d.count), [2], 'the count reflects actual successes');
   assert.equal(deps.warns.length, 1, 'the failed row is logged');
+  assert.deepEqual(stub.window.shownInfos, ['Imported 2 subscriptions.']);
+});
+
+test('ImportSubscriptionsPanel: a registration failure still counts as imported and is logged distinctly from a save failure', async () => {
+  // Regression: registerSubscription threw for a syntactically-invalid
+  // imported query INSIDE the save try/catch, so the row was logged as
+  // "Failed to save imported subscription" and under-counted even though
+  // it HAD persisted.
+  reset();
+  const deps = makeDeps({ failRegisterOn: (query) => query.includes('oops') });
+  showPanel(deps);
+  await settle();
+
+  firstPanel().fireMessage({
+    type: 'importSubs.importSelected',
+    queries: ['SELECT * FROM tasks', 'SELECT WHERE oops'],
+  });
+  await settle();
+
+  assert.equal(deps.saved.length, 2, 'both rows persisted');
+  assert.equal(deps.registered.length, 1, 'only the valid one registered live');
+  const done = postedOfType<{ count: number }>(firstPanel().webview.posted, 'importSubs.imported');
+  assert.deepEqual(done.map(d => d.count), [2], 'the count reflects saves, not registrations');
+  assert.equal(deps.warns.length, 1);
+  assert.ok(deps.warns[0]!.includes('could not start'), 'logged as a registration failure, not a save failure');
   assert.deepEqual(stub.window.shownInfos, ['Imported 2 subscriptions.']);
 });
 

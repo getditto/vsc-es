@@ -83,6 +83,13 @@ ditto-vsc-es/
 │   │   ├── SecretStore.ts      # token/key/api-key in SecretStorage
 │   │   └── SubscriptionStore.ts# subscriptions in globalState
 │   ├── ipc/messages.ts         # typed postMessage contracts (one section per panel)
+│   ├── mcp/
+│   │   ├── McpServerController.ts  # lifecycle: per-connection on/off, port moves, status cmd
+│   │   ├── McpServerService.ts     # loopback HTTP, sessions, body cap, DNS-rebinding guard
+│   │   ├── define-tool.ts          # a tool is a data record over the shared service graph
+│   │   ├── registry.ts             # registerAllTools: ToolDef → MCP SDK registrations
+│   │   ├── tools-*.ts              # the 31 tools, one file per domain
+│   │   └── resources.ts            # the 6 read-only ditto:// resources
 │   ├── models/DittoConfig.ts   # shared types: StoredDittoConfig, PeerInfo, etc.
 │   └── test/                   # *.test.ts — node:test + register-vscode-stub
 ├── webview-ui/                 # Lit components (shipped to webviews)
@@ -206,19 +213,75 @@ union. The webview-side wrapper is `webview-ui/shared/messaging.ts`
 
 Pattern when adding a new panel: add the message types to `messages.ts`,
 have the host call `webview.postMessage` with the typed payload, and have
-the Lit element listen on `window.addEventListener('message', ...)`. Both
-sides should pattern-match on `msg.type`.
+the Lit element subscribe through the `HostMessages` controller in
+`webview-ui/shared/messaging.ts` — never a hand-written
+`window.addEventListener('message', ...)`: VS Code re-parents webview
+panels between editor groups, and an undisposed listener means every later
+message is handled once per past mount. Both sides should pattern-match on
+`msg.type`, with the host-side handler wrapped in `webviewMessageHandler`
+(`src/panels/webview-utils.ts`) so a rejected promise surfaces as an error
+toast instead of a silent no-op.
 
 ### 4.5 Tree
 
 `DatabaseTreeProvider` implements `TreeDataProvider<DatabaseTreeNode>`.
-Nodes are a discriminated union (`kind: 'database' | 'subscriptionsParent'
-| 'subscription' | 'peerListing' | 'queryEditor'`). Children only exist
+Nodes are a discriminated union over `kind` (database, per-feature leaf
+rows, and parent grouping rows — the union lives in
+`src/tree/DatabaseTreeItem.ts` and is the source of truth; don't copy it
+into docs). Children only exist
 under an `active` database — idle databases render as a single collapsed
 row with no expand chevron. `getChildren()` switches on `kind`.
 
 Inline / contextual menus live in `package.json` under `contributes.menus`,
 keyed by `viewItem` regex (e.g. `viewItem == database.active`).
+
+### 4.6 The embedded MCP server
+
+Edge Studio can expose the active database to AI agents over the Model
+Context Protocol. The split of responsibilities:
+
+- **`McpServerController`** owns policy and lifecycle. The on/off switch is
+  **per connection** (`advancedConfig.mcpServerEnabled`, default off) — it
+  follows the active connection through connect/switch/disconnect and editor
+  saves, and restarts when the machine-scoped `dittoVsce.mcpServer.port`
+  setting moves. Every transition is serialized through an internal promise
+  queue (`enqueue`), because lifecycle beats, config events, and the
+  Start/Stop commands can all land inside one async bind window. A
+  `disposed` latch plus a post-bind re-check make `dispose()` safe against
+  an in-flight bind.
+- **`McpServerService`** owns the wire: loopback-only HTTP (`127.0.0.1` +
+  best-effort `::1`), Streamable HTTP at `/mcp` plus the legacy HTTP+SSE
+  pair (`/sse`, `/messages`) for SwiftUI-client parity, and `/health` for
+  liveness. Sessions are stateful (`initialize` first, then the
+  `Mcp-Session-Id` header); unknown/expired sessions are 404 before any tool
+  runs so a retry after restart can't double-apply a mutation. Invariants
+  that must not regress: 4 MiB body cap enforced pre-read and during the
+  stream, a `Host`-header allowlist against DNS rebinding, tracked sockets +
+  a 2 s bound so `stop()` drains without hanging, and no credentials in any
+  tool output (metadata flags only; presence data ships as key counts, and
+  `fetch_attachment` downloads stay inside the workspace / extension
+  storage / OS temp with an atomic overwrite guard).
+- **Tools are data records** (`define-tool.ts`): each `ToolDef` is
+  `{name, description, zod schema, handler}`, and the handler receives the
+  same service graph the panels use (`McpToolContext`) — a tool body is
+  composition, not new machinery. `registry.ts` registers the records and
+  forwards the SDK's abort `signal` so long-running tools (`watch_query`)
+  honour client cancellation and session close. Handler throws become
+  `isError` results at two layers. `src/test/mcp-tools.test.ts` locks the
+  tool count and names — adding or removing a tool fails that suite on
+  purpose, so surface changes are deliberate.
+- **`resources.ts`** exposes read-only snapshots agents can fetch cheaply:
+  `ditto://schema`, `ditto://peers`, `ditto://sync-status`,
+  `ditto://subscriptions`, `ditto://observers`, `ditto://system-metrics`.
+- **Copilot** picks the server up automatically via
+  `registerCopilotMcpProvider` (`mcpServerDefinitionProviders` contribution)
+  while it runs; other clients use the snippet from
+  **Ditto: Copy MCP Client Config**.
+
+Operator documentation lives in [`MCP_SERVER.md`](MCP_SERVER.md); the
+scripted acceptance playbook is [`MCP_VALIDATION.md`](MCP_VALIDATION.md);
+the agent-facing skill bundle ships under
+`plugins/ditto-edge-studio-vscode/`.
 
 ---
 
@@ -263,8 +326,9 @@ Output is visible in the host's `View → Output → Ditto Edge Studio` channel.
 npm test
 ```
 
-This runs `node --test` over `src/test/*.test.ts` and
-`src/test/webview/*.test.ts` with two import shims:
+This runs `node --test --expose-gc` over `src/test/*.test.ts` and
+`src/test/webview/*.test.ts` with two import shims (`--expose-gc` backs the
+leak-validation layer in §6.4):
 
 - `tsx` — TypeScript execution (no compile step). Note that it does **not**
   typecheck; `npm run typecheck` is what does.
@@ -308,6 +372,13 @@ don't leak into your assertions.
   `query-projection` (the `MAX_QUERY_ROWS` cap and the dematerialize
   discipline), `HttpQueryService`'s response cap / status classification /
   settle-once guard, `dql-identifier`, `secrets`, `PatternEngine`.
+- MCP layer — against `src/test/fixtures/mcp-fakes.ts`: every tool handler
+  (`mcp-tools*.test.ts`), the controller's flag/port/dispose lifecycle
+  against the shared vscode stub (`mcp-controller.test.ts`), real-SDK
+  transports over loopback HTTP (sessions, 404-before-dispatch, body caps,
+  DNS-rebinding 403s, stop-with-open-session port release in
+  `mcp-server.test.ts`), and the per-connection Log Analyzer registry
+  (`log-analyzer-registry.test.ts`).
 - Lit components under `src/test/webview/` via jsdom, including a recording
   canvas 2D context (`src/test/webview/setup.ts`) that tracks the affine
   transform, so the presence graph's paint positions are assertable rather
@@ -317,7 +388,39 @@ The SDK-touching parts of `DittoManager` — anything needing a live `Ditto`
 instance — are still covered by the recipes in
 [`MANUAL_TESTING.md`](MANUAL_TESTING.md) and the integration suites.
 
-### 6.4 Adding a test
+### 6.4 Memory & lifecycle leak validation
+
+Leak discipline is enforced in layers, cheapest first:
+
+1. **Structural** — `panel-lifecycle-contract.test.ts` proves per panel that
+   disposing removes every webview listener, that static teardown closes the
+   webview, that dispose is idempotent, and that re-`show()` after dispose
+   builds a fresh panel (stale-singleton check). A new panel `show()` without
+   a contract entry fails the suite, so the layer can't silently skip a panel.
+2. **Timer accounting** — `lifecycle-leaks.test.ts` patches the global timer
+   functions per test and asserts construct→use→dispose leaves *zero*
+   outstanding `setTimeout`/`setInterval` handles. Covers the recurring
+   timers (`SystemMetricsService` poll, `ObserverPanel` flush coalescing,
+   `LogAnalyzerService` trailing flush) — a leaked interval pins its closure
+   forever and re-fires against dead objects.
+3. **GC proofs** — same file, WeakRef assertions that a disposed
+   `DebugSocketClient` / `ObserverPanel` / `LogAnalyzerService` is actually
+   collected, not merely "dispose-called". Includes a negative control (an
+   object rooted in a live `Set` must NOT be reported collected) so the
+   harness can't degrade into vacuity.
+4. **Heap flattening** — 400 real socket connect/query/disconnect cycles
+   against an in-process server assert the post-warmup heap stays flat,
+   catching accumulation leaks (reachable-but-growing containers) that the
+   layers above can't see.
+
+Layers 2–4 need `--expose-gc`, wired into both `npm test` and
+`scripts/check-coverage.mjs`; without it the GC/heap tests skip cleanly.
+Known benign retentions these tests work around rather than fail on: the
+50 ms deferred-init timer every panel schedules (retains the panel until it
+fires) and the `unref`'d ≤10 s timeout arms on `Ditto.close()` races — both
+self-release; the assertions wait them out rather than forbid them.
+
+### 6.5 Adding a test
 
 Add a `*.test.ts` file under `src/test/` (or `src/test/webview/` for a Lit
 component), import from the relative source path with the `.js` extension (TS

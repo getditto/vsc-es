@@ -108,6 +108,10 @@ Bluetooth.
 
 > **The peer detail card**
 >
+> With **Direct** on, selecting a remote peer opens its detail card.
+> Selecting another peer swaps the card; clicking the selected peer again
+> or clicking empty canvas dismisses it and clears the selection.
+>
 > Tap a peer once in the full mesh (**Direct** off) to focus it, then
 > tap any peer in the focus ring — including the focused peer itself
 > or **Me** — to open its detail card. The card shows everything the

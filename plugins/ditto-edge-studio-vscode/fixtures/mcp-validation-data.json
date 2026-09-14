@@ -1,0 +1,50 @@
+[
+  {
+    "_id": "mcp-task-1",
+    "title": "Draft the launch announcement",
+    "done": false,
+    "priority": 1,
+    "assignee": "ada",
+    "estimateHours": 3
+  },
+  {
+    "_id": "mcp-task-2",
+    "title": "Review sync backoff patch",
+    "done": true,
+    "priority": 2,
+    "assignee": "grace",
+    "estimateHours": 2
+  },
+  {
+    "_id": "mcp-task-3",
+    "title": "Reproduce mesh partition on Wi-Fi toggle",
+    "done": false,
+    "priority": 1,
+    "assignee": "ada",
+    "estimateHours": 5
+  },
+  {
+    "_id": "mcp-task-4",
+    "title": "Benchmark composite index on orders",
+    "done": false,
+    "priority": 3,
+    "assignee": "linus",
+    "estimateHours": 8
+  },
+  {
+    "_id": "mcp-task-5",
+    "title": "Write debug_socket runbook",
+    "done": true,
+    "priority": 2,
+    "assignee": "grace",
+    "estimateHours": 4
+  },
+  {
+    "_id": "mcp-task-6",
+    "title": "Triage transport-conditions noise",
+    "done": false,
+    "priority": 3,
+    "assignee": "ada",
+    "estimateHours": 2
+  }
+]

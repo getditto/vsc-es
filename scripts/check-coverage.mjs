@@ -28,9 +28,12 @@ const EXCLUSIONS = [
   // integration suite (src/test/integration) instead.
   'src/extension.ts',
   // Type-only modules: erased at compile time, nothing executable to cover.
+  // (This group is machine-verified by the EXECUTABLE_EXPORT check below —
+  // a module with runtime exports must NOT hide here; src/models/DittoConfig.ts
+  // was excluded under this rationale while exporting the runtime newConfig(),
+  // which made the gate structurally blind to the new-connection path.)
   'src/ipc/messages.ts',
   'src/models/DittoCollection.ts',
-  'src/models/DittoConfig.ts',
   'src/models/StoredObserver.ts',
   'src/ditto/QueryProfile.ts',
   'src/logAnalyzer/types.ts',
@@ -58,12 +61,26 @@ function listSources(dir, prefix) {
   return out;
 }
 
+// Machine-check the "type-only" rationale: an excluded module (other than
+// the documented host-bound entry point) must not contain executable
+// exports. Catches stale exclusions the day someone adds runtime code to one.
+const EXECUTABLE_EXPORT = /^export\s+(async\s+)?function\s|^export\s+class\s|^export\s+const\s+\S+\s*=\s*(\(|[^;]*=>)/m;
+for (const file of EXCLUSIONS) {
+  if (file === 'src/extension.ts') { continue; } // documented host-bound exception
+  const body = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  if (EXECUTABLE_EXPORT.test(body)) {
+    console.error(`FAIL: ${file} is excluded as type-only but has executable exports — remove it from EXCLUSIONS instead of hiding it from the gate.`);
+    process.exit(2);
+  }
+}
+
 const loadList = [...listSources(path.join(ROOT, 'src'), 'src'),
                   ...listSources(path.join(ROOT, 'webview-ui'), 'webview-ui')]
   .filter(f => !EXCLUSIONS.includes(f) && !EXCLUDED_PREFIXES.some(re => re.test(f)));
 
 // ─── Run the suite with coverage ────────────────────────────────
 const report = execFileSync('node', [
+  '--expose-gc', // lifecycle-leaks tests assert real collection; keep parity with npm test
   '--import', 'tsx',
   '--import', pathToFileURL(path.join(ROOT, 'scripts', 'register-vscode-stub.mjs')).href,
   '--test', '--experimental-test-coverage',

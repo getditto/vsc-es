@@ -217,6 +217,29 @@ test('a hydration failure empties the cache, fires onChange, and rethrows', asyn
   assert.deepEqual(log.errors, ['Hydration failed']);
 });
 
+test('a failing initial hydrate does not reject load() and still attaches the live observer', async () => {
+  // Regression: load() awaited hydrate() (which rethrows) BEFORE
+  // startObserver(), and extension.ts floats the load() promise — so one
+  // transient `__collections` failure was both an unhandled rejection and
+  // a session without live collection updates (nothing re-invokes load()).
+  const { manager, fake } = fakeManager({ collections: new Error('store not ready') });
+  const log = recordingLogger();
+  const repo = new CollectionsRepository(manager, log.logger);
+
+  await repo.load(); // must not reject
+
+  assert.deepEqual(collectionsOf(repo), [], 'cache empty after the failed hydrate');
+  assert.deepEqual(fake.registerCalls, ['SELECT * FROM __collections'],
+    'the live observer attached anyway');
+
+  // ...and the observer is exactly what heals the cache once the store
+  // recovers: it fires with rows and the cache populates without any
+  // manual refresh.
+  fake.observerCb?.([{ _id: 'x', name: 'tasks' }]);
+  await waitFor(() => repo.current().length === 1);
+  assert.equal(repo.current()[0]!.name, 'tasks');
+});
+
 // ─── COUNT(*) fan-out ──────────────────────────────────────────
 
 test('a failed COUNT(*) for one collection does not poison the others', async () => {

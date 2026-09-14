@@ -39,7 +39,7 @@
   "memory_oom": {
     "pattern": "out of memory|OutOfMemoryError|OOMKiller|Killed process",
     "severity": 4,
-    "recommendation": "Memory pressure detected — check host limits and process memory usage."
+    "recommendation": "Memory pressure detected \u2014 check host limits and process memory usage."
   },
   "crash_signal": {
     "pattern": "segmentation fault|segfault|SIGSEGV|core dumped",
@@ -50,7 +50,7 @@
     "pattern": "session metadata database was corrupt on open; deleting and reinitializing this peer's metadata, then retrying",
     "level_filter": "warn",
     "severity": 3,
-    "recommendation": "Per-peer replication metadata was corrupt on open and is being deleted and re-initialized automatically; application documents are unaffected (expected with relaxed_sync_metadata_durability after unclean shutdowns). Watch the ditto.replication.metadata_corrupt_recoveries metric — a sustained high rate for the same remote peer suggests frequent unclean shutdowns or storage problems on that device."
+    "recommendation": "Per-peer replication metadata was corrupt on open and is being deleted and re-initialized automatically; application documents are unaffected (expected with relaxed_sync_metadata_durability after unclean shutdowns). Watch the ditto.replication.metadata_corrupt_recoveries metric \u2014 a sustained high rate for the same remote peer suggests frequent unclean shutdowns or storage problems on that device."
   },
   "replication_consecutive_resets": {
     "pattern": "resetting replication state with remote peer; sync performance may be temporarily degraded",
@@ -68,5 +68,12 @@
     "pattern": "post-eviction session cleanup is running too frequently, which may cause excessive local overhead",
     "severity": 2,
     "recommendation": "Eviction-triggered session cleanup ran 2+ times within 3x replication_gc_debounce_ms (this is logged at INFO by design). If the evictions all come from one collection, batch them into fewer eviction calls or increase the replication_gc_debounce_ms system parameter."
+  },
+  "mcp_server_start_failure": {
+    "pattern": "MCP server failed to start",
+    "tag_filter": "^mcp",
+    "level_filter": "error",
+    "severity": 4,
+    "recommendation": "The MCP server could not start \u2014 the port is usually already owned by another VS Code window (or app) on this machine, or the port setting is invalid. Run 'Ditto: MCP Server Status' for the exact error, change dittoVsce.mcpServer.port, or close the other window."
   }
 }
