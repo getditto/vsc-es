@@ -270,6 +270,33 @@ test('PresenceGraphElement: a click under the drag threshold selects a peer', as
   el.remove();
 });
 
+test('PresenceGraphElement: scaled canvas hit-testing opens a focused peer card', async () => {
+  const el = await mountFocused();
+  const canvas = el.shadowRoot.querySelector('canvas');
+  const originalRect = canvas.getBoundingClientRect;
+  canvas.getBoundingClientRect = () => ({
+    left: 100, top: 50, width: 400, height: 300,
+    right: 500, bottom: 350, x: 100, y: 50,
+    toJSON: () => ({}),
+  } as DOMRect);
+
+  const at = focusScreenPos(el, 'beta');
+  const scaled = { clientX: 100 + at.clientX / 2, clientY: 50 + at.clientY / 2 };
+  canvas.dispatchEvent(mouse('mousemove', scaled));
+  assert.equal(el.hoveringNode, true, 'scaled pointer position should be over beta');
+  assert.equal(el.scene.hoveredPeerKey, 'beta');
+  await el.updateComplete;
+  assert.equal(canvas.classList.contains('hover-node'), true, 'peer hover uses the pointer cursor class');
+
+  canvas.dispatchEvent(mouse('mousedown', { ...scaled, button: 0, buttons: 1 }));
+  window.dispatchEvent(mouse('mouseup', { ...scaled, button: 0, buttons: 0 }));
+  await el.updateComplete;
+  assert.equal(detailCard(el)?.getAttribute('aria-label'), 'Details for Beta');
+
+  canvas.getBoundingClientRect = originalRect;
+  el.remove();
+});
+
 test('PresenceGraphElement: a drag past the threshold does not select', async () => {
   const el = await mount();
   clickPeer(el, 'alpha', 5, 0);

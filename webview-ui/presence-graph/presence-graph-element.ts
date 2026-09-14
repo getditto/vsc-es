@@ -660,10 +660,25 @@ export class PresenceGraphElement extends LitElement {
 
   // ─── Pointer / wheel handlers ─────────────────────────────
 
-  /** Translate a DOM event to canvas-local CSS pixel coords. */
+  /** Translate a DOM event to the scene's logical canvas pixel coords.
+   *
+   * The canvas is styled to fill the webview and VS Code can temporarily
+   * render that box at a different size while a panel is resized or
+   * re-parented. Hit testing must undo that CSS scaling; otherwise the graph
+   * paints in one coordinate system while nodeAt() receives another. The
+   * symptom is a grab cursor over peers and taps that behave like empty-canvas
+   * taps.
+   */
   private localCoords(e: MouseEvent): { x: number; y: number } {
     const rect = this.canvasEl.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const sceneWidth = this.scene?.width ?? rect.width;
+    const sceneHeight = this.scene?.height ?? rect.height;
+    const scaleX = rect.width > 0 && sceneWidth > 0 ? sceneWidth / rect.width : 1;
+    const scaleY = rect.height > 0 && sceneHeight > 0 ? sceneHeight / rect.height : 1;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
   }
 
   private onMouseDown = (e: MouseEvent): void => {
