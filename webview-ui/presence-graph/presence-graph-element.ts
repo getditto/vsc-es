@@ -52,10 +52,11 @@ export class PresenceGraphElement extends LitElement {
    *  card is open; the parent owns the (live) data. */
   @property({ attribute: false }) peerDetails: ReadonlyMap<string, PresencePeerCardDetail> | undefined;
 
-  /** The peer whose detail card is open, or none. Element-local state, like
-   *  the focus session it belongs to: both die together when the scene
-   *  does (tab switch) or when focus exits. */
+  /** The peer whose detail card is open, in Direct selection or focus view.
+   *  Cleared when the scene is rebuilt or the graph mode changes. */
   @state() private detailPeerKey: string | undefined;
+  @state() private peerKeyCopyStatus: 'idle' | 'copied' | 'error' = 'idle';
+  private peerKeyCopyRequest = 0;
 
   /** A detail card is currently open — the panel's Escape routing reads
    *  this to decide whether the keypress dismisses the card first. */
@@ -332,7 +333,7 @@ export class PresenceGraphElement extends LitElement {
       line-height: 1.3;
       overflow-wrap: anywhere;
     }
-    .peer-detail-close {
+    .peer-detail-close, .peer-key-copy {
       display: grid;
       place-items: center;
       width: 20px;
@@ -346,9 +347,9 @@ export class PresenceGraphElement extends LitElement {
       opacity: 0.7;
       cursor: pointer;
     }
-    .peer-detail-close:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
-    .peer-detail-close:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
-    .peer-detail-close svg { width: 100%; height: 100%; fill: currentColor; }
+    .peer-detail-close:hover, .peer-key-copy:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
+    .peer-detail-close:focus-visible, .peer-key-copy:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+    .peer-detail-close svg, .peer-key-copy svg { width: 100%; height: 100%; fill: currentColor; }
     .peer-detail-divider {
       height: 1px;
       background: var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
@@ -374,6 +375,22 @@ export class PresenceGraphElement extends LitElement {
     }
     .peer-detail-row .value.mono { font-family: var(--vscode-editor-font-family); }
     .peer-detail-row .value.missing { color: var(--vscode-descriptionForeground); }
+    .peer-detail-row.peer-key-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 4px 8px;
+    }
+    .peer-key-row .value {
+      grid-column: 1 / -1;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      overflow: visible;
+      user-select: text;
+    }
+    .peer-key-copy { width: 24px; height: 24px; border-radius: 4px; }
+    .peer-key-copy-status { grid-column: 1 / -1; color: var(--vscode-descriptionForeground); }
+    .peer-key-copy-status:empty { display: none; }
     .peer-detail-sync-title { margin: 0; }
     .peer-detail-caption {
       margin: 2px 0 0;
@@ -393,12 +410,15 @@ export class PresenceGraphElement extends LitElement {
   `;
 
   override disconnectedCallback(): void {
+    this.peerKeyCopyRequest += 1;
+    this.peerKeyCopyStatus = 'idle';
     this.stopRaf();
     this.clearIdleTimer();
     this.settled = false;
     this.resizeObserver?.disconnect();
     this.resizeObserver = undefined;
     this.scene = undefined;
+    this.detailPeerKey = undefined;
     this.detachDragListeners();
     this.dragNodeKey = null;
     this.isPanning = false;
@@ -440,6 +460,16 @@ export class PresenceGraphElement extends LitElement {
     this.applyInputAndStartRaf();
   }
 
+  protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('directConnectedOnly')) { this.detailPeerKey = undefined; }
+    if (changed.has('detailPeerKey')) {
+      // A clipboard operation completing after the card changes must not
+      // announce success (or failure) on a different peer's card.
+      this.peerKeyCopyRequest += 1;
+      this.peerKeyCopyStatus = 'idle';
+    }
+  }
+
   protected override updated(changed: Map<string, unknown>): void {
     if (!this.scene) { return; }
     const modeChanged = changed.has('directConnectedOnly');
@@ -474,6 +504,9 @@ export class PresenceGraphElement extends LitElement {
     this.scene.setMeasurementContext(this.canvasEl?.getContext('2d') ?? undefined);
     const wasFocused = this.scene.isFocusedView;
     this.scene.applyInput(this.input);
+    if (this.directConnectedOnly && this.detailPeerKey !== this.scene.selectedPeerKey) {
+      this.detailPeerKey = undefined;
+    }
     // Direct-mode entry may automatically lower an inherited full-mesh zoom
     // to keep the compact ring inside the viewport. Keep the overlay in sync
     // with the scene after that layout pass.
@@ -723,7 +756,7 @@ export class PresenceGraphElement extends LitElement {
     if (wasDragging) { this.scene.unpin(wasDragging); }
     this.scene.endInteraction();
     if (commitClick && !moved) {
-        if (this.scene.isFocusedView) {
+      if (this.scene.isFocusedView) {
         // In the focused neighbourhood a tap means "tell me about this peer"
         // (SwiftUI PresenceNetworkScene.handlePeerTap parity): it opens the
         // peer's detail card — accordion, so a re-tap closes — for every
@@ -748,6 +781,10 @@ export class PresenceGraphElement extends LitElement {
         }
       } else {
         this.scene.selectPeer(clickedKey);
+        if (this.directConnectedOnly) {
+          const selectedKey = this.scene.selectedPeerKey;
+          this.detailPeerKey = selectedKey && this.peerDetails?.has(selectedKey) ? selectedKey : undefined;
+        }
         this.zoomLabel = `${Math.round(this.scene.activeZoom * 100)}%`;
         this.requestUpdate();
       }
@@ -934,7 +971,17 @@ export class PresenceGraphElement extends LitElement {
 
           <div class="peer-detail-divider"></div>
 
-          ${this.detailRow('Peer key', detail.peerKey, 'not reported', true)}
+          <div class="peer-detail-row peer-key-row">
+            <span class="label">Peer key</span>
+            <button class="peer-key-copy" aria-label="Copy peer key" title="Copy peer key"
+                    ?disabled=${!detail.peerKey} @click=${this.copyPeerKey}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z"/></svg>
+            </button>
+            <span class="value mono">${detail.peerKey || 'not reported'}</span>
+            <span class="peer-key-copy-status" role="status">${this.peerKeyCopyStatus === 'copied'
+              ? 'Copied'
+              : this.peerKeyCopyStatus === 'error' ? 'Could not copy. Select the key to copy it manually.' : ''}</span>
+          </div>
           ${this.detailRow('OS', detail.os, 'not yet known')}
           ${this.detailRow('Ditto SDK', detail.sdkVersion, 'not yet known')}
           ${this.detailRow('Cloud link', detail.cloudLink === undefined
@@ -966,15 +1013,30 @@ export class PresenceGraphElement extends LitElement {
     label: string,
     value: string | undefined,
     missing = '—',
-    mono = false,
   ): TemplateResult {
     return html`
       <div class="peer-detail-row">
         <span class="label">${label}</span>
-        <span class="value ${mono ? 'mono' : ''} ${value === undefined ? 'missing' : ''}"
+        <span class="value ${value === undefined ? 'missing' : ''}"
               title=${value ?? missing}>${value ?? missing}</span>
       </div>
     `;
+  }
+
+  private async copyPeerKey(): Promise<void> {
+    const key = this.detailPeerKey ? this.peerDetails?.get(this.detailPeerKey)?.peerKey : undefined;
+    if (!key) { return; }
+    const request = ++this.peerKeyCopyRequest;
+    let status: 'copied' | 'error';
+    try {
+      await navigator.clipboard.writeText(key);
+      status = 'copied';
+    } catch {
+      status = 'error';
+    }
+    if (this.isConnected && request === this.peerKeyCopyRequest) {
+      this.peerKeyCopyStatus = status;
+    }
   }
 
   /** Three states, and the distinction is the point: `system:data_sync_info`

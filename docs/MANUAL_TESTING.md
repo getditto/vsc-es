@@ -262,7 +262,11 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 11. With **Direct** enabled, click a remote peer without dragging it:
     - That peer, the local peer, and every connection between them stay at full opacity.
     - Unrelated peers and connections become semi-transparent.
-    - Clicking the selected peer again or clicking open canvas space restores normal opacity everywhere.
+    - The selected peer's detail card opens with the same fields, wrapped key,
+      and copy icon as focus mode. Clicking another peer swaps the card.
+    - Clicking the selected peer again or clicking open canvas space dismisses
+      the card and restores normal opacity everywhere. Changing graph mode or
+      removing the selected peer also closes its card.
 12. Turn **Direct** off and click a remote peer in the full mesh:
     - A focused-neighbourhood view places that peer at the centre and fades the focused ring in.
     - Only its directly connected peers are arranged in a clean BFS ring with extra spacing for long device names.
@@ -274,12 +278,20 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
       key counts; the sync section shows per-peer commit/time rows for a
       directly connected peer, "No sync session — not directly connected" for
       an indirect one, and "This device" for **Me**.
+    - The full peer key wraps below its label, including on narrow panes.
+      Click the copy icon (also test keyboard activation): **Copied** appears
+      and pasting yields the exact full key without inserted line breaks.
     - Clicking the same peer again closes the card; clicking another orbit
       peer swaps to its card; pressing Escape closes it too (a second Escape
       then clears any active search). **Focus this peer** on a card refocuses
       the orbit on that peer. A card whose peer leaves the mesh closes itself.
     - On a short or narrow pane, confirm the focus banner's ✕ stays clickable
       above the card.
+    - Pan and zoom the full mesh before entering focus, then click the visible
+      focused peer, an orbit peer, and **Me**: each opens the matching card.
+      Pan within focus: the visible orbit follows the pointer and its peers
+      remain clickable. Reset recentres the focused peer at 100% zoom.
+      Exiting focus restores the full mesh's earlier pan and zoom.
     - The focused-view exit button immediately returns to the full mesh and
       closes any open card. Clicking open canvas space closes an open card
       while keeping focus; with no card open it exits the focused view.
