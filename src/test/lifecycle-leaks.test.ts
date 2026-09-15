@@ -265,6 +265,7 @@ test('LogAnalyzerService: a throttled trailing flush is cancelled by dispose', a
 
 const gc = (globalThis as { gc?: () => void }).gc;
 const needsGc = { skip: typeof gc !== 'function' };
+const needsUnixSocketAndGc = { skip: process.platform === 'win32' || needsGc.skip };
 
 /** Interleave gc() with macrotask turns so finalizers and destructed
  *  handles release their closures before we measure. */
@@ -275,7 +276,7 @@ async function collectGarbage(): Promise<void> {
   gc!();
 }
 
-test('GC: a disconnected DebugSocketClient is collected (socket, decoder, queue, pending closures)', needsGc, async (t) => {
+test('GC: a disconnected DebugSocketClient is collected (socket, decoder, queue, pending closures)', needsUnixSocketAndGc, async (t) => {
   const srv = await startEchoServer(t);
   // Helper-function scope: everything but the WeakRef is dropped when it
   // returns (a same-function binding would be retained by V8 past the block).
@@ -353,7 +354,7 @@ function leakThenWatch(registry: Set<object>): WeakRef<object> {
 // LAYER 3 — heap-growth flattening, requires --expose-gc
 // ═══════════════════════════════════════════════════════════════
 
-test('HEAP: 400 debug-socket connect/query/disconnect cycles leave a flat heap', needsGc, async (t) => {
+test('HEAP: 400 debug-socket connect/query/disconnect cycles leave a flat heap', needsUnixSocketAndGc, async (t) => {
   const srv = await startEchoServer(t);
   const WARMUP = 50;
   const CYCLES = 400;

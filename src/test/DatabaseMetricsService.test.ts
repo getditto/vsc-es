@@ -54,6 +54,15 @@ test('categorizeFiles: case-insensitive path matching', () => {
   assert.equal(b.storeBytes, 100);
 });
 
+test('categorizeFiles: Windows separators are normalized before matching', () => {
+  const b = categorizeFiles([
+    { path: 'C:\\Ditto\\DITTO_STORE\\main.sqlite3', sizeInBytes: 100 },
+    { path: 'C:\\Ditto\\ditto_replication\\peer.dat', sizeInBytes: 50 },
+  ]);
+  assert.equal(b.storeBytes, 100);
+  assert.equal(b.replicationBytes, 50);
+});
+
 test('categorizeFiles: unrecognised paths go to other', () => {
   const b = categorizeFiles([
     { path: '/x/ditto_metrics/snapshot.bin',  sizeInBytes: 1 },

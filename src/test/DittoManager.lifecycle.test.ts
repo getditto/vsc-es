@@ -38,6 +38,12 @@ DittoLogger.enabled = false;
  *  than silently passing for a new reason. */
 const NOT_ACTIVATED = /has not yet been activated/;
 
+function removeTempDir(dir: string): void {
+  // The native SDK can release attachment handles a few milliseconds after
+  // `close()` resolves. Windows refuses deletion while that happens.
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
 function tmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ditto-mgr-test-'));
 }
@@ -98,7 +104,7 @@ function withManager(t: { after(fn: () => void | Promise<void>): void }): {
   const mgr = new DittoManager(contextIn(dir), logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* already down */ }
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   });
   return { mgr, dir, errors, warns };
 }
