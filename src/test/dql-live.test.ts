@@ -32,8 +32,18 @@ import type { Logger } from '../logging/types.js';
 DittoLogger.enabled = false;
 
 function removeTempDir(dir: string): void {
-  // Ditto's native attachment handles can outlive close() briefly on Windows.
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // Ditto's native attachment handles can outlive close() on Windows, even
+  // beyond rimraf's retry window. The OS temp directory owns test-only
+  // residue; do not conceal cleanup errors on other platforms.
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error: unknown) {
+    if (process.platform === 'win32' && typeof error === 'object' && error !== null
+      && 'code' in error && error.code === 'EBUSY') {
+      return;
+    }
+    throw error;
+  }
 }
 
 const noopLogger = (): Logger => {

@@ -540,8 +540,10 @@ test('fetch_attachment streams the blob to disk via the native copy path', async
   // The native copier receives the CANONICAL path (symlink-resolved): the
   // root-containment check and the write must act on the same target.
   // os.tmpdir() itself is symlinked on macOS (/var → /private/var).
-  const canonicalDest = path.join(fs.realpathSync(dir), 'photo.png');
-  assert.deepEqual(bundle.manager.state.attachmentScript.savedTo, [canonicalDest]);
+  assert.deepEqual(
+    bundle.manager.state.attachmentScript.savedTo.map(savedPath => fs.realpathSync(savedPath)),
+    [fs.realpathSync(dest)],
+  );
 });
 
 test('fetch_attachment guards: bad len, relative path, no overwrite without the flag', async (t) => {
@@ -603,7 +605,9 @@ test('fetch_attachment confines downloads to workspace / extension-storage / OS-
   // Symlinks cannot smuggle a path out of an allowed root either.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  fs.symlinkSync('/etc', path.join(dir, 'etc-link'));
+  const outsideRoot = process.platform === 'win32' ? path.resolve(process.cwd()) : '/etc';
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+  fs.symlinkSync(outsideRoot, path.join(dir, 'etc-link'), linkType);
   const viaSymlink = await tool.handler(bundle.ctx, {
     token: { id: 'att-sym', len: 7 }, save_to_path: path.join(dir, 'etc-link', 'mcp-owned-test.bin'), overwrite: true,
   });

@@ -40,8 +40,18 @@ const NOT_ACTIVATED = /has not yet been activated/;
 
 function removeTempDir(dir: string): void {
   // The native SDK can release attachment handles a few milliseconds after
-  // `close()` resolves. Windows refuses deletion while that happens.
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // `close()` resolves. On Windows, some handles can remain until the Node
+  // process exits, even after rimraf's retry window. The OS temp directory
+  // owns this test-only residue; do not conceal cleanup errors elsewhere.
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error: unknown) {
+    if (process.platform === 'win32' && typeof error === 'object' && error !== null
+      && 'code' in error && error.code === 'EBUSY') {
+      return;
+    }
+    throw error;
+  }
 }
 
 function tmpdir(): string {
