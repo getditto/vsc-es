@@ -541,8 +541,8 @@ test('fetch_attachment streams the blob to disk via the native copy path', async
   // root-containment check and the write must act on the same target.
   // os.tmpdir() itself is symlinked on macOS (/var → /private/var).
   assert.deepEqual(
-    bundle.manager.state.attachmentScript.savedTo.map(savedPath => fs.realpathSync(savedPath)),
-    [fs.realpathSync(dest)],
+    bundle.manager.state.attachmentScript.savedTo,
+    [await fs.promises.realpath(dest)],
   );
 });
 
