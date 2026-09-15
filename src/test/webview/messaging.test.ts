@@ -87,3 +87,19 @@ test('HostMessages: drops a message from an untrusted origin', () => {
 
   controller.hostDisconnected();
 });
+
+test('HostMessages: drops a same-scheme message that did not come from the host window', () => {
+  const host = fakeHost();
+  const seen: unknown[] = [];
+  const controller = new HostMessages<{ type: string }>(host, m => seen.push(m));
+  controller.hostConnected();
+
+  window.dispatchEvent(new MessageEvent('message', {
+    data: { type: 'spoofed' },
+    origin: 'vscode-webview://another-webview',
+    source: null,
+  }));
+  assert.deepEqual(seen, [], 'handler must only accept messages from window.parent');
+
+  controller.hostDisconnected();
+});

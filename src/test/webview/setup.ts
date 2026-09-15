@@ -37,7 +37,7 @@ const JsdomMessageEvent = dom.window.MessageEvent as unknown as
   new (type: string, init?: MessageEventInit) => MessageEvent;
 class TrustedOriginMessageEvent extends JsdomMessageEvent {
   constructor(type: string, init?: MessageEventInit) {
-    super(type, { origin: 'vscode-webview://test', ...init });
+    super(type, { origin: 'vscode-webview://test', source: dom.window.parent, ...init });
   }
 }
 g.MessageEvent = TrustedOriginMessageEvent;

@@ -614,6 +614,7 @@
     "markdown-it@^15.0.0": {
       "linkify-it": "6.1.0"
     },
+    "qs": "6.16.0",
     "serialize-javascript": "^7.0.5",
     "tmp": "0.2.7",
     "undici": "7.29.0"

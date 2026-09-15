@@ -13,4 +13,8 @@ useDefault = true
     # opaque string trips the generic-api-key heuristic; it isn't tied to any
     # real account or service.
     '''RUHqxmQe-CdOGbUU3GRvB_Im3HUMMgO25K85NPQ5c2wHqg''',
+    # src/test/webview/presence-graph-element.test.ts — a former fabricated
+    # peer-key fixture for the copy affordance. It is present in repository
+    # history, so replacing the current fixture alone cannot clear the scan.
+    '''abcdef0123456789''',
   ]

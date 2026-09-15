@@ -49,7 +49,11 @@ export function isTrustedHostOrigin(origin: string): boolean {
 
 function onHostMessage<T>(handler: (msg: T) => void): () => void {
   const listener = (e: MessageEvent): void => {
-    if (!isTrustedHostOrigin(e.origin)) { return; }
+    // The extension host is the direct parent of every webview. Checking the
+    // source as well as its origin prevents another same-scheme document from
+    // impersonating the host, while still supporting desktop and browser-hosted
+    // VS Code where the concrete origin is assigned at runtime.
+    if (e.source !== window.parent || !isTrustedHostOrigin(e.origin)) { return; }
     handler(e.data as T);
   };
   window.addEventListener('message', listener);
