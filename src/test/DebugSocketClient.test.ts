@@ -23,6 +23,11 @@ const noopLogger = {
   info() { /* no-op */ },
 };
 
+// The SDK debug_socket subsystem is Unix-domain-socket only. These are real
+// transport integration tests, so Windows correctly skips them rather than
+// pretending a Windows named pipe validates the unsupported SDK feature.
+const unixSocketTest = process.platform === 'win32' ? test.skip : test;
+
 interface FakeServer {
   server: net.Server;
   socketPath: string;
@@ -93,7 +98,7 @@ function makeClient(t: test.TestContext, options?: ConstructorParameters<typeof 
   return client;
 }
 
-test('happy path: one connection serves many statements with replies matched in order', async (t) => {
+unixSocketTest('happy path: one connection serves many statements with replies matched in order', async (t) => {
   const srv = await startFakeServer(t, {
     fallback: (stmt) => (stmt.startsWith('SELECT')
       ? `[{"q":${JSON.stringify(stmt)}}]`
@@ -117,7 +122,7 @@ test('happy path: one connection serves many statements with replies matched in 
   ]);
 });
 
-test('quick successive sends receive in-order replies, not out-of-order', async (t) => {
+unixSocketTest('quick successive sends receive in-order replies, not out-of-order', async (t) => {
   // Even without awaiting, the wire must stay aligned: statement N's reply
   // resolves promise N.
   const srv = await startFakeServer(t, { fallback: (stmt) => `[{"echo":${JSON.stringify(stmt)}}]` });
@@ -132,7 +137,7 @@ test('quick successive sends receive in-order replies, not out-of-order', async 
   ]);
 });
 
-test('ERROR: lines resolve as error results with the prefix stripped', async (t) => {
+unixSocketTest('ERROR: lines resolve as error results with the prefix stripped', async (t) => {
   const srv = await startFakeServer(t, {
     replies: new Map([['SELECT *** FROM cars', 'ERROR: Parse error: unexpected token `*`']]),
   });
@@ -144,7 +149,7 @@ test('ERROR: lines resolve as error results with the prefix stripped', async (t)
   assert.equal(r.ok ? undefined : r.error, 'Parse error: unexpected token `*`');
 });
 
-test('an empty result line resolves to an empty items array', async (t) => {
+unixSocketTest('an empty result line resolves to an empty items array', async (t) => {
   const srv = await startFakeServer(t, { fallback: () => '[]' });
   const client = makeClient(t);
   await client.connect(srv.socketPath);
@@ -153,7 +158,7 @@ test('an empty result line resolves to an empty items array', async (t) => {
   assert.deepEqual(r, { ok: true, items: [] });
 });
 
-test('a non-JSON reply line resolves as a malformed-response error', async (t) => {
+unixSocketTest('a non-JSON reply line resolves as a malformed-response error', async (t) => {
   const srv = await startFakeServer(t, { fallback: () => 'this is not json' });
   const client = makeClient(t);
   await client.connect(srv.socketPath);
@@ -163,7 +168,7 @@ test('a non-JSON reply line resolves as a malformed-response error', async (t) =
   assert.match(r.ok ? '' : r.error, /not JSON/i);
 });
 
-test('a JSON-but-not-array reply resolves as a malformed-response error', async (t) => {
+unixSocketTest('a JSON-but-not-array reply resolves as a malformed-response error', async (t) => {
   const srv = await startFakeServer(t, { fallback: () => '{"oops":true}' });
   const client = makeClient(t);
   await client.connect(srv.socketPath);
@@ -173,7 +178,7 @@ test('a JSON-but-not-array reply resolves as a malformed-response error', async 
   assert.match(r.ok ? '' : r.error, /array/i);
 });
 
-test('disconnect mid-flight fails the pending request and ends the state', async (t) => {
+unixSocketTest('disconnect mid-flight fails the pending request and ends the state', async (t) => {
   const replies: string[] = [];
   const srv = await startFakeServer(t, { hold: new Set(['SELECT slow']), fallback: () => '[]' });
   void replies;
@@ -200,7 +205,7 @@ test('disconnect mid-flight fails the pending request and ends the state', async
   client.disconnect();
 });
 
-test('disconnect() while connect() is in flight rejects the connect promise instead of hanging it', async (t) => {
+unixSocketTest('disconnect() while connect() is in flight rejects the connect promise instead of hanging it', async (t) => {
   // Regression: disconnect() used to clear `this.socket` before destroy(),
   // so the connect/error/close handlers all hit the stale-socket guard and
   // the connect() promise never settled — `await client.connect(...)` in the
@@ -215,7 +220,7 @@ test('disconnect() while connect() is in flight rejects the connect promise inst
   assert.equal(client.state, 'disconnected');
 });
 
-test('connect() racing the previous attempt settles it instead of leaking the promise', async (t) => {
+unixSocketTest('connect() racing the previous attempt settles it instead of leaking the promise', async (t) => {
   // The reconnect path calls disconnect() on the old (possibly connecting)
   // session first — the old connect() promise must reject, not hang.
   const srv = await startFakeServer(t, { fallback: () => '[1]' });
@@ -237,7 +242,7 @@ function disconnectSynchronouslyAfterConnectStarts(client: DebugSocketClient): v
   client.disconnect();
 }
 
-test('reconnect: disconnect() then connect() to the same server works', async (t) => {
+unixSocketTest('reconnect: disconnect() then connect() to the same server works', async (t) => {
   const srv = await startFakeServer(t, { fallback: () => '[1]' });
   const client = makeClient(t);
 
@@ -251,19 +256,19 @@ test('reconnect: disconnect() then connect() to the same server works', async (t
   assert.deepEqual(r, { ok: true, items: [1] });
 });
 
-test('queries issued while disconnected fail without touching the wire', async () => {
+unixSocketTest('queries issued while disconnected fail without touching the wire', async () => {
   const client = new DebugSocketClient(noopLogger);
   const r = await client.query('SELECT 1');
   assert.equal(r.ok, false);
   assert.match(r.ok ? '' : r.error, /[Nn]ot connected/);
 });
 
-test('connect() rejects a relative socket path', async (t) => {
+unixSocketTest('connect() rejects a relative socket path', async (t) => {
   const client = makeClient(t);
   await assert.rejects(() => client.connect('relative/path.sock'), /absolute/);
 });
 
-test('multi-line statements are rejected before they can desync the FIFO', async (t) => {
+unixSocketTest('multi-line statements are rejected before they can desync the FIFO', async (t) => {
   const srv = await startFakeServer(t, { fallback: () => '[]' });
   const client = makeClient(t);
   await client.connect(srv.socketPath);
@@ -274,7 +279,7 @@ test('multi-line statements are rejected before they can desync the FIFO', async
   assert.deepEqual(srv.received, [], 'nothing should have been written to the socket');
 });
 
-test('requests beyond maxInFlight fail with a queue-full error', async (t) => {
+unixSocketTest('requests beyond maxInFlight fail with a queue-full error', async (t) => {
   const srv = await startFakeServer(t, { hold: new Set(['held-1', 'held-2']), fallback: () => '[]' });
   const client = makeClient(t, { maxInFlight: 2 });
   await client.connect(srv.socketPath);
@@ -290,7 +295,7 @@ test('requests beyond maxInFlight fail with a queue-full error', async (t) => {
   await held2;
 });
 
-test('a request timeout closes the connection and fails everything pending', async (t) => {
+unixSocketTest('a request timeout closes the connection and fails everything pending', async (t) => {
   const srv = await startFakeServer(t, { hold: new Set(['slow-1', 'slow-2']), fallback: () => '[]' });
   let drop: { state: string; error?: string | undefined } | undefined;
   const client = new DebugSocketClient(noopLogger, {
@@ -310,7 +315,7 @@ test('a request timeout closes the connection and fails everything pending', asy
   assert.match(drop?.error ?? '', /timed out/i);
 });
 
-test('a response line beyond maxLineBytes closes the connection', async (t) => {
+unixSocketTest('a response line beyond maxLineBytes closes the connection', async (t) => {
   const huge = '[' + '0,'.repeat(500) + '0]';
   const srv = await startFakeServer(t, { fallback: () => huge });
   const client = makeClient(t, { maxLineBytes: 200 });
@@ -322,7 +327,7 @@ test('a response line beyond maxLineBytes closes the connection', async (t) => {
   assert.equal(client.state, 'disconnected');
 });
 
-test('blank reply lines are skipped, not paired with a pending request', async (t) => {
+unixSocketTest('blank reply lines are skipped, not paired with a pending request', async (t) => {
   let blankInjected = false;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ditto-debug-sock-blank-'));
   const socketPath = path.join(dir, 't.sock');

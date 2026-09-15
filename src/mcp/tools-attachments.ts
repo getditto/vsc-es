@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import * as fs from 'node:fs/promises';
-import * as fsSync from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -31,15 +30,27 @@ interface FetchArgs {
  * OS temp directory. Roots are canonicalised so a symlinked workspace root
  * still matches its real path.
  */
-function allowedRoots(ctx: McpToolContext): string[] {
+async function canonicalPath(candidate: string): Promise<string> {
+  try { return await fs.realpath(candidate); } catch { return path.resolve(candidate); }
+}
+
+async function allowedRoots(ctx: McpToolContext): Promise<string[]> {
   const roots: string[] = [];
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     roots.push(folder.uri.fsPath);
   }
   roots.push(ctx.globalStorageFsPath, os.tmpdir());
-  return roots.map((r) => {
-    try { return fsSync.realpathSync(r); } catch { return path.resolve(r); }
-  });
+  return await Promise.all(roots.map(canonicalPath));
+}
+
+/** Both the canonical candidate and canonical root must agree. Comparing via
+ * `relative()` avoids prefix collisions (`C:\\temp2` is not inside `C:\\temp`),
+ * and normalizing case covers Windows' case-insensitive filesystem. */
+function isInsideRoot(candidate: string, root: string): boolean {
+  const normalize = (p: string) => process.platform === 'win32' ? p.toLowerCase() : p;
+  const relative = path.relative(normalize(root), normalize(candidate));
+  return relative === ''
+    || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
 /** Resolve `saveToPath` to a canonical destination inside an allowed root
@@ -55,6 +66,8 @@ async function resolveDestination(
   const missing: string[] = [];
   for (;;) {
     try {
+      // Unlike allowed roots, this must throw for a missing segment so we
+      // walk upward to the nearest existing ancestor and resolve symlinks.
       ancestor = await fs.realpath(ancestor);
       break;
     } catch {
@@ -67,8 +80,8 @@ async function resolveDestination(
     }
   }
   const canonical = path.join(ancestor, ...missing, path.basename(resolved));
-  const roots = allowedRoots(ctx);
-  if (!roots.some((r) => canonical === r || canonical.startsWith(r + path.sep))) {
+  const roots = await allowedRoots(ctx);
+  if (!roots.some((r) => isInsideRoot(canonical, r))) {
     return {
       ok: false,
       reason:

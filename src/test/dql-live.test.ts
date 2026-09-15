@@ -31,6 +31,11 @@ import type { Logger } from '../logging/types.js';
 // assertion below anyway, and the thrown DittoError carries the reason.
 DittoLogger.enabled = false;
 
+function removeTempDir(dir: string): void {
+  // Ditto's native attachment handles can outlive close() briefly on Windows.
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
 const noopLogger = (): Logger => {
   const self = {
     error: () => {}, warn: () => {}, info: () => {}, debug: () => {}, trace: () => {},
@@ -69,7 +74,7 @@ async function withStore<T>(
     return await body({ ditto, exec, repo });
   } finally {
     try { await ditto.close(); } catch { /* closing a test store is best-effort */ }
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 }
 

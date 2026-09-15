@@ -313,7 +313,9 @@ test('profile_query runs the PROFILE pipeline and returns the tree + rows', asyn
 
 // ─── debug socket ────────────────────────────────────────────
 
-test('debug_socket_query round-trips against an in-process fake app socket', async (t) => {
+test('debug_socket_query round-trips against an in-process fake app socket', {
+  skip: process.platform === 'win32',
+}, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-dbg-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const sockPath = path.join(dir, 'app.sock');

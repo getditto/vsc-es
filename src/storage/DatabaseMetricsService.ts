@@ -108,7 +108,10 @@ export function categorizeFiles(
 ): DiskBreakdown {
   const b: DiskBreakdown = { ...EMPTY_BREAKDOWN };
   for (const f of files) {
-    const p = f.path.toLowerCase();
+    // Ditto's on-disk directory names are documented with POSIX separators,
+    // but `fs.readdir()` returns `\\` on Windows. Normalize before matching
+    // so a Windows data directory receives the same bucket breakdown.
+    const p = f.path.toLowerCase().replaceAll('\\', '/');
     const bytes = f.sizeInBytes;
     if (p.endsWith('-wal') || p.endsWith('-shm')) {
       b.walShmBytes += bytes;

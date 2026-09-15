@@ -35,6 +35,9 @@ const silentLogger = new Proxy({}, {
   },
 }) as never;
 
+// Debug socket integration requires the SDK's Unix-domain-socket listener.
+const unixSocketTest = process.platform === 'win32' ? test.skip : test;
+
 function fakeContext(): vscode.ExtensionContext {
   const store = new Map<string, unknown>();
   return {
@@ -100,7 +103,7 @@ function showPanel(): FakePanel {
 test.beforeEach(() => { stub.__resetStub(); });
 test.afterEach(() => { DebugConsolePanel.dispose(); stub.__resetStub(); });
 
-test('connect → state connected is posted with the path echoed', async (t) => {
+unixSocketTest('connect → state connected is posted with the path echoed', async (t) => {
   const srv = await startFakeServer(() => '[]');
   t.after(() => srv.close());
   const panel = showPanel();
@@ -115,7 +118,7 @@ test('connect → state connected is posted with the path echoed', async (t) => 
   assert.equal(connected.path, srv.socketPath);
 });
 
-test('running a statement posts a runResult with rows and metadata', async (t) => {
+unixSocketTest('running a statement posts a runResult with rows and metadata', async (t) => {
   const srv = await startFakeServer(
     (stmt) => (stmt.startsWith('SELECT') ? '[{"_id":"abc","make":"Toyota"}]' : 'ERROR: nope'),
   );
@@ -140,7 +143,7 @@ test('running a statement posts a runResult with rows and metadata', async (t) =
   assert.equal(run.truncated, false);
 });
 
-test('a server ERROR: line surfaces as an error runResult, not a thrown handler', async (t) => {
+unixSocketTest('a server ERROR: line surfaces as an error runResult, not a thrown handler', async (t) => {
   const srv = await startFakeServer(() => 'ERROR: Parse error: unexpected token `*`');
   t.after(() => srv.close());
   const panel = showPanel();
@@ -200,7 +203,7 @@ test('a connect to a nonexistent socket posts disconnected state with the OS err
   assert.match(failed.error, /Could not connect/);
 });
 
-test('disconnect message closes the socket and posts disconnected state', async (t) => {
+unixSocketTest('disconnect message closes the socket and posts disconnected state', async (t) => {
   const srv = await startFakeServer(() => '[]');
   t.after(() => srv.close());
   const panel = showPanel();
