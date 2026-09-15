@@ -39,8 +39,18 @@ const NOT_ACTIVATED = /has not yet been activated/;
 
 function removeTempDir(dir: string): void {
   // The native SDK can release attachment handles a few milliseconds after
-  // `close()` resolves. Windows refuses deletion while that happens.
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // `close()` resolves. On Windows, some handles can remain until the Node
+  // process exits, even after rimraf's retry window. The OS temp directory
+  // owns this test-only residue; do not conceal cleanup errors elsewhere.
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error: unknown) {
+    if (process.platform === 'win32' && typeof error === 'object' && error !== null
+      && 'code' in error && error.code === 'EBUSY') {
+      return;
+    }
+    throw error;
+  }
 }
 
 function tmpdir(): string {
@@ -569,7 +579,7 @@ test('applyTransportConfig refuses a concurrent apply', async t => {
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   });
 
   let parked: (() => void) | undefined;
@@ -881,7 +891,7 @@ test('a failed connect still applies the config transport prefs before sync.star
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   });
 
   const cfg = makeConfig({ isLanEnabled: false });
@@ -898,7 +908,7 @@ test('an invalid startup system setting fails the connect with the parameter nam
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   });
 
   const cfg = makeConfig({
@@ -922,7 +932,7 @@ test('a failed connect clears the redaction set it never registered', async t =>
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   });
 
   // A secretKey that is not valid base64 makes Ditto.open reject before the
