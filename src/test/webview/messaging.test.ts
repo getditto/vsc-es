@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import './setup.js';
+import { vscodeHostWindow } from './setup.js';
 
 /** The api must exist before the module runs — `messaging.ts` calls
  *  acquireVsCodeApi() at import time and holds the result. */
@@ -21,13 +21,13 @@ const { isTrustedHostOrigin, HostMessages } = await import('../../../webview-ui/
 // whole suite would still pass.
 
 test('isTrustedHostOrigin: accepts the desktop webview origin', () => {
-  assert.equal(isTrustedHostOrigin('vscode-webview://1a2b3c4d-5e6f'), true);
+  assert.equal(isTrustedHostOrigin('vscode-webview://1a2b3c4d-5e6f', 'vscode-webview://1a2b3c4d-5e6f'), true);
 });
 
 test('isTrustedHostOrigin: accepts a browser-hosted editor origin', () => {
   // Codespaces / a remote workspace opened over the web serves the same
   // webview content over https.
-  assert.equal(isTrustedHostOrigin('https://abc123.vscode-cdn.net'), true);
+  assert.equal(isTrustedHostOrigin('https://abc123.vscode-cdn.net', 'https://abc123.vscode-cdn.net'), true);
 });
 
 test('isTrustedHostOrigin: rejects other schemes and a null origin', () => {
@@ -39,7 +39,7 @@ test('isTrustedHostOrigin: rejects other schemes and a null origin', () => {
     'null',
     '',
   ]) {
-    assert.equal(isTrustedHostOrigin(origin), false, `expected ${origin || '<empty>'} to be untrusted`);
+    assert.equal(isTrustedHostOrigin(origin, origin), false, `expected ${origin || '<empty>'} to be untrusted`);
   }
 });
 
@@ -57,12 +57,14 @@ function fakeHost() {
   };
 }
 
-test('HostMessages: delivers a message from a trusted origin', () => {
+test('HostMessages: delivers VS Code messages after the API hides the parent window', () => {
   const host = fakeHost();
   const seen: unknown[] = [];
   const controller = new HostMessages<{ type: string }>(host, m => seen.push(m));
   controller.hostConnected();
 
+  assert.equal(window.parent, window, 'VS Code hides the outer frame from extension scripts');
+  assert.notEqual(vscodeHostWindow, window.parent, 'messages still come from the real outer frame');
   window.dispatchEvent(new MessageEvent('message', { data: { type: 'ok' } }));
   assert.deepEqual(seen, [{ type: 'ok' }]);
 
@@ -88,18 +90,33 @@ test('HostMessages: drops a message from an untrusted origin', () => {
   controller.hostDisconnected();
 });
 
-test('HostMessages: drops a same-scheme message that did not come from the host window', () => {
+test('HostMessages: drops other origins even with an allowed scheme', () => {
   const host = fakeHost();
   const seen: unknown[] = [];
   const controller = new HostMessages<{ type: string }>(host, m => seen.push(m));
   controller.hostConnected();
 
-  window.dispatchEvent(new MessageEvent('message', {
-    data: { type: 'spoofed' },
-    origin: 'vscode-webview://another-webview',
-    source: null,
-  }));
-  assert.deepEqual(seen, [], 'handler must only accept messages from window.parent');
+  for (const origin of ['vscode-webview://another-webview', 'https://evil.example', 'null', '']) {
+    window.dispatchEvent(new MessageEvent('message', {
+      data: { type: 'spoofed' }, origin,
+    }));
+  }
+  assert.deepEqual(seen, [], 'handler must only accept the current webview origin');
 
   controller.hostDisconnected();
+});
+
+test('HostMessages: disconnect and reconnect keep exactly one listener', () => {
+  const seen: unknown[] = [];
+  const controller = new HostMessages(fakeHost(), m => seen.push(m));
+  const send = () => window.dispatchEvent(new MessageEvent('message', { data: 'update' }));
+  controller.hostConnected();
+  send();
+  controller.hostDisconnected();
+  send();
+  controller.hostConnected();
+  controller.hostConnected();
+  send();
+  controller.hostDisconnected();
+  assert.deepEqual(seen, ['update', 'update']);
 });

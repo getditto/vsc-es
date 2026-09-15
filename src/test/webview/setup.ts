@@ -6,7 +6,13 @@ import { JSDOM } from 'jsdom';
  *  reaches for `customElements`/`HTMLElement`). */
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
+  url: 'https://test.vscode-cdn.net',
 });
+
+// VS Code forwards messages from an outer frame with the same origin, but
+// its injected API replaces the inner frame's window.parent with window.
+// Keep the sender distinct so tests catch invalid source === parent guards.
+export const vscodeHostWindow = new JSDOM('', { url: dom.window.origin }).window;
 
 const g = globalThis as any;
 g.window = dom.window;
@@ -22,7 +28,7 @@ g.CSSStyleSheet = dom.window.CSSStyleSheet;
 g.CustomEvent = dom.window.CustomEvent;
 // Host messages in a real webview always carry an origin — VS Code serves the
 // content from `vscode-webview://<uuid>` (or an https origin when the editor
-// itself runs in a browser), and `onHostMessage` rejects anything else. jsdom
+// itself runs in a browser), and `onHostMessage` checks that exact origin. jsdom
 // defaults `origin` to '', so without this every dispatched test message would
 // be discarded as untrusted. Defaulting it here keeps the 40-odd existing
 // dispatch sites modelling the real environment; a test that cares about the
@@ -37,7 +43,7 @@ const JsdomMessageEvent = dom.window.MessageEvent as unknown as
   new (type: string, init?: MessageEventInit) => MessageEvent;
 class TrustedOriginMessageEvent extends JsdomMessageEvent {
   constructor(type: string, init?: MessageEventInit) {
-    super(type, { origin: 'vscode-webview://test', source: dom.window.parent, ...init });
+    super(type, { origin: dom.window.origin, source: vscodeHostWindow as unknown as Window, ...init });
   }
 }
 g.MessageEvent = TrustedOriginMessageEvent;
