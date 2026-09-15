@@ -1,12 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { FileSink } from '../logging/FileSink.js';
 
+// Keep fixtures under the test process's workspace and clean the root after
+// the file completes. Production FileSink paths come from VS Code's private
+// global storage, not the shared OS temp directory.
+const TEST_ROOT = await fs.mkdtemp(path.join(process.cwd(), '.file-sink-test-'));
+test.after(async () => { await fs.rm(TEST_ROOT, { recursive: true, force: true }); });
+
 async function tmpdir(): Promise<string> {
-  return await fs.mkdtemp(path.join(os.tmpdir(), 'ditto-fs-'));
+  return await fs.mkdtemp(path.join(TEST_ROOT, 'case-'));
 }
 
 test('FileSink: writes lines to active log file', async () => {
@@ -239,7 +244,7 @@ test('FileSink: readTailLines does not corrupt multi-byte characters at a chunk 
 });
 
 test('FileSink: readTailLines on a missing log directory returns nothing', async () => {
-  const sink = new FileSink(path.join(os.tmpdir(), 'ditto-fs-does-not-exist-1234'), {});
+  const sink = new FileSink(path.join(TEST_ROOT, 'does-not-exist'), {});
   assert.deepEqual(await sink.readTailLines(10), []);
 });
 

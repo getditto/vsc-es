@@ -944,7 +944,7 @@ test('PresenceGraphElement: the copy icon copies the entire peer key and confirm
     if (original) { Object.defineProperty(navigator, 'clipboard', original); }
     else { Reflect.deleteProperty(navigator, 'clipboard'); }
   });
-  const key = 'abcdef0123456789'.repeat(8);
+  const key = 'fixture peer key for copy '.repeat(8);
   const el = await mountFocused();
   t.after(() => el.remove());
   // Keep the graph key and card record consistent, as a real snapshot does.
