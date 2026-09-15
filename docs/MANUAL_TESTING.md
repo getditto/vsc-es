@@ -64,6 +64,9 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 **Steps:**
 1. Press `F5`.
 2. Click `＋` in the Connections view title bar.
+   Confirm the form renders (not a persistent loading message), then Cancel.
+   Run **Ditto: Register Database…** from the Command Palette and confirm the
+   same form renders before continuing.
 3. With Server selected, fill in `Name` = "test-cloud", `Database ID` = your real Ditto Database ID, `Token` = your Development Token, `URL` = your app URL from the Portal.
 4. Click Save.
 
@@ -82,6 +85,12 @@ If you see `SPIKE: failed: …` followed by a stack trace, the SDK is not loadin
 
 **Small Peers Only mode:**
 10. Repeat with Small Peers Only — confirm only the Optional Shared Secret Key section is visible (no URL field).
+
+**Automated transport regression check:** `npm run test:integration:load`
+opens the registration command and loads the bundled editor in a real VS Code
+webview, sends `editor.init`, edits a field, and verifies the Save message.
+This runs without database credentials; the connection/edit/delete flows above
+still require manual verification.
 
 ### T4a · Advanced configuration and collection sync scopes
 

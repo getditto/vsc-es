@@ -13,47 +13,26 @@ export function postToHost<T>(msg: T): void {
 }
 
 /**
- * Subscribe to messages posted by the extension host.
+ * VS Code's outer webview frame forwards messages to the same-origin inner
+ * frame. Its injected API hides the outer window by setting window.parent
+ * and window.top to window before our scripts run. A source === parent
+ * check therefore rejects legitimate host messages. Validate the exact
+ * origin instead, retaining the desktop and browser-hosted scheme limits.
  *
- * Returns a disposer that MUST be called from the subscriber's
- * `disconnectedCallback`. Elements are registered in `connectedCallback`,
- * which runs again on every re-attach (and VS Code moves webview panels
- * between editor groups), so without the disposer each move leaves another
- * live handler holding a reference to the old element — every subsequent
- * host message is then processed once per past mount.
- */
-/**
- * Schemes a host message may legitimately arrive from.
- *
- * VS Code serves webview content from `vscode-webview://<uuid>` on the
- * desktop, but from an https origin when the editor is itself running in a
- * browser (Codespaces, a remote workspace opened over the web). Both are the
- * editor talking to its own webview, so both are trusted; the check exists to
- * reject everything else — `file:`, `http:`, `data:`, a null origin.
- *
- * Deliberately matched by scheme rather than by full origin: the uuid host is
- * generated per webview and the browser-hosted origin varies by deployment,
- * so pinning an exact value would break panels in exactly the environments
- * hardest to test in.
- *
- * This is defence in depth, not the primary control. The panels' CSP is
- * `default-src 'none'` with nonce-gated scripts and no `frame-src`, so there
- * is no way to embed a frame or run injected script that could post here in
- * the first place — see `panelHtml` in src/panels/webview-utils.ts.
+ * See getVsCodeApiScript and the 'message' forwarding handler in:
+ * https://github.com/microsoft/vscode/blob/1.106.0/src/vs/workbench/contrib/webview/browser/pre/index.html
+ * The nonce-gated panel CSP also prevents untrusted scripts/frames loading.
  */
 const TRUSTED_ORIGIN_SCHEMES = ['vscode-webview:', 'https:'];
 
-export function isTrustedHostOrigin(origin: string): boolean {
-  return TRUSTED_ORIGIN_SCHEMES.some(scheme => origin.startsWith(scheme));
+export function isTrustedHostOrigin(origin: string, expectedOrigin: string): boolean {
+  return origin === expectedOrigin
+    && TRUSTED_ORIGIN_SCHEMES.some(scheme => origin.startsWith(scheme));
 }
 
 function onHostMessage<T>(handler: (msg: T) => void): () => void {
   const listener = (e: MessageEvent): void => {
-    // The extension host is the direct parent of every webview. Checking the
-    // source as well as its origin prevents another same-scheme document from
-    // impersonating the host, while still supporting desktop and browser-hosted
-    // VS Code where the concrete origin is assigned at runtime.
-    if (e.source !== window.parent || !isTrustedHostOrigin(e.origin)) { return; }
+    if (!isTrustedHostOrigin(e.origin, window.origin)) { return; }
     handler(e.data as T);
   };
   window.addEventListener('message', listener);

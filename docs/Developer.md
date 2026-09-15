@@ -222,6 +222,13 @@ message is handled once per past mount. Both sides should pattern-match on
 (`src/panels/webview-utils.ts`) so a rejected promise surfaces as an error
 toast instead of a silent no-op.
 
+The shared webview receiver validates the message's exact origin against
+`window.origin`. Do not compare `event.source` to `window.parent`: VS Code's
+injected API sets `window.parent = window`, while messages come from the
+outer frame. That comparison broke all host-to-webview messages during 0.9.5 validation.
+The jsdom harness models these distinct windows, and the load integration
+suite exercises the bundled registration form over the real VS Code transport.
+
 ### 4.5 Tree
 
 `DatabaseTreeProvider` implements `TreeDataProvider<DatabaseTreeNode>`.
