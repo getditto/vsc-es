@@ -599,7 +599,7 @@
   "dependencies": {
     "@dittolive/ditto": "5.1.0",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "zod": "3.25.76"
+    "zod": "4.4.3"
   },
   "overrides": {
     "brace-expansion@1": "1.1.18",
