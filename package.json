@@ -217,6 +217,10 @@
         "title": "Ditto: Export Logs for Bug Report…"
       },
       {
+        "command": "dittoVsce.collectSupportBundle",
+        "title": "Ditto: Collect Support Bundle (dial9)…"
+      },
+      {
         "command": "dittoVsce.showLogFile",
         "title": "Ditto: Show Log File in Finder"
       },

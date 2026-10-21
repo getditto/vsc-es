@@ -25,6 +25,7 @@ import { ObserverPanel } from './panels/ObserverPanel.js';
 import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
+import { SupportBundleService } from './ditto/SupportBundleService.js';
 import { CollectionsRepository } from './ditto/CollectionsRepository.js';
 import { isBareIdentifier, quoteIdentifier } from './ditto/dql-identifier.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
@@ -1187,6 +1188,61 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       const combined = await logger.readAllLogs();
       const doc = await vscode.workspace.openTextDocument({ language: 'log', content: combined });
       await vscode.window.showTextDocument(doc);
+    }),
+    vscode.commands.registerCommand('dittoVsce.collectSupportBundle', async () => {
+      if (!manager.getActiveConfigId()) {
+        void vscode.window.showWarningMessage(
+          'Connect to a database first, then run the query you want to diagnose before collecting a support bundle.',
+        );
+        return;
+      }
+
+      // Ask whether to run a query for trace collection, or capture
+      // the current state as-is. Running a query fills the dial9 ring
+      // buffer with task-level trace data for that workload.
+      const choice = await vscode.window.showInformationMessage(
+        'Collect a support bundle with dial9 trace data for Ditto support. ' +
+        'For best results, run the slow query first so the trace captures it.',
+        { modal: true },
+        'Collect Now',
+        'Cancel',
+      );
+      if (choice !== 'Collect Now') { return; }
+
+      const service = new SupportBundleService(manager, logger);
+      try {
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Collecting support bundle',
+            cancellable: false,
+          },
+          async (progress) => {
+            return service.collect(undefined, {
+              report: (msg, inc) => {
+                const opts: { message: string; increment?: number } = { message: msg };
+                if (inc !== undefined) { opts.increment = inc; }
+                progress.report(opts);
+              },
+            });
+          },
+        );
+        if (result) {
+          const sizeMB = (result.compressedBytes / (1024 * 1024)).toFixed(1);
+          void vscode.window.showInformationMessage(
+            `Support bundle saved (${sizeMB} MB). Share ${result.savedPath} with Ditto support.`,
+            'Reveal in Finder',
+          ).then(action => {
+            if (action === 'Reveal in Finder') {
+              void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(result.savedPath));
+            }
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.withTag('ext:SupportBundle').error('Support bundle collection failed', { error: msg });
+        void vscode.window.showErrorMessage(`Support bundle collection failed: ${msg}`);
+      }
     }),
     vscode.commands.registerCommand('dittoVsce.showLogFile', () => {
       vscode.commands.executeCommand(
