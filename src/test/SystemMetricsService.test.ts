@@ -35,6 +35,13 @@ function histogramRow(key: string, dcount: number, dsum: number, labels: Record<
   return { key, labels, level: 'info', unit: 'seconds', description: `${key} desc`, count: 1, sum: 1, abs_max: 5, dcount, dsum, dabs_max: 1 };
 }
 
+/** Gauge rows share the counter row shape (`current`/`updates`/`delta`);
+ *  what makes them gauges is the KEY matching the SDK's static gauge
+ *  declarations — see KNOWN_GAUGE_KEYS in the service. */
+function gaugeRow(key: string, current: number, delta: number, labels: Record<string, string> = {}): Record<string, unknown> {
+  return { key, labels, level: 'info', unit: 'count', description: `${key} desc`, current, updates: 1, delta };
+}
+
 function makeService(opts: {
   rows?: () => Promise<Record<string, unknown>[]> | never;
   readEnabled?: () => boolean;
@@ -97,6 +104,76 @@ test('accumulateMetricRows histograms accumulate dcount/dsum and track the lates
   assert.equal(s.periodDelta, 2);
   assert.equal(s.sumSinceConnect, 0.02, 'dsum accumulates');
   assert.equal(s.absMax, 5);
+});
+
+test('accumulateMetricRows gauges track the absolute current value, never a delta sum', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  // awdl.interface_up goes 0 → 1 → 1: a delta-accumulating read would
+  // show 1 (lucky) then 1 (correct by accident); the sequence below is
+  // the discriminating one — 1 → 0 → 1 must read 1, not 2.
+  accumulateMetricRows(samples, [gaugeRow('ditto.transport.awdl.interface_up', 1, 1)]);
+  accumulateMetricRows(samples, [gaugeRow('ditto.transport.awdl.interface_up', 0, -1)]);
+  accumulateMetricRows(samples, [gaugeRow('ditto.transport.awdl.interface_up', 1, 1)]);
+  const s = [...samples.values()];
+  assert.equal(s.length, 1);
+  assert.equal(s[0]?.kind, 'gauge');
+  assert.equal(s[0]?.sinceConnect, 1, 'absolute current value, not sum-of-deltas (2)');
+  assert.equal(s[0]?.periodDelta, 1);
+});
+
+test('accumulateMetricRows gauges keep negative periodDelta (value went down)', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [gaugeRow('ditto.network.connections', 3, 3)]);
+  accumulateMetricRows(samples, [gaugeRow('ditto.network.connections', 1, -2)]);
+  const s = [...samples.values()][0];
+  assert.equal(s?.kind, 'gauge');
+  assert.equal(s?.sinceConnect, 1, 'current absolute value');
+  assert.equal(s?.periodDelta, -2, 'negative delta preserved for the ▼ indicator');
+});
+
+test('accumulateMetricRows gauge prefix families match (quic udp child keys)', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [
+    gaugeRow('ditto.network.quic.udp_tx.bytes', 4096, 512, { remote: '10.0.0.2' }),
+    gaugeRow('ditto.network.quic.path.rtt', 0.045, 0.005, { remote: '10.0.0.2' }),
+    gaugeRow('ditto.multiplexer.phy.last_sent_at', 1761000000, 5, { transport_type: 'awdl' }),
+  ]);
+  const kinds = [...samples.values()].map(s => s.kind);
+  assert.deepEqual(kinds, ['gauge', 'gauge', 'gauge']);
+});
+
+test('accumulateMetricRows gauge row missing current keeps the last-known value', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [gaugeRow('ditto.transport.awdl.interface_up', 1, 1)]);
+  // Exporter always emits `current`, but if a row ever lacks it the
+  // sample must not reset to 0.
+  accumulateMetricRows(samples, [{ key: 'ditto.transport.awdl.interface_up', labels: {}, delta: 0 }]);
+  const s = [...samples.values()][0];
+  assert.equal(s?.sinceConnect, 1);
+});
+
+test('accumulateMetricRows first-seen gauge without current starts at 0', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [{ key: 'ditto.network.connections', labels: {}, delta: 2 }]);
+  const s = [...samples.values()][0];
+  assert.equal(s?.kind, 'gauge');
+  assert.equal(s?.sinceConnect, 0, 'no current to track — do not fall back to delta');
+});
+
+test('accumulateMetricRows does not misclassify lookalike counter keys as gauges', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [
+    // New 5.2 counters whose prefixes sit near gauge families.
+    counterRow('ditto.network.peers.discovered_count', 7),
+    counterRow('ditto.network.dsoq.connection.opened', 3),
+    // A key that merely STARTS WITH a gauge key (not a prefix entry).
+    counterRow('ditto.network.connections.total', 9),
+    // Prefix entries end with '.' so 'ditto.network.quic.udp_tx' itself
+    // (no trailing segment) is not a match.
+    counterRow('ditto.network.quic.udp_tx', 4),
+  ]);
+  const kinds = [...samples.values()].map(s => s.kind);
+  assert.deepEqual(kinds, ['counter', 'counter', 'counter', 'counter']);
 });
 
 test('accumulateMetricRows skips placeholder rows that carry no key', () => {

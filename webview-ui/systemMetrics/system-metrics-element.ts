@@ -32,12 +32,13 @@ type In = SysMetricsOut;
 
 // ─── Namespace segment filter (parity with the SwiftUI app's
 //     SystemMetricsNamespaceFilter) ─────────────────────────────
-type NamespaceFilter = 'all' | 'network' | 'store' | 'sync' | 'other';
+type NamespaceFilter = 'all' | 'network' | 'store' | 'query' | 'sync' | 'other';
 
 const SEGMENTS: ReadonlyArray<{ id: NamespaceFilter; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'network', label: 'Network' },
   { id: 'store', label: 'Store' },
+  { id: 'query', label: 'Query' },
   { id: 'sync', label: 'Sync' },
   { id: 'other', label: 'Other' },
 ];
@@ -45,6 +46,7 @@ const SEGMENTS: ReadonlyArray<{ id: NamespaceFilter; label: string }> = [
 const NAMESPACE_PREFIXES: ReadonlyArray<readonly [NamespaceFilter, readonly string[]]> = [
   ['network', ['ditto.network.']],
   ['store', ['ditto.backend.']],
+  ['query', ['ditto.query.']],
   ['sync', ['ditto.sync.', 'ditto.replication.']],
 ];
 
@@ -90,9 +92,26 @@ function formatDuration(n: number): string {
   return `${n.toFixed(2)} s`;
 }
 
-/** Headline value: histograms accumulate a COUNT of observations;
- *  seconds-unit counters scale for readability. */
+/** Gauge keys whose value is a Unix-epoch timestamp (seconds) — render as
+ *  an age ("12s ago") rather than a raw epoch or a duration. Sourced from
+ *  the SDK's `phy.last_sent_at`/`phy.last_received_at` declarations. */
+function isEpochGauge(s: SystemMetricSample): boolean {
+  return s.kind === 'gauge' && s.unit === 'seconds' && s.key.endsWith('_at');
+}
+
+function formatEpochAge(epochSeconds: number): string {
+  if (epochSeconds <= 0) { return 'never'; }
+  const ageSec = Math.max(0, Date.now() / 1000 - epochSeconds);
+  if (ageSec < 60) { return `${Math.round(ageSec)}s ago`; }
+  if (ageSec < 3600) { return `${Math.round(ageSec / 60)}m ago`; }
+  return `${Math.round(ageSec / 3600)}h ago`;
+}
+
+/** Headline value: histograms accumulate a COUNT of observations; gauges
+ *  show their latest absolute value (epoch timestamps as an age, seconds
+ *  as durations); seconds-unit counters scale for readability. */
 function formatHeadline(s: SystemMetricSample): string {
+  if (isEpochGauge(s)) { return formatEpochAge(s.sinceConnect); }
   if (s.kind === 'histogram') { return formatValue(s.sinceConnect); }
   return s.unit === 'seconds' ? formatDuration(s.sinceConnect) : formatValue(s.sinceConnect);
 }
@@ -292,6 +311,7 @@ export class SystemMetricsElement extends LitElement {
       color: var(--vscode-descriptionForeground);
     }
     .mdelta.up { color: var(--vscode-testing-iconPassed, #73c991); }
+    .mdelta.down { color: var(--vscode-testing-iconFailed, #f14c4c); }
 
     .pin-btn, .info-btn {
       flex-shrink: 0;
@@ -756,8 +776,12 @@ export class SystemMetricsElement extends LitElement {
           </div>
           <div class="mvals">
             <div class="mval">${formatHeadline(s)}</div>
-            <div class="mdelta ${s.periodDelta > 0 ? 'up' : ''}">
-              ${s.periodDelta > 0 ? html`▲ +${formatDelta(s)}` : html`—`}
+            <div class="mdelta ${s.periodDelta > 0 ? 'up' : s.periodDelta < 0 ? 'down' : ''}">
+              ${s.periodDelta > 0
+                ? html`▲ +${formatDelta(s)}`
+                : s.periodDelta < 0
+                  ? html`▼ −${formatDelta({ ...s, periodDelta: -s.periodDelta })}`
+                  : html`—`}
             </div>
           </div>
           ${dragRef ? html`
@@ -783,7 +807,7 @@ export class SystemMetricsElement extends LitElement {
         ${s.description ? html`<p class="desc">${s.description}</p>` : nothing}
         <dl>
           <dt>Metric</dt><dd class="fullkey">${s.key}</dd>
-          <dt>Kind</dt><dd>${s.kind === 'histogram' ? 'Histogram' : 'Counter'}</dd>
+          <dt>Kind</dt><dd>${s.kind === 'histogram' ? 'Histogram' : s.kind === 'gauge' ? 'Gauge' : 'Counter'}</dd>
           ${s.unit ? html`<dt>Unit</dt><dd>${s.unit}</dd>` : nothing}
           ${avg !== undefined ? html`<dt>Avg since connect</dt><dd>${avg}</dd>` : nothing}
           ${max !== undefined ? html`<dt>Abs max</dt><dd>${max}</dd>` : nothing}

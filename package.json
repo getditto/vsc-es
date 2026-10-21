@@ -217,6 +217,10 @@
         "title": "Ditto: Export Logs for Bug Report…"
       },
       {
+        "command": "dittoVsce.exportSdkLogs",
+        "title": "Ditto: Export SDK Logs (gzip)…"
+      },
+      {
         "command": "dittoVsce.collectSupportBundle",
         "title": "Ditto: Collect Support Bundle (dial9)…"
       },

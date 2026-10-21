@@ -14,8 +14,11 @@ poll ahead of that cadence.
 
 Every metric series reported by the SDK renders as a row: the metric name
 (with the `ditto.` prefix dropped) and its labels on the left, the
-since-connect total and the last poll period's delta (`▲ +N`, or `—` when
-nothing happened) on the right.
+since-connect total and the last poll period's delta (`▲ +N`, `▼ −N` for
+gauges whose value fell, or `—` when nothing happened) on the right.
+Gauge series (e.g. `transport.awdl.interface_up`,
+`multiplexer.phy.last_sent_at`) show their current absolute value instead
+of a running total; epoch-timestamp gauges render as an age (`12s ago`).
 
 The segment control filters rows by namespace:
 
@@ -30,6 +33,7 @@ The segment control filters rows by namespace:
 - **Sync** — replication state (`ditto.sync.*`, `ditto.replication.*`).
   Non-zero recovery counts mean sync sessions were torn down — check the
   `cause` label and the Log Analyzer.
+- **Query** — query-engine metrics (`ditto.query.*`, SDK 5.2+).
 - **Other** — anything outside those namespaces.
 - **All** — every reported series.
 
@@ -41,8 +45,8 @@ the Store namespace). The Pinned section is not affected by either filter —
 it is your stable set.
 
 The **ⓘ icon** on a row expands the series' details: the metric's
-description from the SDK registry, its kind (counter / histogram) and
-unit, the full metric name, and — for histograms — the average and
+description from the SDK registry, its kind (counter / gauge / histogram)
+and unit, the full metric name, and — for histograms — the average and
 absolute maximum since connect.
 
 ## Pinning

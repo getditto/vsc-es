@@ -1189,6 +1189,48 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
       const doc = await vscode.workspace.openTextDocument({ language: 'log', content: combined });
       await vscode.window.showTextDocument(doc);
     }),
+    vscode.commands.registerCommand('dittoVsce.exportSdkLogs', async () => {
+      if (!manager.getActiveConfigId()) {
+        void vscode.window.showWarningMessage(
+          'Connect to a database first — SDK logs are exported from the active Ditto instance.',
+        );
+        return;
+      }
+      const ok = await vscode.window.showWarningMessage(
+        'The exported SDK log may contain document data from your databases. Review before sharing.',
+        { modal: true },
+        'Export',
+      );
+      if (ok !== 'Export') { return; }
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const suggested = `ditto-sdk-logs-${timestamp}.jsonl.gz`;
+      const target = await vscode.window.showSaveDialog({
+        defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri
+          ? vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, suggested)
+          : vscode.Uri.file(suggested),
+        filters: { 'Compressed JSON Lines': ['jsonl.gz'] },
+        saveLabel: 'Export SDK Logs',
+      });
+      if (!target) { return; }
+
+      try {
+        const bytesWritten = await DittoLogger.exportToFile(target.fsPath);
+        const sizeMB = (bytesWritten / (1024 * 1024)).toFixed(1);
+        void vscode.window.showInformationMessage(
+          `SDK logs exported (${sizeMB} MB). Share ${target.fsPath} with Ditto support.`,
+          'Reveal in Finder',
+        ).then(action => {
+          if (action === 'Reveal in Finder') {
+            void vscode.commands.executeCommand('revealFileInOS', target);
+          }
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.withTag('ext:exportSdkLogs').error('SDK log export failed', { error: msg });
+        void vscode.window.showErrorMessage(`SDK log export failed: ${msg}`);
+      }
+    }),
     vscode.commands.registerCommand('dittoVsce.collectSupportBundle', async () => {
       if (!manager.getActiveConfigId()) {
         void vscode.window.showWarningMessage(

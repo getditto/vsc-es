@@ -39,7 +39,7 @@ import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, isAdviseStatement } from './QueryProfileParser.js';
-import { withSystemMetricsEnv, readCollectSystemMetrics } from './SystemMetricsService.js';
+import { readCollectSystemMetrics } from './SystemMetricsService.js';
 import { projectQueryRows } from './query-projection.js';
 import { installSessionLogObservers } from './session-log-observers.js';
 import { startSyncWithCollectionScopes } from './sync-scopes.js';
@@ -193,6 +193,21 @@ export class DittoManager {
       const persistenceDir = path.join(this.context.globalStorageUri.fsPath, 'dittoData', config.id);
       fs.mkdirSync(persistenceDir, { recursive: true });
 
+      // Startup-gated system parameters are passed via the SDK's native
+      // `systemParameters` constructor arg (SDK 5.2+), which applies them
+      // before subsystems initialize. This replaces the previous
+      // `withSystemMetricsEnv` env-var workaround — the SDK validates
+      // parameter names and values at open time.
+      //
+      // Currently sets:
+      // - `metrics_exporter_virtual_collection_enabled`: gates the
+      //   system:metrics virtual collection (default false; runtime
+      //   ALTER SYSTEM is ignored).
+      const systemParams: Record<string, string | number | boolean> = {};
+      if (readCollectSystemMetrics()) {
+        systemParams.metrics_exporter_virtual_collection_enabled = true;
+      }
+
       const dittoCfg = new DittoConfig(
         config.databaseId,
         config.mode === 'server'
@@ -203,7 +218,8 @@ export class DittoManager {
               // string | null; treat empty/undefined as "no shared key".
               privateKey: secrets.secretKey || null,
             },
-        persistenceDir
+        persistenceDir,
+        systemParams,
       );
 
       // Apply per-DB SDK log level before opening the SDK. `config.logLevel`
@@ -218,16 +234,7 @@ export class DittoManager {
 
       let ditto: Ditto;
       try {
-        // The system:metrics exporter is a startup-gated system parameter
-        // (`metrics_exporter_virtual_collection_enabled`, default false;
-        // runtime ALTER SYSTEM is ignored). The SDK reads it from the
-        // DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED env var at open,
-        // so when the dittoVsce.collectSystemMetrics setting is on we flip
-        // the var just around Ditto.open and restore it after. Process-wide
-        // env caveat (another Ditto SDK in the same host would also see it)
-        // is accepted and documented in SystemMetricsService — this
-        // extension is the only SDK host in its process.
-        ditto = await withSystemMetricsEnv(readCollectSystemMetrics(), () => Ditto.open(dittoCfg));
+        ditto = await Ditto.open(dittoCfg);
       } catch (openErr) {
         // The SDK uses an OS-level advisory lock on `__ditto_lock_file` inside
         // the working directory; the file itself is an empty placeholder. When
