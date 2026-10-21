@@ -134,11 +134,16 @@ The view has four parts:
   209 ns parse renders as `209 ns`, a 432 ms elapsed as `432.43 ms`.
 - **Execution plan** — a `Card` / `Plan` sub-toggle:
   - **Card** mode lists each operator as a card with coloured
-    `in / out / exec / recv / send` badges.
+    `in / out / exec / recv / send` badges. SDK 5.1+ adds `stor`
+    (time blocked on the store backend — teal), `yields`
+    (cooperative scheduler yield counters — gray), and
+    `skipped` (documents skipped without being emitted — gray).
   - **Plan** mode draws the operators as a top-down boxes-and-lines
-    tree. Any operator that consumes **≥ 50 %** of plan CPU work is
-    flagged with an orange-dashed border — a non-colour cue that
-    survives red-green colour blindness.
+    tree. JOIN operators render their inner plan (`nlJoin.inner`)
+    as a labeled nested subtree. Any operator that consumes
+    **≥ 50 %** of plan CPU work is flagged with an orange-dashed
+    border — a non-colour cue that survives red-green colour
+    blindness.
 - **Legend** — explains the badge colours and the bottleneck border.
 
 Profile capture is **local-only** today; queries run on the HTTP path

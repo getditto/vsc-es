@@ -545,6 +545,7 @@ still require manual verification.
 5. Click **Ditto SDK Log Level** → choose `verbose`. SDK lines start showing more detail.
 6. Click **Export Logs for Bug Report…** → confirm modal warning → "Open in Editor" → new untitled doc opens, language `log`.
 7. Save the document somewhere — verify file roundtrips cleanly.
+8. Command Palette → **Ditto: Export SDK Logs (gzip)…** → confirm modal → save dialog → a `.jsonl.gz` is written; `gzip -dc` shows JSON-lines SDK records (distinct from the extension log in step 6). Covered in detail by T27.
 8. In **Help** panel: click each link, verify it opens the right URL in the system browser.
 9. Disconnect, then reconnect. Verify the SDK level reverts to the per-DB config default (not the live `verbose` we set).
 10. Lower channel level back to `info` via Logging panel; subsequent `debug`/`trace` lines stop appearing in the channel but **still appear in the file**.
@@ -621,14 +622,24 @@ activity.
 
 **Expected:**
 
-- The panel shows a centered segment control (All / Network / Store / Sync /
-  Other) over a row list — every reported series, not curated sections. Each
+- The panel shows a centered segment control (All / Network / Store / Query /
+  Sync / Other) over a row list — every reported series, not curated sections. Each
   row shows the metric name without the `ditto.` prefix, its labels, the
-  since-connect total, and the last period's delta (`▲ +N` or `—`).
+  since-connect total, and the last period's delta (`▲ +N`, `▼ −N` for
+  gauges whose value fell, or `—`).
 - The segment control filters by namespace: Network lists
   `ditto.network.dsoq.*` rows, Store the `ditto.backend.*` rows (labelled
-  by `db` role), Sync the `ditto.replication.*` rows, Other anything
-  outside those. An empty namespace says "No metrics in this namespace."
+  by `db` role), Query the `ditto.query.*` rows (SDK 5.2), Sync the
+  `ditto.replication.*` rows, Other anything outside those. An empty
+  namespace says "No metrics in this namespace."
+- **Gauges (SDK 5.2):** find `network.connections` (or, on an Apple host
+  with AWDL enabled, `transport.awdl.interface_up`) → the row shows the
+  CURRENT absolute value (not a growing sum) and the details pane (ⓘ)
+  labels the kind as "Gauge". On Apple hosts,
+  `multiplexer.phy.last_sent_at` / `last_received_at` render as an age
+  ("12s ago"), and a series that has never fired renders "never". Force a
+  decreasing gauge (drop a peer connection and watch
+  `network.connections`) → the delta renders as a red `▼ −N`.
 - Clicking a row's **ⓘ icon** expands its details: description, kind, unit,
   the full metric name, and for histograms the average and absolute max
   since connect; clicking again collapses it, and several rows can stay
@@ -800,8 +811,7 @@ mode) for the last steps.
     stops immediately. Where the checkbox lives is the *only* enable switch:
     there is no global "always on" setting to hunt down.
 12. **Observability:** Command Palette → **Ditto: MCP Server Status** shows
-    running state, URL, session count, the active connection's flag, and the
-    last start error. In the **Log Analyzer** (or the "Ditto Edge Studio"
+    running state, URL, session count, the active connection's flag, and the    last start error. In the **Log Analyzer** (or the "Ditto Edge Studio"
     output channel), filter tag `mcp`: `starting` / `started` / `stopped`
     and one `client session initialized` per agent connection appear at INFO;
     a start failure appears at ERROR and as a Log Analyzer **problem row**
@@ -815,6 +825,64 @@ mode) for the last steps.
 - Credentials never appear in any tool output.
 - Everything works entirely on loopback — disable Wi-Fi mid-session and
   `execute_dql` against the local store still succeeds.
+
+### T26 · Support bundle collection (SDK 5.2 dial9)
+
+**Pre-conditions:** A connected database (T5). macOS or Linux preferred —
+`ditto.transport.awdl.*` metrics only exist on Apple hosts, but the bundle
+flow itself works everywhere.
+
+**Steps:**
+
+1. Run a slow-ish SELECT in the Query Editor a few times (so the dial9 ring
+   buffer has task-trace content), then Command Palette → **Ditto: Collect
+   Support Bundle (dial9)…**.
+2. Confirm the modal explains the flow → **Collect Now** → a progress
+   notification walks through "Requesting support bundle… → Downloading… →
+   Compressing…".
+3. Save dialog suggests `ditto-support-bundle-<timestamp>.tar.gz` → save it.
+4. The success toast reports the compressed size and offers **Reveal in
+   Finder** → click it; the file is highlighted.
+5. `tar -tzf <file>` lists the bundle entries — expect `dial9/` and log
+   entries. Extract `dial9/dial9.bin.gz`; it should be non-empty gzip.
+6. Re-run the command and cancel at the save dialog → nothing is written,
+   no error toast.
+7. With NO connection active, run the command → a warning explains you must
+   connect first; nothing else happens.
+8. Fire the command several times in quick succession → the SDK rate-limits
+   (~3 per 10 min); the error surfaces as a toast, not a crash.
+
+**Expected:**
+
+- The saved `.tar.gz` round-trips (`tar -xzf` works) and contains a
+  non-empty `dial9/dial9.bin.gz`.
+- No stuck progress notification after cancel/error paths.
+
+### T27 · SDK log export (SDK 5.2 `Logger.exportToFile`)
+
+**Pre-conditions:** A connected database (T5).
+
+**Steps:**
+
+1. Command Palette → **Ditto: Export SDK Logs (gzip)…** → confirm the
+   modal document-data warning → **Export**.
+2. Save dialog suggests `ditto-sdk-logs-<timestamp>.jsonl.gz` → save.
+3. Toast reports the size and offers **Reveal in Finder**.
+4. `gzip -dc <file> | head -5` → JSON-lines log records (one JSON object
+   per line, newest SDK internals included — this is the SDK's own ring
+   buffer, NOT the extension's `ditto-edge-studio.log`).
+5. Re-run and cancel at the save dialog → nothing written.
+6. Disconnect, then run the command → warning that a connection is
+   required; no dialog.
+7. Run the export twice to the SAME directory (letting the timestamp
+   differ) → both succeed. (The SDK refuses an existing path; the
+   timestamped suggestion avoids that collision in practice.)
+
+**Expected:**
+
+- The `.jsonl.gz` decompresses to newline-delimited JSON log records.
+- Errors (no connection, unwritable path) surface as toasts and are logged
+  with tag `ext:exportSdkLogs`.
 
 ## Troubleshooting
 

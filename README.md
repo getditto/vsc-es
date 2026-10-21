@@ -23,8 +23,10 @@ without leaving VS Code.
   documents.
 - **Query profiling** — visualize Ditto's `PROFILE` execution plan as nested
   cards or a top-down tree, with per-operator timing, doc throughput, and
-  bottleneck highlighting. Captured automatically on local SELECTs when
-  enabled.
+  bottleneck highlighting. Renders the SDK 5.1/5.2 fields too: store-backend
+  wait time (`stor`), scheduler yield counters, skipped-document counts, and
+  JOIN inner subplans as labeled subtrees. Captured automatically on local
+  SELECTs when enabled.
 - **Profiling + metrics gates** — a settings cog (⚙) in the Query Editor
   toolbar toggles profiling and metrics collection on or off. When off, the
   matching tabs disappear and the per-query SDK overhead is skipped. Bound
@@ -79,6 +81,18 @@ without leaving VS Code.
   Quickstarts**, the **Welcome** view → **Get Quickstarts** card, and the
   Command Palette → **Ditto: Get Quickstarts…**. Requires `git` on your
   PATH.
+- **Support bundle collection (dial9)** — Command Palette → **Ditto:
+  Collect Support Bundle (dial9)…** captures the SDK's diagnostic bundle
+  over the active connection: Tokio task traces (`dial9`), SDK logs, and
+  store diagnostics, delivered as a single `.tar.gz` you can attach to a
+  Ditto support ticket. For a slow-query investigation, run the query
+  first so the trace window covers it. Requires Ditto SDK 5.2+.
+- **SDK log export** — Command Palette → **Ditto: Export SDK Logs
+  (gzip)…** writes the Ditto SDK's own internal ring-buffer logs (Debug
+  level and up, independent of the configured SDK log level) to a
+  compressed `.jsonl.gz` file — the payload support asks for when the
+  extension's own logs aren't deep enough. Requires an active connection;
+  Ditto SDK 5.2+.
 
 ## Requirements
 

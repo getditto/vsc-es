@@ -734,16 +734,17 @@ The Observers feature lets users register a DQL query and watch it fire in real 
 
 ---
 
-## 14. SDK 5.1: system:metrics and ADVISE
+## 14. SDK 5.1/5.2: system:metrics, ADVISE, debug socket, support bundles
 
 ### 14.1 System metrics (system:metrics)
 
 System Metrics is its own screen (`src/panels/SystemMetricsPanel.ts`, `webview-ui/systemMetrics/`), fed by SDK 5.1's `system:metrics` DQL virtual collection. It split out of the Database Metrics panel in 0.9.5 because its data model is the inverse of that panel's: Database Metrics is an on-demand point snapshot (expensive filesystem walk behind an explicit Refresh), while `system:metrics` must poll continuously to mean anything. The two therefore sit as separate rows in the database tree — Database Metrics, then System Metrics, then Log Analyzer.
 
-- **Startup-gated exporter.** The `metrics_exporter_virtual_collection_enabled` system parameter defaults to false and runtime `ALTER SYSTEM` changes are ignored — it's read once at open. The extension enables it for its own instances via the `DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED` env var, set only around `Ditto.open` and restored afterwards (`withSystemMetricsEnv` in `src/ditto/SystemMetricsService.ts`). Setting: `dittoVsce.collectSystemMetrics` (default **on**, mirroring `collectProfiling`/`collectMetrics` — this is a dev tool and Info-level metrics are cheap). Two accepted caveats, documented at the helper: the env var is process-wide (harmless when we're the only SDK host in the process), and the exporter is itself a process-wide `OnceLock`, so once enabled it stays enabled for later opens in the same process.
+- **Startup-gated exporter.** The `metrics_exporter_virtual_collection_enabled` system parameter defaults to false and runtime `ALTER SYSTEM` changes are ignored — it's read once at open. Since SDK 5.2 the extension passes it through `DittoConfig`'s fourth constructor arg `systemParameters` (validated by the SDK at open); pre-5.2 the extension flipped the `DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED` env var around `Ditto.open`, and `withSystemMetricsEnv` in `src/ditto/SystemMetricsService.ts` survives as a test-only helper exercising that path. Setting: `dittoVsce.collectSystemMetrics` (default **on**, mirroring `collectProfiling`/`collectMetrics` — this is a dev tool and Info-level metrics are cheap). One accepted caveat, documented at the helper: the exporter is a process-wide `OnceLock`, so once enabled it stays enabled for later opens in the same process.
 - **Flush-on-read.** Every `SELECT * FROM system:metrics` FLUSHES the registry: counter rows carry per-read `delta`, histogram rows `dcount`/`dsum`. Last-read rendering is therefore meaningless — `SystemMetricsService` polls (5 s) only while the panel is visible and accumulates deltas into since-connect running totals keyed by metric + sorted labels. Rows with no `key` are the exporter's `{status: "disabled"}` placeholder — `isExporterDisabledRows` detects it so the webview shows "enable the setting and reconnect" guidance instead of a dead table. Server-side GC can drop idle series; our accumulated totals simply stop growing for them.
+- **Gauges (SDK 5.2, #NETW-1989).** The exporter emits no kind marker — counters and gauges share the `current`/`updates`/`delta` row shape — so `parseMetricRow` matches keys against the SDK's static `gauge!(…)` declarations (`KNOWN_GAUGE_KEYS`: `network.connections`, `quic.path.rtt/mtu`, the `udp_tx/rx` families, the dsoq callback-queue depths, `multiplexer.phy.last_*_at`, `multiplexer.virt.connections_gauge`, `transport.awdl.interface_up`). Gauge series TRACK the absolute `current` instead of accumulating deltas (a delta-sum of `interface_up` is nonsense), keep the signed `delta` as `periodDelta` (the webview renders negatives as a red ▼), and epoch-timestamp gauges render as an age ("12s ago"). A missed gauge key fails soft — it renders as a counter, cosmetically wrong but harmless. When the SDK adds gauges, add them to `KNOWN_GAUGE_KEYS`.
 - **Wire shape.** `SysMetricsOut.sysMetrics.status` carries an explicit `SystemMetricsStatus` union (`working` / `settingDisabled` / `exporterDisabled` / `noConnection` / `unavailable`); `SysMetricsIn.sysMetrics.refresh` forces one immediate poll ahead of the cadence — see `src/ipc/messages.ts`. A mid-switch guard (`isExpectedActive`) discards polls that span a connection switch so another database's deltas never land in this panel's totals.
-- **Dashboard** (`webview-ui/systemMetrics/system-metrics-element.ts`): parity with the SwiftUI Edge Studio's System Metrics screen — a centered namespace segment filter (All / Network `ditto.network.*` / Store `ditto.backend.*` / Sync `ditto.sync.*`+`ditto.replication.*` / Other) over EVERY reported series, each rendered as a row (prefix-stripped key + labels left; since-connect total and last-period delta right), the dsoq opened-vs-closed divergence banner, and a since/updated footer. A per-row info icon expands the series details (description, kind, unit; histograms also average and absolute max), and a per-row pin icon collects the series in a collapsible "Pinned" section above the filter; pins persist per connection in `globalState` (`src/storage/system-metrics-pins.ts`, wholesale `sysMetrics.setPins` replacements) so they survive panel closes and reconnects.
+- **Dashboard** (`webview-ui/systemMetrics/system-metrics-element.ts`): parity with the SwiftUI Edge Studio's System Metrics screen — a centered namespace segment filter (All / Network `ditto.network.*` / Store `ditto.backend.*` / Query `ditto.query.*` (SDK 5.2, #QE-1155) / Sync `ditto.sync.*`+`ditto.replication.*` / Other) over EVERY reported series, each rendered as a row (prefix-stripped key + labels left; since-connect total and last-period delta right), the dsoq opened-vs-closed divergence banner, and a since/updated footer. A per-row info icon expands the series details (description, kind, unit; histograms also average and absolute max), and a per-row pin icon collects the series in a collapsible "Pinned" section above the filter; pins persist per connection in `globalState` (`src/storage/system-metrics-pins.ts`, wholesale `sysMetrics.setPins` replacements) so they survive panel closes and reconnects.
 - **Help:** `resources/help/systemMetrics.md` → rendered to `dist/webview-ui/help/systemMetrics.html` → loaded into the Inspector via `inspector.helpHtml`.
 
 ### 14.2 ADVISE in the Query Editor
@@ -783,6 +784,50 @@ connected, or even registered.
   app, possibly on another platform/container).
 - **History is session-only.** The last 50 runs are kept in the webview, newest first;
   nothing is persisted.
+
+### 14.4 Support bundles and SDK log export (SDK 5.2)
+
+Two command-palette diagnostics features ship the data Ditto support asks for.
+Both require an active connection and SDK 5.2+.
+
+- **Ditto: Collect Support Bundle (dial9)…** — `SupportBundleService`
+  (`src/ditto/SupportBundleService.ts`) mirrors benchy's
+  `collect-support-bundle.py` flow:
+  1. Optional load generation: loop a DQL query until ≥ 70 s of cumulative
+     execution time (`MIN_QUERY_SECONDS`, matches benchy) so the dial9 ring
+     buffer holds a meaningful profile of that workload. The command-palette
+     flow skips this — the user runs their slow query manually first.
+  2. `EXECUTE FUNCTION system_request_support_bundle()` assembles a `.tar`
+     (dial9 traces at `dial9/dial9.bin.gz`, device logs, store diagnostics)
+     and returns the bundle document; the newest `system:support_bundles`
+     row carries the `file` attachment token.
+  3. `store.fetchAttachment` (180 s timeout, timer cleared on settle so a
+     fast fetch can't leak the event loop) → `copyToPath` into a temp dir
+     (never `attachment.data()` — that would double the heap) → read once.
+  4. The tar is gzipped to `.tar.gz` and written via `showSaveDialog`.
+
+  Dial9 recording itself is startup-gated (`dial9_observability_level`
+  system parameter, default 1 = Lite; env alias
+  `DITTO_DIAL9_OBSERVABILITY_LEVEL`) — the service captures whatever is
+  already in the ring buffer and never starts/stops the recorder. Note the
+  SDK rate-limits `system_request_support_bundle` (~3 requests per 10 min
+  per store); surface the SDK's error rather than retrying.
+- **Ditto: Export SDK Logs (gzip)…** — `DittoLogger.exportToFile(path)`
+  writes the SDK's internal ring buffer (Debug+, ~15 MB / 15-day retention,
+  independent of `Logger.enabled`/`minimumLogLevel`) as `.jsonl.gz`. The
+  path must not already exist and only the MOST RECENTLY created Ditto
+  instance's logs are exported — hence the active-connection gate. Same
+  modal document-data warning as Export Logs; both flows offer Reveal in
+  Finder on success.
+
+### 14.5 Profiling fields (SDK 5.1/5.2)
+
+The profile parser and views track the SDK's `PROFILE` envelope growth:
+`phaseTimes.stor` (store-backend wait, teal badge), `#stats.yields`
+(cooperative scheduler yields, zero-dropped), `#stats.documentsSkipped`,
+and JOIN inner subplans (`nlJoin.inner`) rendered as labeled subtrees —
+`subtreeExecNs`/layout in `src/util/profilePlanLayout.ts` include subplan
+descendants so the ≥ 50 % bottleneck flag accounts for them.
 
 ---
 
