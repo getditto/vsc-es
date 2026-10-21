@@ -194,10 +194,16 @@ export class DittoManager {
       fs.mkdirSync(persistenceDir, { recursive: true });
 
       // Startup-gated system parameters are passed via the SDK's native
-      // `systemParameters` constructor arg (SDK 5.2+), which applies them
-      // before subsystems initialize. This replaces the previous
+      // `systemParameters` option (SDK 5.2+), which applies them before
+      // subsystems initialize. This replaces the previous
       // `withSystemMetricsEnv` env-var workaround — the SDK validates
       // parameter names and values at open time.
+      //
+      // NOTE: as of 5.2.0-rc.1 systemParameters are accepted ONLY via the
+      // DittoConfig options-object constructor; the 4th positional arg
+      // from the previews throws ("Pass systemParameters in a DittoConfig
+      // options object"). The positional 3-arg form still works but we
+      // need the options form for systemParameters.
       //
       // Currently sets:
       // - `metrics_exporter_virtual_collection_enabled`: gates the
@@ -208,9 +214,9 @@ export class DittoManager {
         systemParams.metrics_exporter_virtual_collection_enabled = true;
       }
 
-      const dittoCfg = new DittoConfig(
-        config.databaseId,
-        config.mode === 'server'
+      const dittoCfg = new DittoConfig({
+        databaseID: config.databaseId,
+        connect: config.mode === 'server'
           ? { mode: 'server', url: normalizeDittoServerUrl(config.authUrl) }
           : {
               mode: 'smallPeersOnly' as const,
@@ -218,9 +224,9 @@ export class DittoManager {
               // string | null; treat empty/undefined as "no shared key".
               privateKey: secrets.secretKey || null,
             },
-        persistenceDir,
-        systemParams,
-      );
+        persistenceDirectory: persistenceDir,
+        systemParameters: systemParams,
+      });
 
       // Apply per-DB SDK log level before opening the SDK. `config.logLevel`
       // is `SdkLogLevel` (lowercase 'warning'/'verbose'); the SDK runtime

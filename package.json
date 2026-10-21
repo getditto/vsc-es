@@ -605,7 +605,7 @@
     "typescript-eslint": "8.68.0"
   },
   "dependencies": {
-    "@dittolive/ditto": "5.2.0-preview.5",
+    "@dittolive/ditto": "5.2.0-rc.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     "zod": "3.25.76"
   },
