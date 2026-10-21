@@ -23,13 +23,14 @@ interface El extends HTMLElement {
  *  a `sequence` root over `indexScan` / `fetch` / `filter` leaves. */
 function op(
   name: string,
-  opts: { stats?: QueryProfileStats; attributes?: Array<{ key: string; value: string }>; children?: QueryProfileOperator[] } = {},
+  opts: { stats?: QueryProfileStats; attributes?: Array<{ key: string; value: string }>; children?: QueryProfileOperator[]; subplans?: Array<{ key: string; plan: QueryProfileOperator }> } = {},
 ): QueryProfileOperator {
   return {
     name,
     ...(opts.stats ? { stats: opts.stats } : {}),
     attributes: opts.attributes ?? [],
     children: opts.children ?? [],
+    subplans: opts.subplans ?? [],
   };
 }
 
@@ -159,8 +160,8 @@ test('ProfileViewer: populated profile renders header, summary, footer, legend',
   assert.match(footer, /f5e954d9-80f2-47a8-9a79-2829e767ba7b/);
   assert.match(footer, /completed/);
 
-  // Legend: five badge rows plus the hotspot swatch row.
-  assert.equal(root.querySelectorAll('.legend .legend-row').length, 6);
+  // Legend: nine badge rows plus the hotspot swatch row.
+  assert.equal(root.querySelectorAll('.legend .legend-row').length, 9);
   assert.ok(root.querySelector('.legend-swatch.hotspot-swatch'));
 
   // Card mode is the default.
@@ -362,4 +363,149 @@ test('ProfilePlanTree: key attribute preference order is collection > alias > li
   const box = [...el.shadowRoot!.querySelectorAll('.box')]
     .find(b => b.querySelector('.name')!.textContent === 'a')!;
   assert.equal(box.querySelector('.key')!.textContent, 'A', 'alias beats field and table');
+});
+
+// ─── SDK 5.1+ fields: card-list ─────────────────────────────────
+
+test('ProfileCardList: renders skipped, stor, and yields badges', async t => {
+  const tree = op('scan', {
+    stats: {
+      documentsIn: 100,
+      documentsOut: 90,
+      documentsSkipped: 10,
+      execNs: 500_000,
+      recvNs: 200_000,
+      sendNs: 50_000,
+      storNs: 3_250_000,
+      yields: { receiver: 2, heartbeat: 1 },
+    },
+  });
+  const el = await mountCardList(t, tree);
+  const pills = [...el.shadowRoot!.querySelectorAll('ditto-pill')];
+  const pillMap = new Map(pills.map(p => [
+    p.getAttribute('label'),
+    (p as unknown as { value: string }).value,
+  ]));
+  assert.equal(pillMap.get('skipped'), (10).toLocaleString());
+  assert.equal(pillMap.get('stor'), '3.25 ms');
+  assert.equal(pillMap.get('yields'), `receiver ${(2).toLocaleString()} · heartbeat ${(1).toLocaleString()}`);
+});
+
+test('ProfileCardList: omitted SDK 5.1 fields produce no extra badges', async t => {
+  // Pre-5.1 profile — no skipped, stor, or yields.
+  const tree = op('scan', {
+    stats: { documentsOut: 38, execNs: 133_700, recvNs: 305_290, sendNs: 85_120 },
+  });
+  const el = await mountCardList(t, tree);
+  const labels = [...el.shadowRoot!.querySelectorAll('ditto-pill')].map(p => p.getAttribute('label'));
+  assert.deepEqual(labels, ['out', 'exec', 'recv', 'send']);
+});
+
+test('ProfileCardList: zero documentsSkipped is not rendered', async t => {
+  const tree = op('scan', {
+    stats: { documentsOut: 10, documentsSkipped: 0, execNs: 1000 },
+  });
+  const el = await mountCardList(t, tree);
+  const labels = [...el.shadowRoot!.querySelectorAll('ditto-pill')].map(p => p.getAttribute('label'));
+  assert.ok(!labels.includes('skipped'), 'zero skipped should not render a badge');
+});
+
+test('ProfileCardList: nlJoin renders inner as a labeled subplan', async t => {
+  const tree = op('nlJoin', {
+    stats: { documentsIn: 10, documentsOut: 5 },
+    attributes: [{ key: 'condition', value: '(`t1`.`id` = `t2`.`id`)' }],
+    children: [
+      op('scan', { stats: { documentsOut: 10 }, attributes: [{ key: 'collection', value: 'customers' }] }),
+    ],
+    subplans: [{
+      key: 'inner',
+      plan: op('sequence', {
+        children: [
+          op('indexScan', { stats: { documentsOut: 10, execNs: 50_000, storNs: 12_000 }, attributes: [{ key: 'collection', value: 'orders' }] }),
+        ],
+      }),
+    }],
+  });
+  const el = await mountCardList(t, tree);
+  const root = el.shadowRoot!;
+
+  // The subplan label is rendered.
+  const subplanLabel = root.querySelector('.subplan-label');
+  assert.ok(subplanLabel, 'subplan label present');
+  assert.equal(subplanLabel.textContent, 'inner');
+
+  // The subplan tree is nested inside the subplan-wrap.
+  const subplanWrap = root.querySelector('.subplan-wrap');
+  assert.ok(subplanWrap, 'subplan wrap present');
+  const subplanCards = subplanWrap.querySelectorAll('.card');
+  assert.equal(subplanCards.length, 2, 'sequence + indexScan inside the subplan');
+
+  // The inner indexScan's stor badge renders.
+  const innerPills = subplanWrap.querySelectorAll('ditto-pill');
+  const storPill = [...innerPills].find(p => p.getAttribute('label') === 'stor');
+  assert.ok(storPill, 'stor badge inside subplan');
+  assert.equal((storPill as unknown as { value: string }).value, '12.00 µs');
+});
+
+// ─── SDK 5.1+ fields: plan-tree ─────────────────────────────────
+
+test('ProfilePlanTree: stor time renders in the box', async t => {
+  const tree = op('indexScan', {
+    stats: { documentsOut: 38, execNs: 133_700, storNs: 3_250_000 },
+  });
+  const el = await mountPlanTree(t, tree);
+  const box = el.shadowRoot!.querySelector('.box')!;
+  const stor = box.querySelector('.stor');
+  assert.ok(stor, 'stor label present');
+  assert.equal(stor.textContent, 'stor 3.25 ms');
+});
+
+test('ProfilePlanTree: no stor row when absent', async t => {
+  const tree = op('scan', { stats: { execNs: 209 } });
+  const el = await mountPlanTree(t, tree);
+  assert.equal(el.shadowRoot!.querySelector('.stor'), null);
+});
+
+test('ProfilePlanTree: skipped count in io label', async t => {
+  const tree = op('filter', {
+    stats: { documentsIn: 100, documentsOut: 90, documentsSkipped: 10, execNs: 5000 },
+  });
+  const el = await mountPlanTree(t, tree);
+  const io = el.shadowRoot!.querySelector('.box .io')!;
+  assert.match(io.textContent, /100 in/);
+  assert.match(io.textContent, /90 out/);
+  assert.match(io.textContent, /10 skipped/);
+});
+
+test('ProfilePlanTree: yields label renders in the box', async t => {
+  const tree = op('scan', {
+    stats: { execNs: 209, yields: { receiver: 3, budget: 1 } },
+  });
+  const el = await mountPlanTree(t, tree);
+  const yields = el.shadowRoot!.querySelector('.box .yields');
+  assert.ok(yields, 'yields label present');
+  assert.match(yields.textContent, /receiver 3/);
+  assert.match(yields.textContent, /budget 1/);
+});
+
+test('ProfilePlanTree: subplan nodes render as additional boxes', async t => {
+  const tree = op('nlJoin', {
+    stats: { execNs: 100_000 },
+    children: [op('scan', { stats: { execNs: 50_000 } })],
+    subplans: [{
+      key: 'inner',
+      plan: op('sequence', {
+        children: [op('indexScan', { stats: { execNs: 30_000 } })],
+      }),
+    }],
+  });
+  const el = await mountPlanTree(t, tree);
+  const boxes = el.shadowRoot!.querySelectorAll('.box');
+  // nlJoin + scan (child) + sequence (subplan) + indexScan (subplan child) = 4
+  assert.equal(boxes.length, 4);
+  const names = [...boxes].map(b => b.querySelector('.name')!.textContent);
+  assert.ok(names.includes('nlJoin'));
+  assert.ok(names.includes('scan'));
+  assert.ok(names.includes('sequence'));
+  assert.ok(names.includes('indexScan'));
 });

@@ -144,3 +144,118 @@ test('does not misparse a user row whose only "envelope-like" field is `text`', 
   };
   assert.equal(parseProfileItem(chatRow), null);
 });
+
+// ─── SDK 5.1+ fields ────────────────────────────────────────────
+
+test('parses stor phase time from phaseTimes', () => {
+  const fixture = JSON.parse(JSON.stringify(envelopeFixture));
+  fixture['~request_profile'].plan.children[0]['#stats'].phaseTimes.stor = 42_000;
+  const p = parseProfileItem(fixture)!;
+  assert.equal(p.plan.children[0]?.stats?.storNs, 42_000);
+});
+
+test('storNs is undefined when phaseTimes has no stor key', () => {
+  const p = parseProfileItem(envelopeFixture)!;
+  assert.equal(p.plan.children[0]?.stats?.storNs, undefined);
+});
+
+test('parses yields, dropping zero-valued entries', () => {
+  const fixture = JSON.parse(JSON.stringify(envelopeFixture));
+  fixture['~request_profile'].plan.children[0]['#stats'].yields = {
+    budget: 0,
+    sender: 3,
+    receiver: 14_532,
+    heartbeat: 0,
+  };
+  const p = parseProfileItem(fixture)!;
+  assert.deepEqual(p.plan.children[0]?.stats?.yields, { sender: 3, receiver: 14_532 });
+});
+
+test('yields is undefined when all counters are zero', () => {
+  const fixture = JSON.parse(JSON.stringify(envelopeFixture));
+  fixture['~request_profile'].plan.children[0]['#stats'].yields = {
+    budget: 0,
+    sender: 0,
+    receiver: 0,
+    heartbeat: 0,
+  };
+  const p = parseProfileItem(fixture)!;
+  assert.equal(p.plan.children[0]?.stats?.yields, undefined);
+});
+
+test('yields is undefined when the yields key is absent', () => {
+  const p = parseProfileItem(envelopeFixture)!;
+  assert.equal(p.plan.children[0]?.stats?.yields, undefined);
+});
+
+test('parses documentsSkipped', () => {
+  const fixture = JSON.parse(JSON.stringify(envelopeFixture));
+  fixture['~request_profile'].plan.children[0]['#stats'].documentsSkipped = 7;
+  const p = parseProfileItem(fixture)!;
+  assert.equal(p.plan.children[0]?.stats?.documentsSkipped, 7);
+});
+
+test('documentsSkipped is undefined when absent', () => {
+  const p = parseProfileItem(envelopeFixture)!;
+  assert.equal(p.plan.children[0]?.stats?.documentsSkipped, undefined);
+});
+
+test('parses nlJoin inner as a subplan, not an attribute', () => {
+  const fixture = JSON.parse(JSON.stringify(envelopeFixture));
+  fixture['~request_profile'].plan = {
+    '#operator': 'nlJoin',
+    '#stats': { documentsIn: 10, documentsOut: 5 },
+    condition: '(`t1`.`cust_id` = `t2`.`cust_id`)',
+    inner: {
+      '#operator': 'sequence',
+      children: [
+        {
+          '#operator': 'indexScan',
+          '#stats': { documentsOut: 10, phaseTimes: { exec: 50_000, stor: 12_000 } },
+          collection: 'orders',
+        },
+      ],
+    },
+    children: [
+      {
+        '#operator': 'scan',
+        '#stats': { documentsOut: 10 },
+        collection: 'customers',
+        alias: 't1',
+      },
+    ],
+  };
+  const p = parseProfileItem(fixture)!;
+  assert.equal(p.plan.name, 'nlJoin');
+  assert.equal(p.plan.children.length, 1, 'outer side is a regular child');
+  assert.equal(p.plan.subplans.length, 1, 'inner is a subplan');
+  assert.equal(p.plan.subplans[0]?.key, 'inner');
+  assert.equal(p.plan.subplans[0]?.plan.name, 'sequence');
+  assert.equal(p.plan.subplans[0]?.plan.children[0]?.name, 'indexScan');
+  assert.equal(p.plan.subplans[0]?.plan.children[0]?.stats?.storNs, 12_000);
+  // condition and outer are attributes, not subplans.
+  const attrKeys = p.plan.attributes.map(a => a.key);
+  assert.ok(attrKeys.includes('condition'));
+  assert.ok(!attrKeys.includes('inner'), 'inner must not be an attribute');
+});
+
+test('nlJoin outer flag is an attribute, not a subplan', () => {
+  const fixture = JSON.parse(JSON.stringify(envelopeFixture));
+  fixture['~request_profile'].plan = {
+    '#operator': 'nlJoin',
+    outer: true,
+    condition: '(`t1`.`id` = `t2`.`id`)',
+    inner: {
+      '#operator': 'scan',
+      collection: 'orders',
+    },
+    children: [
+      { '#operator': 'scan', collection: 'customers' },
+    ],
+  };
+  const p = parseProfileItem(fixture)!;
+  assert.equal(p.plan.subplans.length, 1);
+  assert.equal(p.plan.subplans[0]?.key, 'inner');
+  const outerAttr = p.plan.attributes.find(a => a.key === 'outer');
+  assert.equal(outerAttr?.value, 'true');
+});

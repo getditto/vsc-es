@@ -132,19 +132,25 @@ function parseOperator(dict: Record<string, unknown>): QueryProfileOperator | nu
     }
   }
 
-  // Preserve attributes in sorted-key order so the same node renders
-  // the same way every render (Object.entries is unordered for some
-  // keys on some engines; sorting is deterministic).
+  // Subplans — non-`children`, non-`#`-prefixed fields whose value is
+  // itself a plan node (has `#operator`). The canonical example is
+  // `nlJoin.inner` (SDK 5.1+). Stored separately from `children` so
+  // renderers can label them (e.g. "inner" under a nlJoin card).
   const reserved = new Set(['#operator', '#stats', 'children']);
+  const subplans: Array<{ key: string; plan: QueryProfileOperator }> = [];
   const attributes: Array<{ key: string; value: string }> = [];
   for (const key of Object.keys(dict).sort()) {
     if (reserved.has(key)) { continue; }
     const raw = dict[key];
     if (raw === undefined || raw === null) { continue; }
+    if (isObject(raw) && typeof raw['#operator'] === 'string') {
+      const sub = parseOperator(raw);
+      if (sub) { subplans.push({ key, plan: sub }); continue; }
+    }
     attributes.push({ key, value: renderAttribute(raw) });
   }
 
-  return { name, stats, children, attributes };
+  return { name, stats, children, attributes, subplans };
 }
 
 function renderAttribute(raw: unknown): string {
@@ -161,13 +167,29 @@ function parseStats(dict: Record<string, unknown>): QueryProfileStats {
   const phase = isObject(dict.phaseTimes)
     ? (dict.phaseTimes)
     : undefined;
+  const yields = isObject(dict.yields) ? parseYields(dict.yields) : undefined;
   return {
     documentsIn: intValue(dict.documentsIn),
     documentsOut: intValue(dict.documentsOut),
+    documentsSkipped: intValue(dict.documentsSkipped),
     execNs: intValue(phase?.exec),
     recvNs: intValue(phase?.recv),
     sendNs: intValue(phase?.send),
+    storNs: intValue(phase?.stor),
+    yields,
   };
+}
+
+/** Parse the `#stats.yields` object (SDK 5.1+). Drops zero/non-numeric
+ *  entries so the UI doesn't render noise for counters that never fired.
+ *  Returns undefined when no non-zero entries remain. */
+function parseYields(dict: Record<string, unknown>): Record<string, number> | undefined {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(dict)) {
+    const n = intValue(v);
+    if (n !== undefined && n !== 0) { out[k] = n; }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parseTimes(dict: Record<string, unknown> | undefined): QueryProfileTimes {

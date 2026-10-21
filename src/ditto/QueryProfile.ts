@@ -24,12 +24,20 @@ export interface QueryProfileTimes {
 export interface QueryProfileStats {
   documentsIn?: number | undefined;
   documentsOut?: number | undefined;
+  /** Documents skipped without being emitted (SDK 5.1+). */
+  documentsSkipped?: number | undefined;
   /** CPU time inside the operator. */
   execNs?: number | undefined;
   /** Time waiting on upstream operators to feed input. */
   recvNs?: number | undefined;
   /** Time pushing output to downstream operators. */
   sendNs?: number | undefined;
+  /** Time blocked on the store backend / SQLite (SDK 5.1+). */
+  storNs?: number | undefined;
+  /** Cooperative-scheduler yield counters (SDK 5.1+). Keys are yield
+   *  reasons (`budget`, `sender`, `receiver`, `heartbeat`); zero-valued
+   *  entries are omitted by Ditto. Absent when nothing yielded. */
+  yields?: Record<string, number> | undefined;
 }
 
 /** One node in the execution-plan tree. Profile JSON uses `#operator`
@@ -38,13 +46,20 @@ export interface QueryProfileStats {
  *  keys (`collection`, `alias`, `datasource`, `limit`, `descriptor`,
  *  …). The attribute set varies per operator type — we keep them as
  *  ordered (key, value) string pairs so the card view renders them
- *  deterministically. */
+ *  deterministically.
+ *
+ *  Operators like `nlJoin` (SDK 5.1+) carry **subplans** — non-`children`
+ *  fields whose value is itself a plan node (e.g. `nlJoin.inner`). These
+ *  are stored separately from `children` so renderers can label them. */
 export interface QueryProfileOperator {
   /** Operator type name from `#operator` (e.g. `"scan"`, `"sequence"`). */
   name: string;
   stats?: QueryProfileStats | undefined;
   children: QueryProfileOperator[];
   attributes: Array<{ key: string; value: string }>;
+  /** Labeled nested plan trees (e.g. `nlJoin`'s `inner`). Empty when
+   *  the operator has no subplans. */
+  subplans: Array<{ key: string; plan: QueryProfileOperator }>;
 }
 
 /** Captured execution profile for a single DQL `SELECT` statement.
