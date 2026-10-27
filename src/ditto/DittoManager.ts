@@ -199,7 +199,7 @@ export class DittoManager {
       // `withSystemMetricsEnv` env-var workaround — the SDK validates
       // parameter names and values at open time.
       //
-      // NOTE: as of 5.2.0-rc.1 systemParameters are accepted ONLY via the
+      // NOTE: as of 5.2.0 GA (rc.1 onward) systemParameters are accepted ONLY via the
       // DittoConfig options-object constructor; the 4th positional arg
       // from the previews throws ("Pass systemParameters in a DittoConfig
       // options object"). The positional 3-arg form still works but we
