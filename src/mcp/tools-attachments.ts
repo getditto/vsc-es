@@ -166,7 +166,10 @@ export const attachmentTools: ToolDef[] = [
       token: z.object({
         id: z.string().min(1),
         len: z.union([z.number(), z.string()]).describe('Byte length from the token (bigint may arrive as a string in JSON).'),
-        metadata: z.record(z.string()).optional(),
+        // zod 4 requires both the key and value types for z.record() — the
+        // one-arg zod 3 form (`z.record(z.string())`) is gone. Values were
+        // strings in zod 3, so `z.string()` keeps the schema identical.
+        metadata: z.record(z.string(), z.string()).optional(),
       }),
       save_to_path: z.string().min(1)
         .describe('Absolute destination path (must be inside an open workspace folder, extension storage, or the OS temp dir).'),

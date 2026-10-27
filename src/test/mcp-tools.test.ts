@@ -4,6 +4,8 @@ import { registerHooks } from 'node:module';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { z } from 'zod';
+import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js';
 
 /**
  * Tool-handler unit tests: every parity tool exercised against the fake
@@ -102,6 +104,48 @@ test('manifest: the registry exposes every tool exactly once', () => {
     // Descriptions must not promise what we don't ship.
     assert.ok(!def.description.includes('openapi'), `${def.name} stray description`);
   }
+});
+
+test('manifest: every tool schema converts to a usable JSON Schema', () => {
+  // The MCP SDK converts our zod schemas to JSON Schema for tools/list.
+  // We run on zod 4, where the SDK uses zod's native toJSONSchema — so a
+  // schema shape the SDK's converter can't read would silently ship a
+  // tool with NO parameters (or crash the listing). Exercise the SDK's
+  // own conversion helper rather than a stand-in.
+  for (const def of allTools()) {
+    const shape = def.schema as Record<string, z.ZodTypeAny>;
+    const json = toJsonSchemaCompat(z.object(shape), { target: 'jsonSchema7' }) as {
+      type?: string;
+      properties?: Record<string, unknown>;
+    };
+    assert.equal(json.type, 'object', `${def.name} must convert to a JSON Schema object`);
+    assert.equal(
+      Object.keys(json.properties ?? {}).length,
+      Object.keys(shape).length,
+      `${def.name} lost parameters in the JSON Schema conversion`,
+    );
+  }
+});
+
+test('manifest: fetch_attachment keeps token.metadata a string->string map', () => {
+  // z.record() gained a mandatory value type in zod 4 — the one-arg zod 3
+  // form is a compile error there, and a wrong value type would change the
+  // schema agents see. Pin the exact shape.
+  const def = allTools().find(d => d.name === 'fetch_attachment');
+  assert.ok(def, 'fetch_attachment is registered');
+  const shape = def.schema as Record<string, z.ZodTypeAny>;
+  const json = toJsonSchemaCompat(z.object(shape), { target: 'jsonSchema7' }) as {
+    properties?: {
+      token?: {
+        properties?: {
+          metadata?: { type?: string; additionalProperties?: { type?: string } };
+        };
+      };
+    };
+  };
+  const metadata = json.properties?.token?.properties?.metadata;
+  assert.equal(metadata?.type, 'object');
+  assert.equal(metadata?.additionalProperties?.type, 'string');
 });
 
 function obj(result: CallToolResult): Record<string, unknown> {
