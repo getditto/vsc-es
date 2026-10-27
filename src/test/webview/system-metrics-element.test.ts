@@ -46,6 +46,11 @@ const SYSTEM_SNAPSHOT = {
       sinceConnect: 24, periodDelta: 2, sumSinceConnect: 0.024, absMax: 0.004,
     },
     {
+      key: 'ditto.store.changes',
+      labels: {}, description: 'Store rows changed', unit: 'count', kind: 'counter',
+      sinceConnect: 18, periodDelta: 4,
+    },
+    {
       key: 'ditto.replication.session_resets',
       labels: { cause: 'handshake_timeout' }, description: 'Resets', unit: 'count', kind: 'counter',
       sinceConnect: 2, periodDelta: 0,
@@ -113,6 +118,7 @@ test('SystemMetrics: a working snapshot renders one row per series, keys strippe
     'network.dsoq.connection.opened',
     'network.dsoq.connection.closed',
     'backend.sqlite3.fsync_duration_secs',
+    'store.changes',
     'replication.session_resets',
     'query.executions_total',
     'custom.metric.from.somewhere_else',
@@ -137,7 +143,10 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
 
   segment(el, 'Store').click();
   await el.updateComplete;
-  assert.deepEqual(rows(el), ['backend.sqlite3.fsync_duration_secs']);
+  assert.deepEqual(rows(el), [
+    'backend.sqlite3.fsync_duration_secs',
+    'store.changes',
+  ], 'both ditto.backend.* and ditto.store.* series land in the Store segment');
 
   segment(el, 'Sync').click();
   await el.updateComplete;
@@ -155,7 +164,7 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
 
   segment(el, 'All').click();
   await el.updateComplete;
-  assert.equal(rows(el).length, 6);
+  assert.equal(rows(el).length, 7);
 });
 
 test('SystemMetrics: an empty namespace says so rather than showing a blank panel', async t => {
@@ -378,7 +387,7 @@ test('SystemMetrics: search matches label keys and values (e.g. every ble series
 
   typeSearch(el, '   ');
   await el.updateComplete;
-  assert.equal(masterKeys(el).length, 8, 'a whitespace-only query is no filter at all');
+  assert.equal(masterKeys(el).length, 9, 'a whitespace-only query is no filter at all');
 });
 
 test('SystemMetrics: search composes with the namespace segment', async t => {

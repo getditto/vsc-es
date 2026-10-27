@@ -45,7 +45,11 @@ const SEGMENTS: ReadonlyArray<{ id: NamespaceFilter; label: string }> = [
 
 const NAMESPACE_PREFIXES: ReadonlyArray<readonly [NamespaceFilter, readonly string[]]> = [
   ['network', ['ditto.network.']],
-  ['store', ['ditto.backend.']],
+  // Store covers both the low-level storage engine (`ditto.backend.*` —
+  // sqlite3 txns, fsyncs) and store-API-level series (`ditto.store.*` —
+  // e.g. `ditto.store.changes`). Anything store-shaped belongs here, never
+  // in Other.
+  ['store', ['ditto.backend.', 'ditto.store.']],
   ['query', ['ditto.query.']],
   ['sync', ['ditto.sync.', 'ditto.replication.']],
 ];

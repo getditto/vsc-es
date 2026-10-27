@@ -629,9 +629,10 @@ activity.
   gauges whose value fell, or `—`).
 - The segment control filters by namespace: Network lists
   `ditto.network.dsoq.*` rows, Store the `ditto.backend.*` rows (labelled
-  by `db` role), Query the `ditto.query.*` rows (SDK 5.2), Sync the
-  `ditto.replication.*` rows, Other anything outside those. An empty
-  namespace says "No metrics in this namespace."
+  by `db` role) AND any `ditto.store.*` rows (e.g. `ditto.store.changes` —
+  store-shaped series never fall into Other), Query the `ditto.query.*`
+  rows (SDK 5.2), Sync the `ditto.replication.*` rows, Other anything
+  outside those. An empty namespace says "No metrics in this namespace."
 - **Gauges (SDK 5.2):** find `network.connections` (or, on an Apple host
   with AWDL enabled, `transport.awdl.interface_up`) → the row shows the
   CURRENT absolute value (not a growing sum) and the details pane (ⓘ)

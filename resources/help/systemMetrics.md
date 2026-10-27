@@ -26,8 +26,9 @@ The segment control filters rows by namespace:
   vs closed counts: divergence raises a banner about a possible connection
   leak or handshake instability; non-zero `tlv.unknown_type_*` counts
   indicate interop/version skew between peers.
-- **Store** — SQLite metrics per database role (`ditto.backend.*`,
-  `labels.db` = `main` / `replication_metadata` / `attachment` /
+- **Store** — storage-layer series (`ditto.backend.*`, `ditto.store.*`).
+  The `ditto.backend.*` SQLite metrics are labelled per database role
+  (`labels.db` = `main` / `replication_metadata` / `attachment` /
   `system_info`). Rising fsync/checkpoint durations mean disk pressure; a
   WAL that only grows means checkpoints aren't keeping up with writers.
 - **Sync** — replication state (`ditto.sync.*`, `ditto.replication.*`).
