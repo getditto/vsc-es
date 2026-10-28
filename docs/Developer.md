@@ -181,6 +181,54 @@ System-setting names and values are stored with the database config in
 `globalState`, not `SecretStorage`. They must never contain tokens, keys,
 passwords, or other credentials.
 
+#### The websocket scheme pin
+
+Inside the same server-mode `updateTransportConfig` block (applied after
+`Ditto.open()`, before `sync.start()`), `DittoManager` pins
+`connect.websocketURLs` to the configured server URL with its scheme swapped
+(`http:` → `ws:`, `https:` → `wss:`):
+
+```ts
+const serverUrl = normalizeDittoServerUrl(config.authUrl);
+const wsBase = serverUrl
+  .replace(/^http:\/\//i, 'ws://')
+  .replace(/^https:\/\//i, 'wss://');
+c.connect.websocketURLs = [wsBase];
+```
+
+This is required because the JS SDK derives the sync websocket URL from the
+server URL by upgrading the scheme to `wss://` **unconditionally**. A
+self-managed Big Peer serves plain HTTP, so the derived `wss://` URL sends a
+TLS ClientHello at a plain-HTTP port: nginx logs `"\x16\x03\x01…" 400` every
+~5 s (the SDK's retry cadence), sync never establishes,
+`system:data_sync_info` stays empty, and the Big Peer never appears in the
+Presence Graph — while auth and the REST API keep working, which makes it
+look like a server problem.
+
+Deliberately **not** gated on a "self-managed" flag: for a Ditto Cloud URL
+(`https://<app>.ditto.live`) the pin yields `wss://<app>.ditto.live`, which is
+identical to the SDK's own derivation, so the pin is a no-op for cloud and
+corrective only for plaintext endpoints. The scheme of the configured URL is
+the flag.
+
+Deliberately **without a path**: the SDK appends `/_ditto/ws` itself. Pinning
+`ws://host:8081/_ditto/ws` produces a repeating `404 Not Found` and no sync.
+
+#### The HTTP API scheme derivation
+
+The query path has the same constraint from the other direction:
+`HttpQueryService.executeRemoteQuery` calls the server's REST endpoint
+(`/api/v5/store/execute`), and the stored `httpApiUrl` is host-only. The
+scheme comes from `httpApiSchemeForServerUrl(authUrl)` — `http://` server
+URL → `http`, everything else → `https`. A plain-HTTP Big Peer has no TLS
+listener on that port, so always-https (the pre-fix behavior, which SwiftUI
+Edge Studio still has) dies in the SSL handshake with "wrong version
+number" — and **Allow untrusted certificates** cannot rescue it, because
+that flag only relaxes certificate verification (`rejectUnauthorized: false`),
+it does not downgrade a TLS handshake to plaintext. Plaintext requests to a
+non-loopback host log a warning, since the bearer key crosses the network
+unencrypted; loopback (the expected local-Big-Peer case) stays quiet.
+
 ### 4.3 Storage layers
 
 | Key | Where | Why |
@@ -614,6 +662,36 @@ add a fourth:
   messages bridge to the host's logger via the `LogIn` IPC type
   (`src/ipc/messages.ts`).
 
+#### Log retention
+
+The application log is a rotating file set under
+`<globalStorage>/logs/`: an active `ditto-edge-studio.log` plus numbered
+rotations `ditto-edge-studio.log.1` … `.N`. Three settings control it, all
+applied live (no restart):
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `dittoVsce.logMaxMegabytes` | `5` | Size at which the active log rotates. |
+| `dittoVsce.logRetainFiles` | `5` | Number of rotated backups kept. |
+| `dittoVsce.logMaxAgeDays` | `14` | Rotations older than this are deleted at activation. `0` disables age pruning. |
+
+The on-disk ceiling is roughly `logMaxMegabytes × (logRetainFiles + 1)` — 30 MB
+at the defaults.
+
+- `src/logging/FileSink.ts` owns the rotation set. `setLimits()` applies new
+  limits at runtime and deletes rotations beyond a shrunken retain count
+  (rotation alone only ever shifts indices *up to* `retain`, so a lowered
+  value would otherwise orphan the extras on disk forever).
+  `pruneRotationsOlderThan()` deletes aged rotations — never the active file,
+  which is live state — and runs once per activation, the same point VS Code
+  core prunes its own session log directories. `clear()` deletes the whole
+  set; the next write re-creates the active file with its session header.
+- **Ditto: Clear Application Log…** (`dittoVsce.clearApplicationLog`) is the
+  user-facing on-demand clean-up: a modal confirm, then the whole set is
+  deleted. It is also a row in the **Logging** tree panel.
+- `activate()` is synchronous, so the activation-time prune is fire-and-forget
+  (`void promise.then(...).catch(...)`) — it must never block activation.
+
 ---
 
 ## 9. Known gaps & future work
@@ -734,16 +812,17 @@ The Observers feature lets users register a DQL query and watch it fire in real 
 
 ---
 
-## 14. SDK 5.1: system:metrics and ADVISE
+## 14. SDK 5.1/5.2: system:metrics, ADVISE, debug socket, support bundles
 
 ### 14.1 System metrics (system:metrics)
 
 System Metrics is its own screen (`src/panels/SystemMetricsPanel.ts`, `webview-ui/systemMetrics/`), fed by SDK 5.1's `system:metrics` DQL virtual collection. It split out of the Database Metrics panel in 0.9.5 because its data model is the inverse of that panel's: Database Metrics is an on-demand point snapshot (expensive filesystem walk behind an explicit Refresh), while `system:metrics` must poll continuously to mean anything. The two therefore sit as separate rows in the database tree — Database Metrics, then System Metrics, then Log Analyzer.
 
-- **Startup-gated exporter.** The `metrics_exporter_virtual_collection_enabled` system parameter defaults to false and runtime `ALTER SYSTEM` changes are ignored — it's read once at open. The extension enables it for its own instances via the `DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED` env var, set only around `Ditto.open` and restored afterwards (`withSystemMetricsEnv` in `src/ditto/SystemMetricsService.ts`). Setting: `dittoVsce.collectSystemMetrics` (default **on**, mirroring `collectProfiling`/`collectMetrics` — this is a dev tool and Info-level metrics are cheap). Two accepted caveats, documented at the helper: the env var is process-wide (harmless when we're the only SDK host in the process), and the exporter is itself a process-wide `OnceLock`, so once enabled it stays enabled for later opens in the same process.
+- **Startup-gated exporter.** The `metrics_exporter_virtual_collection_enabled` system parameter defaults to false and runtime `ALTER SYSTEM` changes are ignored — it's read once at open. Since SDK 5.2 the extension passes it through `DittoConfig`'s `systemParameters` option (validated by the SDK at open; note 5.2.0 accepts `systemParameters` ONLY via the options-object constructor — the previews' 4th positional arg throws). Pre-5.2 the extension flipped the `DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED` env var around `Ditto.open`, and `withSystemMetricsEnv` in `src/ditto/SystemMetricsService.ts` survives as a test-only helper exercising that path. Setting: `dittoVsce.collectSystemMetrics` (default **on**, mirroring `collectProfiling`/`collectMetrics` — this is a dev tool and Info-level metrics are cheap). One accepted caveat, documented at the helper: the exporter is a process-wide `OnceLock`, so once enabled it stays enabled for later opens in the same process.
 - **Flush-on-read.** Every `SELECT * FROM system:metrics` FLUSHES the registry: counter rows carry per-read `delta`, histogram rows `dcount`/`dsum`. Last-read rendering is therefore meaningless — `SystemMetricsService` polls (5 s) only while the panel is visible and accumulates deltas into since-connect running totals keyed by metric + sorted labels. Rows with no `key` are the exporter's `{status: "disabled"}` placeholder — `isExporterDisabledRows` detects it so the webview shows "enable the setting and reconnect" guidance instead of a dead table. Server-side GC can drop idle series; our accumulated totals simply stop growing for them.
+- **Gauges (SDK 5.2, #NETW-1989).** The exporter emits no kind marker — counters and gauges share the `current`/`updates`/`delta` row shape — so `parseMetricRow` matches keys against the SDK's static `gauge!(…)` declarations (`KNOWN_GAUGE_KEYS`: `network.connections`, `quic.path.rtt/mtu`, the `udp_tx/rx` families, the dsoq callback-queue depths, `multiplexer.phy.last_*_at`, `multiplexer.virt.connections_gauge`, `transport.awdl.interface_up`). Gauge series TRACK the absolute `current` instead of accumulating deltas (a delta-sum of `interface_up` is nonsense), keep the signed `delta` as `periodDelta` (the webview renders negatives as a red ▼), and epoch-timestamp gauges render as an age ("12s ago"). A missed gauge key fails soft — it renders as a counter, cosmetically wrong but harmless. When the SDK adds gauges, add them to `KNOWN_GAUGE_KEYS`.
 - **Wire shape.** `SysMetricsOut.sysMetrics.status` carries an explicit `SystemMetricsStatus` union (`working` / `settingDisabled` / `exporterDisabled` / `noConnection` / `unavailable`); `SysMetricsIn.sysMetrics.refresh` forces one immediate poll ahead of the cadence — see `src/ipc/messages.ts`. A mid-switch guard (`isExpectedActive`) discards polls that span a connection switch so another database's deltas never land in this panel's totals.
-- **Dashboard** (`webview-ui/systemMetrics/system-metrics-element.ts`): parity with the SwiftUI Edge Studio's System Metrics screen — a centered namespace segment filter (All / Network `ditto.network.*` / Store `ditto.backend.*` / Sync `ditto.sync.*`+`ditto.replication.*` / Other) over EVERY reported series, each rendered as a row (prefix-stripped key + labels left; since-connect total and last-period delta right), the dsoq opened-vs-closed divergence banner, and a since/updated footer. A per-row info icon expands the series details (description, kind, unit; histograms also average and absolute max), and a per-row pin icon collects the series in a collapsible "Pinned" section above the filter; pins persist per connection in `globalState` (`src/storage/system-metrics-pins.ts`, wholesale `sysMetrics.setPins` replacements) so they survive panel closes and reconnects.
+- **Dashboard** (`webview-ui/systemMetrics/system-metrics-element.ts`): parity with the SwiftUI Edge Studio's System Metrics screen — a centered namespace segment filter (All / Network `ditto.network.*` / Store `ditto.backend.*`+`ditto.store.*` / Query `ditto.query.*` (SDK 5.2, #QE-1155) + legacy `dql.*` aliases / Sync `ditto.sync.*`+`ditto.replication.*` / Other) over EVERY reported series, each rendered as a row (prefix-stripped key + labels left; since-connect total and last-period delta right), the dsoq opened-vs-closed divergence banner, and a since/updated footer. A per-row info icon expands the series details (description, kind, unit; histograms also average and absolute max), and a per-row pin icon collects the series in a collapsible "Pinned" section above the filter; pins persist per connection in `globalState` (`src/storage/system-metrics-pins.ts`, wholesale `sysMetrics.setPins` replacements) so they survive panel closes and reconnects.
 - **Help:** `resources/help/systemMetrics.md` → rendered to `dist/webview-ui/help/systemMetrics.html` → loaded into the Inspector via `inspector.helpHtml`.
 
 ### 14.2 ADVISE in the Query Editor
@@ -783,6 +862,69 @@ connected, or even registered.
   app, possibly on another platform/container).
 - **History is session-only.** The last 50 runs are kept in the webview, newest first;
   nothing is persisted.
+
+### 14.4 Support bundles, bug-report export, and SDK log export (SDK 5.2)
+
+Three command-palette diagnostics features ship the data Ditto support asks
+for. The support bundle and SDK log export require an active connection and
+SDK 5.2+; the bug-report export degrades to log-only without one.
+
+- **Ditto: Collect Support Bundle (dial9)…** — `SupportBundleService`
+  (`src/ditto/SupportBundleService.ts`) mirrors benchy's
+  `collect-support-bundle.py` flow:
+  1. Optional load generation: loop a DQL query until ≥ 70 s of cumulative
+     execution time (`MIN_QUERY_SECONDS`, matches benchy) so the dial9 ring
+     buffer holds a meaningful profile of that workload. The command-palette
+     flow skips this — the user runs their slow query manually first.
+  2. `EXECUTE FUNCTION system_request_support_bundle()` assembles a `.tar`
+     (dial9 traces at `dial9/dial9.bin.gz`, device logs, store diagnostics)
+     and returns the bundle document; the newest `system:support_bundles`
+     row carries the `file` attachment token.
+  3. `store.fetchAttachment` (180 s timeout, timer cleared on settle so a
+     fast fetch can't leak the event loop) → `copyToPath` into a temp dir
+     (never `attachment.data()` — that would double the heap) → read once.
+  4. The tar is gzipped to `.tar.gz` and written via `showSaveDialog`.
+
+  Dial9 recording itself is startup-gated (`dial9_observability_level`
+  system parameter, default 1 = Lite; env alias
+  `DITTO_DIAL9_OBSERVABILITY_LEVEL`) — the service captures whatever is
+  already in the ring buffer and never starts/stops the recorder. Note the
+  SDK rate-limits `system_request_support_bundle` (~3 requests per 10 min
+  per store); surface the SDK's error rather than retrying.
+
+  The service splits at the save dialog: `collectBytes()` runs phases 1–4
+  and returns the gzipped bundle in memory; `collect()` adds the
+  `showSaveDialog` write. The bug-report export uses `collectBytes()` so
+  the bundle can become a zip entry instead of a file of its own.
+- **Ditto: Export Logs for Bug Report…** — `BugReportService`
+  (`src/bugreport/BugReportService.ts`) packs the application log
+  (`logger.readAllLogs()` — all rotations, chronological) plus a
+  `collectBytes()` support bundle into ONE zip saved where the user
+  chooses, with a `README.txt` recording extension/SDK/VS Code versions
+  and the archive contents. Degrades to a log-only zip when disconnected
+  or when bundle collection fails — the README records the reason, since
+  a bug report about a connection failure is exactly the case that can't
+  wait for one. The bundle is captured as-is (no 70 s query loop). The
+  zip writer is in-house (`src/bugreport/zip.ts` — local headers +
+  central directory + EOCD, deflate for text, store for the already-
+  compressed bundle, table-driven CRC32) so the feature adds no
+  archiving dependency.
+- **Ditto: Export SDK Logs (gzip)…** — `DittoLogger.exportToFile(path)`
+  writes the SDK's internal ring buffer (Debug+, ~15 MB / 15-day retention,
+  independent of `Logger.enabled`/`minimumLogLevel`) as `.jsonl.gz`. The
+  path must not already exist and only the MOST RECENTLY created Ditto
+  instance's logs are exported — hence the active-connection gate. Same
+  modal document-data warning as Export Logs; both flows offer Reveal in
+  Finder on success.
+
+### 14.5 Profiling fields (SDK 5.1/5.2)
+
+The profile parser and views track the SDK's `PROFILE` envelope growth:
+`phaseTimes.stor` (store-backend wait, teal badge), `#stats.yields`
+(cooperative scheduler yields, zero-dropped), `#stats.documentsSkipped`,
+and JOIN inner subplans (`nlJoin.inner`) rendered as labeled subtrees —
+`subtreeExecNs`/layout in `src/util/profilePlanLayout.ts` include subplan
+descendants so the ≥ 50 % bottleneck flag accounts for them.
 
 ---
 

@@ -4,6 +4,7 @@ import {
   SYSTEM_METRICS_ENV_VAR,
   SystemMetricsService,
   accumulateMetricRows,
+  collapseToAggregate,
   isExporterDisabledRows,
   readCollectSystemMetrics,
   withSystemMetricsEnv,
@@ -33,6 +34,13 @@ function counterRow(key: string, delta: number, labels: Record<string, string> =
 
 function histogramRow(key: string, dcount: number, dsum: number, labels: Record<string, string> = {}): Record<string, unknown> {
   return { key, labels, level: 'info', unit: 'seconds', description: `${key} desc`, count: 1, sum: 1, abs_max: 5, dcount, dsum, dabs_max: 1 };
+}
+
+/** Gauge rows share the counter row shape (`current`/`updates`/`delta`);
+ *  what makes them gauges is the KEY matching the SDK's static gauge
+ *  declarations — see KNOWN_GAUGE_KEYS in the service. */
+function gaugeRow(key: string, current: number, delta: number, labels: Record<string, string> = {}): Record<string, unknown> {
+  return { key, labels, level: 'info', unit: 'count', description: `${key} desc`, current, updates: 1, delta };
 }
 
 function makeService(opts: {
@@ -97,6 +105,134 @@ test('accumulateMetricRows histograms accumulate dcount/dsum and track the lates
   assert.equal(s.periodDelta, 2);
   assert.equal(s.sumSinceConnect, 0.02, 'dsum accumulates');
   assert.equal(s.absMax, 5);
+});
+
+// ─── collapseToAggregate ─────────────────────────────────────
+// The SDK emits a labelled metric as an unlabelled aggregate parent row
+// plus one labelled child per label set. The panel must show each key
+// once — the aggregate — without ever hiding a label-only metric.
+
+function sample(key: string, labels: Record<string, string> = {}): SystemMetricSample {
+  return {
+    key, labels, description: '', unit: 'count', kind: 'counter',
+    sinceConnect: 1, periodDelta: 0,
+  };
+}
+
+test('collapseToAggregate: a key with an aggregate keeps only the unlabelled row', () => {
+  const out = collapseToAggregate([
+    sample('ditto.small_peer_info.write_store_duration_secs'),
+    sample('ditto.small_peer_info.write_store_duration_secs', { segment: 'core' }),
+  ]);
+  assert.deepEqual(out.map(s => s.labels), [{}],
+    'the bare aggregate row wins; the segment=core child collapses away');
+});
+
+test('collapseToAggregate: a key with NO aggregate keeps every labelled series', () => {
+  // Some metrics are labelled-only (no unlabelled parent). Dropping them
+  // would hide the metric entirely — they must survive.
+  const out = collapseToAggregate([
+    sample('ditto.backend.sqlite3.fsync_total', { db: 'main' }),
+    sample('ditto.backend.sqlite3.fsync_total', { db: 'attachment' }),
+  ]);
+  assert.equal(out.length, 2, 'labelled-only series are never dropped');
+});
+
+test('collapseToAggregate: mixed keys collapse independently', () => {
+  const out = collapseToAggregate([
+    sample('ditto.network.connections'),                       // aggregate
+    sample('ditto.network.connections', { transport: 'ws' }),  // child → dropped
+    sample('ditto.store.changes'),                             // standalone aggregate
+    sample('custom.labelled_only', { a: '1' }),                // labelled-only → kept
+    sample('custom.labelled_only', { a: '2' }),                // labelled-only → kept
+  ]);
+  const byKey = new Map<string, number>();
+  for (const s of out) { byKey.set(s.key, (byKey.get(s.key) ?? 0) + 1); }
+  assert.equal(byKey.get('ditto.network.connections'), 1, 'aggregate key lists once');
+  assert.equal(byKey.get('ditto.store.changes'), 1);
+  assert.equal(byKey.get('custom.labelled_only'), 2, 'labelled-only key keeps both rows');
+  assert.equal(out.length, 4);
+});
+
+test('collapseToAggregate: the dsoq divergence keys collapse to their aggregate', () => {
+  // The leak banner sums opened/closed per key; with children collapsed it
+  // reads the aggregate once instead of double-counting parent+children.
+  const out = collapseToAggregate([
+    sample('ditto.network.dsoq.connection.opened'),
+    sample('ditto.network.dsoq.connection.opened', { transport: 'ws' }),
+  ]);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0]!.labels, {});
+});
+
+test('accumulateMetricRows gauges track the absolute current value, never a delta sum', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  // awdl.interface_up goes 0 → 1 → 1: a delta-accumulating read would
+  // show 1 (lucky) then 1 (correct by accident); the sequence below is
+  // the discriminating one — 1 → 0 → 1 must read 1, not 2.
+  accumulateMetricRows(samples, [gaugeRow('ditto.transport.awdl.interface_up', 1, 1)]);
+  accumulateMetricRows(samples, [gaugeRow('ditto.transport.awdl.interface_up', 0, -1)]);
+  accumulateMetricRows(samples, [gaugeRow('ditto.transport.awdl.interface_up', 1, 1)]);
+  const s = [...samples.values()];
+  assert.equal(s.length, 1);
+  assert.equal(s[0]?.kind, 'gauge');
+  assert.equal(s[0]?.sinceConnect, 1, 'absolute current value, not sum-of-deltas (2)');
+  assert.equal(s[0]?.periodDelta, 1);
+});
+
+test('accumulateMetricRows gauges keep negative periodDelta (value went down)', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [gaugeRow('ditto.network.connections', 3, 3)]);
+  accumulateMetricRows(samples, [gaugeRow('ditto.network.connections', 1, -2)]);
+  const s = [...samples.values()][0];
+  assert.equal(s?.kind, 'gauge');
+  assert.equal(s?.sinceConnect, 1, 'current absolute value');
+  assert.equal(s?.periodDelta, -2, 'negative delta preserved for the ▼ indicator');
+});
+
+test('accumulateMetricRows gauge prefix families match (quic udp child keys)', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [
+    gaugeRow('ditto.network.quic.udp_tx.bytes', 4096, 512, { remote: '10.0.0.2' }),
+    gaugeRow('ditto.network.quic.path.rtt', 0.045, 0.005, { remote: '10.0.0.2' }),
+    gaugeRow('ditto.multiplexer.phy.last_sent_at', 1761000000, 5, { transport_type: 'awdl' }),
+  ]);
+  const kinds = [...samples.values()].map(s => s.kind);
+  assert.deepEqual(kinds, ['gauge', 'gauge', 'gauge']);
+});
+
+test('accumulateMetricRows gauge row missing current keeps the last-known value', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [gaugeRow('ditto.transport.awdl.interface_up', 1, 1)]);
+  // Exporter always emits `current`, but if a row ever lacks it the
+  // sample must not reset to 0.
+  accumulateMetricRows(samples, [{ key: 'ditto.transport.awdl.interface_up', labels: {}, delta: 0 }]);
+  const s = [...samples.values()][0];
+  assert.equal(s?.sinceConnect, 1);
+});
+
+test('accumulateMetricRows first-seen gauge without current starts at 0', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [{ key: 'ditto.network.connections', labels: {}, delta: 2 }]);
+  const s = [...samples.values()][0];
+  assert.equal(s?.kind, 'gauge');
+  assert.equal(s?.sinceConnect, 0, 'no current to track — do not fall back to delta');
+});
+
+test('accumulateMetricRows does not misclassify lookalike counter keys as gauges', () => {
+  const samples = new Map<string, SystemMetricSample>();
+  accumulateMetricRows(samples, [
+    // New 5.2 counters whose prefixes sit near gauge families.
+    counterRow('ditto.network.peers.discovered_count', 7),
+    counterRow('ditto.network.dsoq.connection.opened', 3),
+    // A key that merely STARTS WITH a gauge key (not a prefix entry).
+    counterRow('ditto.network.connections.total', 9),
+    // Prefix entries end with '.' so 'ditto.network.quic.udp_tx' itself
+    // (no trailing segment) is not a match.
+    counterRow('ditto.network.quic.udp_tx', 4),
+  ]);
+  const kinds = [...samples.values()].map(s => s.kind);
+  assert.deepEqual(kinds, ['counter', 'counter', 'counter', 'counter']);
 });
 
 test('accumulateMetricRows skips placeholder rows that carry no key', () => {

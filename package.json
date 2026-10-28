@@ -2,7 +2,7 @@
   "name": "ditto-vsce",
   "displayName": "Ditto Edge Studio",
   "description": "Debug and inspect Ditto databases from VS Code.",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -217,8 +217,20 @@
         "title": "Ditto: Export Logs for Bug Report…"
       },
       {
+        "command": "dittoVsce.exportSdkLogs",
+        "title": "Ditto: Export SDK Logs (gzip)…"
+      },
+      {
+        "command": "dittoVsce.collectSupportBundle",
+        "title": "Ditto: Collect Support Bundle (dial9)…"
+      },
+      {
         "command": "dittoVsce.showLogFile",
         "title": "Ditto: Show Log File in Finder"
+      },
+      {
+        "command": "dittoVsce.clearApplicationLog",
+        "title": "Ditto: Clear Application Log…"
       },
       {
         "command": "dittoVsce.toggleInspector",
@@ -512,6 +524,25 @@
           "default": true,
           "description": "Enable Ditto's startup-gated system:metrics virtual collection for connections this extension opens (sets DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED around Ditto.open), feeding the System Metrics panel. Changes apply at the NEXT connect — the SDK parameter is startup-only."
         },
+        "dittoVsce.logMaxMegabytes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "Size at which the application log rotates, in MB. Rotation keeps the active log plus the number of backups set in dittoVsce.logRetainFiles. Applies immediately."
+        },
+        "dittoVsce.logRetainFiles": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 20,
+          "description": "Number of rotated application-log backups to keep. The total on-disk ceiling is roughly logMaxMegabytes × (logRetainFiles + 1). Lowering this deletes the extra backups immediately."
+        },
+        "dittoVsce.logMaxAgeDays": {
+          "type": "number",
+          "default": 14,
+          "minimum": 0,
+          "description": "Rotated application-log backups older than this many days are deleted when the extension activates (the active log is never deleted). Set to 0 to disable age-based pruning."
+        },
         "dittoVsce.mcpServer.port": {
           "type": "number",
           "default": 65270,
@@ -597,9 +628,9 @@
     "typescript-eslint": "8.68.0"
   },
   "dependencies": {
-    "@dittolive/ditto": "5.1.0",
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "zod": "3.25.76"
+    "@dittolive/ditto": "5.2.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
   },
   "overrides": {
     "brace-expansion@1": "1.1.18",
@@ -607,14 +638,14 @@
     "brace-expansion@5": "5.0.9",
     "diff": "8.0.3",
     "esbuild": "$esbuild",
-    "fast-uri": "3.1.6",
+    "fast-uri": "3.1.9",
     "form-data": "4.0.6",
     "js-yaml": "4.3.2",
     "linkify-it": "5.0.2",
     "markdown-it@^15.0.0": {
       "linkify-it": "6.1.0"
     },
-    "qs": "6.16.0",
+    "qs": "6.16.1",
     "serialize-javascript": "^7.0.5",
     "tmp": "0.2.7",
     "undici": "7.29.0"

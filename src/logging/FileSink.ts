@@ -108,15 +108,19 @@ export class FileSink {
     }
 
     const payload = toWrite.join('');
-    // Rotate-then-write loop: if current + payload exceeds threshold, rotate first.
-    // Bail when rotate makes no progress (active file already gone), otherwise a
-    // single oversized payload would loop forever.
-    while (true) {
-      let size = 0;
-      try { size = (await fs.stat(active)).size; } catch { /* file absent → size stays 0 */ }
-      if (size + Buffer.byteLength(payload) <= this.opts.maxBytes) break;
-      const didRotate = await this.rotate(active);
-      if (!didRotate) break;
+    // Rotate-then-write: if the current content plus this payload would
+    // exceed the threshold, rotate the active file FIRST so the burst lands
+    // in a fresh file and the previous content keeps its own backup.
+    //
+    // The active file is rotated AT MOST ONCE per flush. Rotating again
+    // would move no content (the active file is already gone) but would
+    // churn the backup set — shifting .1→.2, .2→.3 and dropping the oldest
+    // — silently discarding log history. A payload larger than the
+    // threshold on its own is written as one (over-sized) active file.
+    let size = 0;
+    try { size = (await fs.stat(active)).size; } catch { /* file absent → size stays 0 */ }
+    if (size + Buffer.byteLength(payload) > this.opts.maxBytes) {
+      await this.rotate(active);
     }
     // `mode` applies only when appendFile has to create the file (the common
     // case right after a rotate); it does not widen an existing file.
@@ -124,6 +128,18 @@ export class FileSink {
   }
 
   private async rotate(active: string): Promise<boolean> {
+    // retain 0 means "keep no backups" — the old content is discarded
+    // outright instead of being renamed. Without this special case the
+    // rename loop below never runs (it starts at `retain`), so the active
+    // file would never rotate and would grow without bound.
+    if (this.opts.retain < 1) {
+      try {
+        await fs.rm(active, { force: true });
+        return true;
+      } catch {
+        return false;
+      }
+    }
     // Shift: .N-1 → .N, dropping anything beyond retain. Returns true if any
     // rename actually happened — caller uses this to terminate the rotation loop
     // when there's nothing left to shift.
@@ -239,6 +255,87 @@ export class FileSink {
       // no active file yet
     }
     return parts.join('');
+  }
+
+  /** Every log file in the set: the active file plus every `.<N>` rotation,
+   *  INCLUDING strays with an index beyond the current retain count (left
+   *  behind when retain shrinks — rotation alone would never touch them). */
+  private async allLogFiles(): Promise<string[]> {
+    let names: string[];
+    try {
+      names = await fs.readdir(this.dir);
+    } catch {
+      return []; // log dir not created yet
+    }
+    return names
+      .filter(n => n === FILENAME || n.match(new RegExp(`^${FILENAME.replace('.', '\\.')}\\.\\d+$`)))
+      .map(n => path.join(this.dir, n));
+  }
+
+  /**
+   * Update the rotation limits at runtime (from the `dittoVsce.log*`
+   * settings). Rotations beyond the new retain count are deleted
+   * immediately; otherwise they would sit on disk forever, since rotation
+   * only ever shifts indices up to `retain`. An active file that already
+   * exceeds a shrunken maxBytes is rotated right away rather than waiting
+   * for the next line.
+   */
+  async setLimits(limits: { maxBytes?: number; retain?: number }): Promise<void> {
+    this.opts.maxBytes = limits.maxBytes ?? this.opts.maxBytes;
+    this.opts.retain = limits.retain ?? this.opts.retain;
+    const active = path.join(this.dir, FILENAME);
+    for (const file of await this.allLogFiles()) {
+      const m = file.match(/\.(\d+)$/);
+      if (m && Number.parseInt(m[1]!, 10) > this.opts.retain) {
+        await fs.rm(file, { force: true }).catch(() => {});
+      }
+    }
+    // Rotate the active file now if it already exceeds a shrunken maxBytes —
+    // doFlush's size check only runs when there are buffered lines to write,
+    // so without this an over-limit active file would keep growing until the
+    // next line arrived.
+    try {
+      const { size } = await fs.stat(active);
+      if (size > this.opts.maxBytes) { await this.rotate(active); }
+    } catch { /* no active file yet */ }
+  }
+
+  /**
+   * Delete every rotated backup older than `maxAgeMs` (by mtime). The active
+   * file is never touched — it is live state. Rotations with an index beyond
+   * the current retain count are strays and are deleted regardless of age.
+   * Returns the number of files deleted. Runs at extension activation, the
+   * same point VS Code core prunes its own session log directories.
+   */
+  async pruneRotationsOlderThan(maxAgeMs: number): Promise<number> {
+    const cutoff = Date.now() - maxAgeMs;
+    let deleted = 0;
+    for (const file of await this.allLogFiles()) {
+      const m = file.match(/\.(\d+)$/);
+      if (!m) { continue; } // the active file — never pruned
+      const stray = Number.parseInt(m[1]!, 10) > this.opts.retain;
+      let mtime: number;
+      try { mtime = (await fs.stat(file)).mtimeMs; } catch { continue; }
+      if (stray || mtime < cutoff) {
+        await fs.rm(file, { force: true }).catch(() => {});
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  /**
+   * Delete the entire log set — active file and all rotations — after
+   * flushing any buffered lines (so a pending flush can't recreate the file
+   * with stale content after the delete). The next write re-creates the
+   * active file with its session header, exactly as on first launch.
+   * Backs the Clear Application Log command.
+   */
+  async clear(): Promise<void> {
+    await this.flush();
+    for (const file of await this.allLogFiles()) {
+      await fs.rm(file, { force: true }).catch(() => {});
+    }
   }
 
   async dispose(): Promise<void> {

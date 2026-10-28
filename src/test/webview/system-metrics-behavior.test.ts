@@ -142,12 +142,15 @@ test('SystemMetrics: histogram details render µs/ms averages and the max, guard
     'each series toggles independently — multiple rows can carry open details at once');
 });
 
-test('SystemMetrics: rows render in first-seen accumulation order, labels preserved per series', async t => {
+test('SystemMetrics: rows render alphabetically by key, label set breaks ties', async t => {
   const opened = (labels: Record<string, string>) => ({
     key: 'ditto.network.dsoq.connection.opened',
     labels, description: 'opened', unit: 'count', kind: 'counter',
     sinceConnect: 1, periodDelta: 0,
   });
+  // Deliberately fed OUT of order — the panel must sort, not keep payload
+  // order (the snapshot arrives in accumulator insertion order, which reads
+  // as random in a long list).
   const el = await mountSnapshot(t, [
     opened({ transport: 'wifi' }),
     { key: 'ditto.network.dsoq.connection.closed', labels: {}, description: 'closed', unit: 'count', kind: 'counter', sinceConnect: 3, periodDelta: 0 },
@@ -156,14 +159,14 @@ test('SystemMetrics: rows render in first-seen accumulation order, labels preser
 
   const rows = [...el.shadowRoot!.querySelectorAll<HTMLElement>('.mrow')];
   assert.deepEqual(rows.map(r => r.querySelector('.mkey')!.textContent), [
-    'network.dsoq.connection.opened',
     'network.dsoq.connection.closed',
     'network.dsoq.connection.opened',
-  ], 'payload order is kept (first-seen), duplicates keyed by label set');
+    'network.dsoq.connection.opened',
+  ], 'sorted by key, duplicates keyed by label set');
   assert.deepEqual(
     rows.map(r => r.querySelector('.mlabels')?.textContent ?? ''),
-    ['transport=wifi', '', 'transport=ble'],
-    'each series keeps its own label line',
+    ['', 'transport=ble', 'transport=wifi'],
+    'same-key series sort by their label line, each keeping its own labels',
   );
 });
 

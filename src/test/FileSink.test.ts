@@ -276,3 +276,143 @@ test('FileSink: readTailLines agrees with readAllChronological on the tail', asy
   }
   await sink.dispose();
 });
+
+// ─── Retention management: setLimits / pruneRotationsOlderThan / clear ───
+// Backs the dittoVsce.log* settings and the Clear Application Log command.
+
+test('FileSink: clear() deletes the active file and every rotation; next write starts fresh with a header', async () => {
+  const dir = await tmpdir();
+  const sink = new FileSink(dir, { maxBytes: 30, retain: 3, headerLines: ['# hdr'] });
+  for (let i = 0; i < 8; i++) { await sink.write(`payload ${i} ${'x'.repeat(20)}\n`); }
+  await sink.flush();
+  assert.ok((await fs.readdir(dir)).length > 1, 'fixture produced rotations');
+
+  await sink.clear();
+  assert.deepEqual(await fs.readdir(dir), [], 'every log file is gone');
+
+  // The sink is still usable: the next write re-creates the active file with
+  // its header, exactly as on first launch.
+  await sink.write('after clear\n');
+  await sink.flush();
+  const txt = await fs.readFile(path.join(dir, 'ditto-edge-studio.log'), 'utf8');
+  assert.match(txt, /^# hdr\nafter clear\n/, 'fresh file gets the session header');
+  await sink.dispose();
+});
+
+test('FileSink: clear() flushes buffered lines before deleting so nothing stale reappears', async () => {
+  const dir = await tmpdir();
+  const sink = new FileSink(dir, { maxBytes: 4096, retain: 2 });
+  await sink.write('buffered but not yet flushed\n');
+  await sink.clear();
+  // The buffer was flushed then deleted — the directory is empty and the
+  // buffered line must NOT resurrect on the next timer flush.
+  assert.deepEqual(await fs.readdir(dir), []);
+  await sink.write('new\n');
+  await sink.flush();
+  const txt = await fs.readFile(path.join(dir, 'ditto-edge-studio.log'), 'utf8');
+  assert.equal(txt, 'new\n');
+  await sink.dispose();
+});
+
+test('FileSink: setLimits shrinking retain deletes the extra backups immediately', async () => {
+  const dir = await tmpdir();
+  const sink = new FileSink(dir, { maxBytes: 20, retain: 4 });
+  for (let i = 0; i < 12; i++) { await sink.write(`line ${i} ${'y'.repeat(12)}\n`); }
+  await sink.flush();
+  const before = (await fs.readdir(dir)).sort();
+  assert.ok(before.includes('ditto-edge-studio.log.4'), `fixture built 4 rotations: ${before.join(', ')}`);
+
+  await sink.setLimits({ retain: 1 });
+  const after = (await fs.readdir(dir)).sort();
+  assert.deepEqual(after.filter(f => /\.\d+$/.test(f)), ['ditto-edge-studio.log.1'],
+    'backups beyond the new retain count are deleted, not orphaned');
+
+  // And later rotation respects the new ceiling.
+  for (let i = 0; i < 6; i++) { await sink.write(`more ${i} ${'z'.repeat(12)}\n`); }
+  await sink.flush();
+  const final = (await fs.readdir(dir)).sort();
+  assert.ok(final.length <= 2, `active + 1 rotation max, got: ${final.join(', ')}`);
+  await sink.dispose();
+});
+
+test('FileSink: setLimits shrinking maxBytes rotates an already-over-limit active file now', async () => {
+  const dir = await tmpdir();
+  const sink = new FileSink(dir, { maxBytes: 4096, retain: 3 });
+  await sink.write('big '.repeat(100) + '\n'); // ~400 bytes
+  await sink.flush();
+
+  await sink.setLimits({ maxBytes: 50 });
+  const files = (await fs.readdir(dir)).sort();
+  assert.ok(files.includes('ditto-edge-studio.log.1'),
+    'over-limit active file rotated immediately instead of growing until the next line');
+  const active = await fs.readFile(path.join(dir, 'ditto-edge-studio.log'), 'utf8').catch(() => '');
+  assert.ok(!active.includes('big'), 'the active file is fresh post-rotation');
+  await sink.dispose();
+});
+
+test('FileSink: pruneRotationsOlderThan deletes only aged rotations — never the active file', async () => {
+  const dir = await tmpdir();
+  const sink = new FileSink(dir, { maxBytes: 20, retain: 4 });
+  for (let i = 0; i < 12; i++) { await sink.write(`line ${i} ${'y'.repeat(12)}\n`); }
+  await sink.flush();
+  const files = (await fs.readdir(dir)).filter(f => /\.\d+$/.test(f));
+  assert.ok(files.length >= 3, `fixture built rotations: ${files.join(', ')}`);
+
+  // Age every rotation except the newest (.1) beyond the cutoff.
+  const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  for (const f of files) {
+    if (f.endsWith('.1')) { continue; }
+    await fs.utimes(path.join(dir, f), old, old);
+  }
+
+  const day = 24 * 60 * 60 * 1000;
+  const deleted = await sink.pruneRotationsOlderThan(14 * day);
+  assert.equal(deleted, files.length - 1, 'all but the fresh .1 pruned');
+  const remaining = (await fs.readdir(dir)).sort();
+  assert.ok(remaining.includes('ditto-edge-studio.log'), 'active file untouched');
+  assert.ok(remaining.includes('ditto-edge-studio.log.1'), 'fresh rotation kept');
+  assert.equal(remaining.length, 2);
+  await sink.dispose();
+});
+
+test('FileSink: pruneRotationsOlderThan deletes strays beyond retain regardless of age', async () => {
+  const dir = await tmpdir();
+  const sink = new FileSink(dir, { maxBytes: 4096, retain: 1 });
+  await sink.write('live\n');
+  await sink.flush();
+  // A stray left by an earlier, higher retain value — fresh mtime, so only
+  // the stray rule can delete it.
+  const stray = path.join(dir, 'ditto-edge-studio.log.7');
+  await fs.writeFile(stray, 'orphaned\n');
+
+  const deleted = await sink.pruneRotationsOlderThan(365 * 24 * 60 * 60 * 1000);
+  assert.equal(deleted, 1, 'stray deleted despite a huge age cutoff');
+  assert.deepEqual((await fs.readdir(dir)).sort(), ['ditto-edge-studio.log']);
+  await sink.dispose();
+});
+
+test('FileSink: constructor limits are respected from the first write', async () => {
+  const dir = await tmpdir();
+  const sink = new FileSink(dir, { maxBytes: 10, retain: 0 });
+  for (let i = 0; i < 5; i++) { await sink.write(`line${i}\n`); }
+  await sink.flush();
+  // retain 0: rotation happens, but no backups survive — only the active file.
+  assert.deepEqual(await fs.readdir(dir), ['ditto-edge-studio.log']);
+  await sink.dispose();
+});
+
+test('FileSink: retain 0 still bounds the file size instead of growing forever', async () => {
+  const dir = await tmpdir();
+  const sink = new FileSink(dir, { maxBytes: 20, retain: 0 });
+  for (let i = 0; i < 20; i++) {
+    await sink.write(`line ${i} ${'q'.repeat(8)}\n`); // 15 bytes each
+    await sink.flush();
+  }
+  const files = await fs.readdir(dir);
+  assert.deepEqual(files, ['ditto-edge-studio.log'], 'no backups are kept');
+  const { size } = await fs.stat(path.join(dir, 'ditto-edge-studio.log'));
+  // Without the retain-0 discard the active file would keep every line
+  // (300 bytes) — the point of the setting is that the log stays bounded.
+  assert.ok(size <= 40, `active file stays near maxBytes, got ${size}`);
+  await sink.dispose();
+});

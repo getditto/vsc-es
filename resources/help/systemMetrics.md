@@ -14,24 +14,50 @@ poll ahead of that cadence.
 
 Every metric series reported by the SDK renders as a row: the metric name
 (with the `ditto.` prefix dropped) and its labels on the left, the
-since-connect total and the last poll period's delta (`▲ +N`, or `—` when
-nothing happened) on the right.
+since-connect total and the last poll period's delta (`▲ +N`, `▼ −N` for
+gauges whose value fell, or `—` when nothing happened) on the right.
+Gauge series (e.g. `transport.awdl.interface_up`,
+`multiplexer.phy.last_sent_at`) show their current absolute value instead
+of a running total; epoch-timestamp gauges render as an age (`12s ago`).
 
-The segment control filters rows by namespace:
+The segment control filters rows by namespace. Each series appears under
+exactly one topic:
 
-- **Network** — DSOQ connection counters (`ditto.network.*`). Watch opened
-  vs closed counts: divergence raises a banner about a possible connection
-  leak or handshake instability; non-zero `tlv.unknown_type_*` counts
-  indicate interop/version skew between peers.
-- **Store** — SQLite metrics per database role (`ditto.backend.*`,
-  `labels.db` = `main` / `replication_metadata` / `attachment` /
-  `system_info`). Rising fsync/checkpoint durations mean disk pressure; a
-  WAL that only grows means checkpoints aren't keeping up with writers.
-- **Sync** — replication state (`ditto.sync.*`, `ditto.replication.*`).
-  Non-zero recovery counts mean sync sessions were torn down — check the
-  `cause` label and the Log Analyzer.
-- **Other** — anything outside those namespaces.
-- **All** — every reported series.
+- **Discovery** — peer discovery (`ditto.discovery.*`): mDNS and multicast
+  DNS-SD browse/registration sessions and advertised-interface counts.
+- **Network** — connection and DSOQ counters (`ditto.network.*`). Watch
+  opened vs closed counts: divergence raises a banner about a possible
+  connection leak or handshake instability; non-zero `tlv.unknown_type_*`
+  counts indicate interop/version skew between peers.
+- **Sync** — the replication engine and everything that moves documents
+  between peers: replication sessions (`ditto.sync.*`,
+  `ditto.replication.*`), the diffcaster mesh (`ditto.diffcaster.*`), the
+  RIBLT set-reconciliation sketch (`ditto.riblt.*`), presence evidence
+  (`ditto.presence.*`), and the sync byte stream (`ditto.stream.*`).
+  Non-zero recovery/session-reset counts mean sync sessions were torn down
+  — check the `cause` label and the Log Analyzer.
+- **Transport** — the link layer: the physical/virtual multiplexer
+  (`ditto.multiplexer.*`), the UDP multicast (NORM) transport and its
+  attachment mover (`ditto.multicast.*`, `ditto.multicast_attachment.*`),
+  and the per-protocol transports (`ditto.transport.*` — UDP, TCP, BLE,
+  AWDL, WiFi-Aware, websocket).
+- **Store** — the persistence layer: the storage engine (`ditto.backend.*`
+  — sqlite3 txns/fsync/WAL, labelled per database role), the store API
+  (`ditto.store.*`), small-peer-info writes (`ditto.small_peer_info.*`), and
+  blob/attachment storage tiers (`ditto.storage.*`, `ditto.blob_storage.*`).
+  Rising fsync/checkpoint durations mean disk pressure; a WAL that only
+  grows means checkpoints aren't keeping up with writers.
+- **Query** — query-engine metrics: the OTLP series (`ditto.query.*`, SDK
+  5.2+) and their legacy `dql.*` aliases, which the SDK dual-emits
+  alongside (`dql.requests` carries the same count as
+  `ditto.query.requests`).
+- **Peer** — peer identity and the attachment P2P transfer state machine
+  (`ditto.peer.*`): revocation handshakes, attachment link maintenance and
+  fetch lifecycle.
+- **All** — every reported series. The metrics pipeline's own telemetry
+  (`ditto.metrics.*`, `ditto.metrics_exporter.*`, `ditto.system_info.*`)
+  and anything the SDK adds that hasn't been routed to a topic yet appear
+  here only — there is no separate "Other" segment.
 
 The **search box** (right of the segments) narrows the list to series whose
 metric name or labels contain the term, case-insensitively — for example
@@ -40,9 +66,14 @@ Search and the segment filter compose (Store + `wal` → the WAL metrics of
 the Store namespace). The Pinned section is not affected by either filter —
 it is your stable set.
 
+The master list is sorted **alphabetically by metric name**, so you can
+scan straight to a series instead of searching; series that share a name
+(a rare label-only pair) order by their labels. The Pinned section keeps
+the order you set by dragging — it is not sorted.
+
 The **ⓘ icon** on a row expands the series' details: the metric's
-description from the SDK registry, its kind (counter / histogram) and
-unit, the full metric name, and — for histograms — the average and
+description from the SDK registry, its kind (counter / gauge / histogram)
+and unit, the full metric name, and — for histograms — the average and
 absolute maximum since connect.
 
 ## Pinning

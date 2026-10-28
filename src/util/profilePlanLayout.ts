@@ -28,24 +28,31 @@ export interface LaidOutNode {
   children: LaidOutNode[];
 }
 
-/** Sum of `execNs` across this operator and every descendant. Only
- *  call on the root — non-root callers get a smaller total that
- *  breaks the percent-badge invariant (badges no longer sum to 100%
- *  across the tree). */
+/** Sum of `execNs` across this operator and every descendant (including
+ *  subplan descendants like `nlJoin.inner`). Only call on the root —
+ *  non-root callers get a smaller total that breaks the percent-badge
+ *  invariant (badges no longer sum to 100% across the tree). */
 export function subtreeExecNs(node: QueryProfileOperator): number {
   const here = node.stats?.execNs ?? 0;
-  return node.children.reduce((acc, c) => acc + subtreeExecNs(c), here);
+  const childSum = node.children.reduce((acc, c) => acc + subtreeExecNs(c), here);
+  return node.subplans.reduce((acc, sp) => acc + subtreeExecNs(sp.plan), childSum);
 }
 
 export function layout(node: QueryProfileOperator, y: number): LaidOutNode {
-  if (node.children.length === 0) {
+  // Combine children and subplans for layout — subplans (e.g. nlJoin's
+  // `inner`) render as additional children in the tree view.
+  const allChildren = [
+    ...node.children.map(c => ({ plan: c, isSubplan: false })),
+    ...node.subplans.map(sp => ({ plan: sp.plan, isSubplan: true })),
+  ];
+  if (allChildren.length === 0) {
     return { node, subtreeWidth: BOX_WIDTH, centerX: BOX_WIDTH / 2, y, children: [] };
   }
   // Each child's centerX stays in its own subtree-local frame.
   // `flatten()` and the renderer reconstruct absolute positions by
   // composing a walking `childLeftEdge` with each child's local
   // centerX, so positioning here would double-count.
-  const laidOutChildren = node.children.map(c => layout(c, y + BOX_HEIGHT_EST + ROW_GAP_Y));
+  const laidOutChildren = allChildren.map(c => layout(c.plan, y + BOX_HEIGHT_EST + ROW_GAP_Y));
   const totalChildWidth =
     laidOutChildren.reduce((a, b) => a + b.subtreeWidth, 0)
     + Math.max(0, laidOutChildren.length - 1) * BOX_GAP_X;

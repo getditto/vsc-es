@@ -37,6 +37,9 @@ function noopLogger(): Logger {
     withTag: () => self,
     readAllLogs: async () => '',
     readRecentLogLines: async () => [],
+    setFileLimits: async () => {},
+    pruneLogFilesOlderThan: async () => 0,
+    clearLogFiles: async () => {},
     dispose: async () => {},
   };
   return self;

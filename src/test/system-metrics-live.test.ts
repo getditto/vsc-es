@@ -158,3 +158,35 @@ function sumTxnAttempts(samples: SystemMetricSample[]): number {
     .filter(s => s.key === 'ditto.backend.sqlite3.txn_attempts')
     .reduce((acc, s) => acc + s.sinceConnect, 0);
 }
+
+test('live system:metrics: a labelled metric collapses to its single aggregate row', async () => {
+  // The SDK emits ditto.backend.sqlite3.txn_attempts as an unlabelled
+  // aggregate PLUS labelled children ({mode,outcome}). The panel must show
+  // the key once — the aggregate — not once per label set.
+  await withStore(async exec => {
+    const service = new SystemMetricsService({ executeRaw: exec }, noopLogger(), {
+      readEnabled: () => true,
+      onStatus: () => {},
+    });
+    await exec('INSERT INTO `agg` DOCUMENTS (:d)', { d: { _id: 'a', v: 1 } });
+    const status = await service.pollOnce();
+    assert.equal(status.kind, 'working');
+    if (status.kind !== 'working') { return; }
+
+    const txnRows = status.snapshot.samples.filter(s => s.key === 'ditto.backend.sqlite3.txn_attempts');
+    console.log('txn_attempts rows in snapshot:', txnRows.map(s => JSON.stringify(s.labels)));
+    assert.equal(txnRows.length, 1,
+      `txn_attempts must appear once, got ${txnRows.length}: ${txnRows.map(s => JSON.stringify(s.labels)).join(' ')}`);
+    assert.deepEqual(txnRows[0]!.labels, {}, 'the surviving row is the unlabelled aggregate');
+
+    // No key anywhere in the snapshot lists under more than one (key, labels)
+    // pair when an aggregate exists for it.
+    const counts = new Map<string, number>();
+    for (const s of status.snapshot.samples) {
+      counts.set(s.key, (counts.get(s.key) ?? 0) + 1);
+    }
+    const duplicated = [...counts.entries()].filter(([, n]) => n > 1).map(([k]) => k);
+    assert.deepEqual(duplicated, [],
+      `no key should list more than once; got duplicates for: ${duplicated.join(', ')}`);
+  });
+});

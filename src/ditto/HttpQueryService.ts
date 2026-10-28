@@ -1,3 +1,4 @@
+import * as http from 'node:http';
 import * as https from 'node:https';
 import type { Logger } from '../logging/types.js';
 
@@ -14,6 +15,15 @@ export interface HttpQueryRequest {
   httpApiKey: string;
   /** Mirrors the connection's `allowUntrustedCerts` flag. */
   allowUntrustedCerts: boolean;
+  /**
+   * The connection's `authUrl` (Ditto Server URL). Its scheme decides
+   * whether the HTTP API is called over http or https — a self-managed
+   * Big Peer serving plain HTTP (`http://host:port`) has no TLS to
+   * upgrade through, and attempting https produces an SSL handshake
+   * error. Absent/host-only values default to https, preserving the
+   * Ditto Cloud behavior.
+   */
+  serverUrl?: string;
   /** DQL query string to send as `{"statement": …}`. */
   query: string;
 }
@@ -110,6 +120,24 @@ export function normalizeDittoServerUrl(value: string): string {
   return `https://${v}`;
 }
 
+/**
+ * Decide whether the HTTP API is called over http or https, from the
+ * connection's Ditto Server URL. `http://` → `http` (a plain-HTTP Big Peer
+ * has no TLS listener — https would die in the handshake); everything else
+ * (https://, legacy host-only values, empty) → `https`, the Ditto Cloud
+ * behavior. Matches the websocket scheme pin in DittoManager.connect, which
+ * makes the same derivation for sync traffic.
+ */
+export function httpApiSchemeForServerUrl(serverUrl: string | undefined): 'http' | 'https' {
+  return serverUrl?.trim().toLowerCase().startsWith('http://') ? 'http' : 'https';
+}
+
+/** Hostnames where a plaintext bearer key stays on the machine. */
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '::1'
+    || hostname.startsWith('127.');
+}
+
 /** A hung server must not leave the query panel in 'running' forever. */
 export const REQUEST_TIMEOUT_MS = 30_000;
 /** Responses are buffered fully in memory before parsing — cap them so a
@@ -202,15 +230,17 @@ export function createSettleOnce(): {
 
 /**
  * POST a DQL statement to the Ditto Server's REST endpoint and return
- * the items array. Implemented against `node:https` (rather than the
- * global `fetch`) because we need per-request control over
+ * the items array. Implemented against `node:https`/`node:http` (rather
+ * than the global `fetch`) because we need per-request control over
  * `rejectUnauthorized` for the `allowUntrustedCerts` flag, which fetch
  * doesn't expose without pulling in undici directly.
  *
  * Mirrors the SwiftUI `executeSelectedAppQueryHttp` semantics:
- * `https://<httpApiUrl>/api/v5/store/execute` with
+ * `<scheme>://<httpApiUrl>/api/v5/store/execute` with
  * `Authorization: Bearer <httpApiKey>` and a JSON body of
- * `{"statement": "<query>"}`.
+ * `{"statement": "<query>"}`. Unlike SwiftUI (which always uses https),
+ * the scheme follows {@link httpApiSchemeForServerUrl} so plain-HTTP
+ * Big Peers are reachable.
  */
 export async function executeRemoteQuery(
   req: HttpQueryRequest,
@@ -229,32 +259,45 @@ export async function executeRemoteQuery(
   if (urlProblem) {
     throw new HttpQueryError(`Refusing to query: httpApiUrl is invalid (${urlProblem})`);
   }
-  const url = new URL(`https://${req.httpApiUrl}/api/v5/store/execute`);
+  // The scheme follows the connection's server URL: a self-managed Big Peer
+  // serving plain HTTP would otherwise receive a TLS ClientHello on its
+  // plaintext port (an SSL "wrong version number" error client-side).
+  const scheme = httpApiSchemeForServerUrl(req.serverUrl);
+  const url = new URL(`${scheme}://${req.httpApiUrl}/api/v5/store/execute`);
   const body = JSON.stringify({ statement: req.query });
+
+  if (scheme === 'http' && !isLoopbackHost(url.hostname)) {
+    log?.warn('HTTP API over plaintext — the bearer key is sent unencrypted', {
+      host: url.host,
+    });
+  }
 
   log?.debug('POST /store/execute', {
     host: url.host,
+    scheme,
     queryPreview: req.query.slice(0, 80),
     allowUntrustedCerts: req.allowUntrustedCerts,
   });
 
   return new Promise<HttpQueryResponse>((resolve, reject) => {
     const settle = createSettleOnce();
-    const r = https.request(
-      {
-        method: 'POST',
-        hostname: url.hostname,
-        port: url.port || 443,
-        path: url.pathname + url.search,
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          Authorization: `Bearer ${req.httpApiKey}`,
-        },
-        // Per-request opt-out of cert validation, matching
-        // appConfig.allowUntrustedCerts in the SwiftUI implementation.
-        rejectUnauthorized: !req.allowUntrustedCerts,
+    const options: https.RequestOptions = {
+      method: 'POST',
+      hostname: url.hostname,
+      port: url.port || (scheme === 'http' ? 80 : 443),
+      path: url.pathname + url.search,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        Authorization: `Bearer ${req.httpApiKey}`,
       },
+      // Per-request opt-out of cert validation, matching
+      // appConfig.allowUntrustedCerts in the SwiftUI implementation.
+      // Meaningful only over TLS; harmless on plaintext.
+      rejectUnauthorized: !req.allowUntrustedCerts,
+    };
+    const r = (scheme === 'http' ? http : https).request(
+      options,
       (res) => {
         const bodyBuffer = createBodyAccumulator(MAX_RESPONSE_BYTES);
         res.on('data', (chunk: Buffer) => {

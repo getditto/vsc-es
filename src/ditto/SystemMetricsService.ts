@@ -16,10 +16,11 @@ import type {
  *
  *  1. The exporter is STARTUP-GATED: `metrics_exporter_virtual_collection_enabled`
  *     defaults to false and runtime `ALTER SYSTEM` changes are ignored —
- *     it's read once at install time. System params read `DITTO_<UPPER_SNAKE>`
- *     env vars (`crates/ditto-configuration/src/layer.rs`), so
- *     {@link withSystemMetricsEnv} flips
- *     `DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED` around `Ditto.open`.
+ *     it's read once at install time. DittoManager passes it through the
+ *     SDK 5.2 `DittoConfig.systemParameters` constructor arg, which applies
+ *     overrides before subsystems initialize (the previous
+ *     `DITTO_<UPPER_SNAKE>` env-var flip around `Ditto.open` survives only
+ *     as {@link withSystemMetricsEnv}, kept for the live-service tests).
  *     When the exporter wasn't installed, `SELECT * FROM system:metrics`
  *     still succeeds but returns a single placeholder row
  *     `{ status: "disabled", description: "…" }` with no `key` — that's the
@@ -52,6 +53,13 @@ export function readCollectSystemMetrics(): boolean {
 
 /** Run `fn` with the metrics-exporter env var flipped on, restoring the
  *  caller's value afterwards.
+ *
+ *  TEST-ONLY as of SDK 5.2: production connect passes
+ *  `metrics_exporter_virtual_collection_enabled` through
+ *  `DittoConfig.systemParameters` instead (see DittoManager.connect). This
+ *  helper stays exported because the live-service tests
+ *  (`system-metrics-live.test.ts`) exercise the env-var path against a
+ *  real SDK, and it documents the parameter's env-var alias.
  *
  *  The env var must be set BEFORE `Ditto.open` — the parameter is read at
  *  startup and runtime changes are ignored. Caveats accepted by design:
@@ -120,15 +128,62 @@ function num(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
+/**
+ * Known gauge metric keys, sourced from the SDK's static `gauge!(…)`
+ * declarations (crates/ditto-link2, ditto-multiplexer, ditto-transport-awdl
+ * `metrics.rs`). The `system:metrics` row shape carries NO kind marker —
+ * counters and gauges both emit `current`/`updates`/`delta` — so matching
+ * the key is the only way to know a series shouldn't be delta-accumulated.
+ *
+ * Prefix entries (trailing `.`) cover per-label child series whose exact
+ * key is the parent (labels live in the label map, not the key), so exact
+ * matching would suffice for them too — the prefix form documents that
+ * these families grow children under the same key.
+ *
+ * When the SDK adds gauges, add them here; a missed gauge renders as a
+ * counter whose `sinceConnect` is the net change since connect rather than
+ * the absolute value (wrong but not corrupting), so the failure mode is
+ * cosmetic.
+ */
+const KNOWN_GAUGE_KEYS: readonly string[] = [
+  // ditto-link2 (QUIC networking) — instantaneous per-remote samples and
+  // active-connection counts.
+  'ditto.network.connections',
+  'ditto.network.quic.path.rtt',
+  'ditto.network.quic.path.mtu',
+  'ditto.network.quic.udp_tx.',
+  'ditto.network.quic.udp_rx.',
+  'ditto.network.dsoq.stream.datagram_callback.queue_depth',
+  'ditto.network.dsoq.stream.datagram_callback.queue_high_water',
+  // ditto-multiplexer — last-activity epoch timestamps and the live
+  // virtual-connection count (SDK 5.2, #NETW-1989).
+  'ditto.multiplexer.phy.last_sent_at',
+  'ditto.multiplexer.phy.last_received_at',
+  'ditto.multiplexer.virt.connections_gauge',
+  // ditto-transport-awdl — interface status flag, 1 = up (SDK 5.2,
+  // #NETW-1989).
+  'ditto.transport.awdl.interface_up',
+];
+
+function isGaugeKey(key: string): boolean {
+  return KNOWN_GAUGE_KEYS.some(g =>
+    g.endsWith('.') ? key.startsWith(g) : key === g);
+}
+
 /** Rows without a `key` are the exporter's "disabled" placeholder. */
 function parseMetricRow(row: Record<string, unknown>): {
   key: string;
   labels: Record<string, string>;
   description: string;
   unit: string;
-  kind: 'counter' | 'histogram';
+  kind: 'counter' | 'histogram' | 'gauge';
   delta: number;
   deltaSum: number;
+  /** Counter/gauge rows only: the exporter's absolute `current` value.
+   *  For gauges this is the display value; for counters it's the SDK's
+   *  own running total (we accumulate deltas ourselves so the panel
+   *  reflects "since THIS host connected", not "since SDK start"). */
+  current?: number;
   absMax?: number;
 } | null {
   if (typeof row.key !== 'string' || row.key.length === 0) { return null; }
@@ -140,23 +195,33 @@ function parseMetricRow(row: Record<string, unknown>): {
     }
   }
   // Histograms carry count/dcount; counters and gauges share the
-  // current/updates/delta shape and read as 'counter' here.
+  // current/updates/delta shape and read as 'counter' here unless the
+  // key is a known gauge (see isGaugeKey — the row shape carries no
+  // kind marker, so key-matching is the only signal).
   const isHistogram = num(row.count) !== undefined || num(row.dcount) !== undefined;
   const absMax = num(row.abs_max);
+  const current = num(row.current);
   return {
     key: row.key,
     labels,
     description: typeof row.description === 'string' ? row.description : '',
     unit: typeof row.unit === 'string' ? row.unit : '',
-    kind: isHistogram ? 'histogram' : 'counter',
+    kind: isHistogram ? 'histogram' : isGaugeKey(row.key) ? 'gauge' : 'counter',
     delta: num(isHistogram ? row.dcount : row.delta) ?? 0,
     deltaSum: num(row.dsum) ?? 0,
+    ...(current !== undefined ? { current } : {}),
     ...(absMax !== undefined ? { absMax } : {}),
   };
 }
 
 /** Fold one flush of `system:metrics` rows into `samples` (mutated).
- *  Ignores placeholder/garbage rows. Call `buildSnapshot` afterwards. */
+ *  Ignores placeholder/garbage rows. Call `buildSnapshot` afterwards.
+ *
+ *  Counters accumulate `delta`; histograms accumulate `dcount`/`dsum`.
+ *  Gauges instead TRACK the exporter's absolute `current` — accumulating
+ *  deltas would render e.g. `awdl.interface_up` as a meaningless running
+ *  sum. A gauge row missing `current` (shouldn't happen — the exporter
+ *  always emits it) falls back to last-known value. */
 export function accumulateMetricRows(
   samples: Map<string, SystemMetricSample>,
   rows: Record<string, unknown>[],
@@ -167,6 +232,11 @@ export function accumulateMetricRows(
     const sig = seriesSignature(parsed.key, parsed.labels);
     const existing = samples.get(sig);
     if (existing) {
+      if (parsed.kind === 'gauge') {
+        if (parsed.current !== undefined) { existing.sinceConnect = parsed.current; }
+        existing.periodDelta = parsed.delta;
+        continue;
+      }
       existing.sinceConnect += parsed.delta;
       existing.periodDelta = parsed.delta;
       if (parsed.kind === 'histogram') {
@@ -175,13 +245,14 @@ export function accumulateMetricRows(
       }
       // Descriptions are static per metric; no need to re-copy.
     } else {
+      const isGauge = parsed.kind === 'gauge';
       const sample: SystemMetricSample = {
         key: parsed.key,
         labels: parsed.labels,
         description: parsed.description,
         unit: parsed.unit,
         kind: parsed.kind,
-        sinceConnect: parsed.delta,
+        sinceConnect: isGauge ? (parsed.current ?? 0) : parsed.delta,
         periodDelta: parsed.delta,
         ...(parsed.kind === 'histogram'
           ? {
@@ -193,6 +264,37 @@ export function accumulateMetricRows(
       samples.set(sig, sample);
     }
   }
+}
+
+/**
+ * Collapse each metric key to a single display series.
+ *
+ * The SDK emits a labelled metric as MULTIPLE rows: an unlabelled aggregate
+ * parent (`labels={}`) plus one labelled child per label combination (e.g.
+ * `ditto.small_peer_info.write_store_duration_secs` appears once bare and
+ * once with `{segment:"core"}`; `ditto.backend.sqlite3.fsync_total` appears
+ * bare plus `{db:"main"}` and `{db:"attachment"}`). Both flush from the same
+ * registry — the parent is the running total across every child. Rendered
+ * naively, the key then lists two-or-more times in the panel, once per label
+ * set, which reads as a duplicate.
+ *
+ * The aggregate is the most useful single number (it sums all children), so
+ * for any key that HAS an unlabelled series we keep only that one and drop
+ * the labelled children. A key with NO unlabelled series (labelled-only
+ * metrics) keeps all its rows — dropping them would hide the metric
+ * entirely. This keeps every key listing exactly once when the SDK provides
+ * an aggregate, while never losing a label-only series.
+ */
+export function collapseToAggregate(samples: SystemMetricSample[]): SystemMetricSample[] {
+  const keysWithAggregate = new Set<string>();
+  for (const s of samples) {
+    if (Object.keys(s.labels).length === 0) { keysWithAggregate.add(s.key); }
+  }
+  // Keep an unlabelled series always; keep a labelled series ONLY when its
+  // key has no aggregate (otherwise it's the duplicate child of a key
+  // already shown by its parent row).
+  return samples.filter(s =>
+    Object.keys(s.labels).length === 0 || !keysWithAggregate.has(s.key));
 }
 
 /** True when a SELECT answered but the exporter isn't installed — the row
@@ -309,7 +411,7 @@ export class SystemMetricsService {
 
   private buildSnapshot(): SystemMetricsSnapshot {
     return {
-      samples: [...this.samples.values()],
+      samples: collapseToAggregate([...this.samples.values()]),
       sinceMs: this.sinceMs ?? Date.now(),
       polledAtMs: Date.now(),
       pollIntervalMs: this.intervalMs,

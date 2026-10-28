@@ -24,11 +24,6 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import type { Logger } from '../logging/types.js';
 
-/** The SDK's transport classes declare `onclose` getters whose type isn't
- *  assignable to the `Transport` interface under exactOptionalPropertyTypes
- *  (the SDK isn't compiled with that flag). Contain the one-way cast. */
-type McpTransport = Parameters<McpServer['connect']>[0];
-
 /** SwiftUI parity: 4 MiB per request. */
 export const MCP_MAX_BODY_BYTES = 4 * 1024 * 1024;
 
@@ -305,7 +300,12 @@ export class McpServerService {
         void server.close().catch(() => { /* best effort */ });
       }
     };
-    await server.connect(transport as unknown as McpTransport);
+    // No cast needed: since @modelcontextprotocol/sdk 1.32.2 the
+    // StreamableHTTPServerTransport satisfies McpTransport directly. The
+    // old `as unknown as McpTransport` double-assertion was a workaround
+    // for the SDK's narrower transport types and is now flagged by
+    // @typescript-eslint/no-unnecessary-type-assertion.
+    await server.connect(transport);
     await transport.handleRequest(req, res, body);
   }
 

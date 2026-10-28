@@ -250,6 +250,13 @@ expect `periodDelta` to shrink immediately after any read; if the exporter
 wasn't enabled at connect time the status is `exporterDisabled` with guidance
 (reconnect with `dittoVsce.collectSystemMetrics` on).
 
+**Gauge series (SDK 5.2)** are the exception to the accumulate-deltas rule:
+for known gauge keys (e.g. `ditto.network.connections`,
+`ditto.transport.awdl.interface_up`), `kind` is `"gauge"` and
+`sinceConnect` carries the exporter's latest absolute `current` value —
+report it as-is (a point value, not a total) and expect `periodDelta` to go
+negative when the gauge falls.
+
 ## Architecture
 
 ```

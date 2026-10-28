@@ -30,30 +30,66 @@ import type {
 
 type In = SysMetricsOut;
 
-// ─── Namespace segment filter (parity with the SwiftUI app's
-//     SystemMetricsNamespaceFilter) ─────────────────────────────
-type NamespaceFilter = 'all' | 'network' | 'store' | 'sync' | 'other';
+// ─── Namespace segment filter ────────────────────────────────
+// Every series the JS client SDK emits lives under `ditto.<root>.`, and
+// each root maps to exactly one topic segment so a metric appears in one
+// place only. Verified against the SDK's metric declarations
+// (crates/*/src/**/metrics.rs). Legacy non-`ditto.` roots in the SDK repo
+// (hydra_*, kafka_*, test fixtures) are Big Peer server-side or test-only
+// and never reach the client's `system:metrics`, so they need no segment.
+type NamespaceFilter =
+  | 'all'
+  | 'discovery'
+  | 'network'
+  | 'sync'
+  | 'transport'
+  | 'store'
+  | 'query'
+  | 'peer';
 
+// No "Other" segment: every routed series lands in exactly one of the
+// topics above, and the only unrouted series are the metrics pipeline's own
+// telemetry (ditto.metrics.*, ditto.metrics_exporter.*, ditto.system_info.*)
+// plus anything the SDK adds later — those stay visible under All rather
+// than in a segment that would otherwise sit empty.
 const SEGMENTS: ReadonlyArray<{ id: NamespaceFilter; label: string }> = [
   { id: 'all', label: 'All' },
+  { id: 'discovery', label: 'Discovery' },
   { id: 'network', label: 'Network' },
-  { id: 'store', label: 'Store' },
   { id: 'sync', label: 'Sync' },
-  { id: 'other', label: 'Other' },
+  { id: 'transport', label: 'Transport' },
+  { id: 'store', label: 'Store' },
+  { id: 'query', label: 'Query' },
+  { id: 'peer', label: 'Peer' },
 ];
 
 const NAMESPACE_PREFIXES: ReadonlyArray<readonly [NamespaceFilter, readonly string[]]> = [
+  ['discovery', ['ditto.discovery.']],
   ['network', ['ditto.network.']],
-  ['store', ['ditto.backend.']],
-  ['sync', ['ditto.sync.', 'ditto.replication.']],
+  // Sync covers the replication engine and everything that moves documents
+  // between peers: replication sessions, the diffcaster mesh, the RIBLT
+  // set-reconciliation sketch, presence evidence, and the sync byte stream.
+  ['sync', ['ditto.sync.', 'ditto.replication.', 'ditto.diffcaster.', 'ditto.riblt.', 'ditto.presence.', 'ditto.stream.']],
+  // Transport covers the link layer and the transports themselves: the
+  // physical/virtual multiplexer, the UDP multicast (NORM) transport and its
+  // attachment mover, the per-protocol transports, and the legacy _tcp key.
+  ['transport', ['ditto.transport.', 'ditto.multiplexer.', 'ditto.multicast.', 'ditto.multicast_attachment.', 'ditto._tcp.']],
+  // Store covers the persistence layer: the storage engine (sqlite3
+  // txns/fsync/WAL), the store API, small-peer-info writes, and the
+  // blob/attachment storage tiers.
+  ['store', ['ditto.backend.', 'ditto.store.', 'ditto.small_peer_info.', 'ditto.storage.', 'ditto.blob_storage.', 'ditto.blob_storage_tiered.']],
+  // Query covers both the OTLP names (`ditto.query.*`, SDK 5.2+) and the
+  // legacy `dql.*` series the SDK dual-emits alongside them
+  // (crates/ditto-dql/src/metrics.rs: every dql.* counter/histogram has a
+  // ditto.query.* alias — dql.requests ↔ ditto.query.requests, and so on).
+  ['query', ['ditto.query.', 'dql.']],
+  // Peer covers peer identity and the attachment P2P transfer state machine
+  // (revocation handshakes, attachment link maintenance, fetches).
+  ['peer', ['ditto.peer.']],
 ];
 
 function matchesFilter(sample: SystemMetricSample, filter: NamespaceFilter): boolean {
   if (filter === 'all') { return true; }
-  if (filter === 'other') {
-    return !NAMESPACE_PREFIXES.some(([, prefixes]) =>
-      prefixes.some(p => sample.key.startsWith(p)));
-  }
   const prefixes = NAMESPACE_PREFIXES.find(([id]) => id === filter)?.[1] ?? [];
   return prefixes.some(p => sample.key.startsWith(p));
 }
@@ -90,9 +126,26 @@ function formatDuration(n: number): string {
   return `${n.toFixed(2)} s`;
 }
 
-/** Headline value: histograms accumulate a COUNT of observations;
- *  seconds-unit counters scale for readability. */
+/** Gauge keys whose value is a Unix-epoch timestamp (seconds) — render as
+ *  an age ("12s ago") rather than a raw epoch or a duration. Sourced from
+ *  the SDK's `phy.last_sent_at`/`phy.last_received_at` declarations. */
+function isEpochGauge(s: SystemMetricSample): boolean {
+  return s.kind === 'gauge' && s.unit === 'seconds' && s.key.endsWith('_at');
+}
+
+function formatEpochAge(epochSeconds: number): string {
+  if (epochSeconds <= 0) { return 'never'; }
+  const ageSec = Math.max(0, Date.now() / 1000 - epochSeconds);
+  if (ageSec < 60) { return `${Math.round(ageSec)}s ago`; }
+  if (ageSec < 3600) { return `${Math.round(ageSec / 60)}m ago`; }
+  return `${Math.round(ageSec / 3600)}h ago`;
+}
+
+/** Headline value: histograms accumulate a COUNT of observations; gauges
+ *  show their latest absolute value (epoch timestamps as an age, seconds
+ *  as durations); seconds-unit counters scale for readability. */
 function formatHeadline(s: SystemMetricSample): string {
+  if (isEpochGauge(s)) { return formatEpochAge(s.sinceConnect); }
   if (s.kind === 'histogram') { return formatValue(s.sinceConnect); }
   return s.unit === 'seconds' ? formatDuration(s.sinceConnect) : formatValue(s.sinceConnect);
 }
@@ -172,11 +225,13 @@ export class SystemMetricsElement extends LitElement {
       font: inherit;
     }
 
-    /* Filter row: centered segment control (SwiftUI pattern — centering
-     * makes the picker read as governing the list below) with the search
-     * box right-aligned on the same row. */
+    /* Filter row: segment control with the search box right-aligned on the
+     * same row. The row WRAPS: when the panel is too narrow for both, the
+     * search box drops to its own line instead of overlapping the segment
+     * control. */
     .filter-row {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 10px;
       margin-bottom: 12px;
@@ -184,12 +239,12 @@ export class SystemMetricsElement extends LitElement {
     .seg-wrap {
       display: flex;
       justify-content: center;
-      flex: 1;
+      flex: 1 1 auto;
       min-width: 0;
     }
     .search {
-      flex: 0 0 auto;
-      width: 200px;
+      flex: 0 1 200px;
+      min-width: 140px;
       padding: 3px 8px;
       font: inherit;
       font-size: 12px;
@@ -201,23 +256,29 @@ export class SystemMetricsElement extends LitElement {
     }
     .search::placeholder { color: var(--vscode-input-placeholderForeground); }
     .search:focus { outline: 1px solid var(--vscode-focusBorder); }
+    /* The control sizes to its content, but shrinks under pressure and
+     * wraps its buttons onto extra rows so every segment stays clickable
+     * at any panel width — nothing clips or scrolls out of reach. */
     .seg {
       display: flex;
-      flex: 0 1 320px;
+      flex-wrap: wrap;
+      flex: 0 1 auto;
+      min-width: 0;
       border: 1px solid var(--vscode-panel-border);
       border-radius: 6px;
       overflow: hidden;
     }
     .seg button {
-      flex: 1;
-      padding: 4px 0;
+      flex: 0 0 auto;
+      padding: 5px 12px;
       border: none;
       border-right: 1px solid var(--vscode-panel-border);
       background: transparent;
       color: var(--vscode-foreground);
       cursor: pointer;
       font: inherit;
-      font-size: 12px;
+      font-size: 13px;
+      white-space: nowrap;
     }
     .seg button:last-child { border-right: none; }
     .seg button[aria-pressed="true"] {
@@ -292,6 +353,7 @@ export class SystemMetricsElement extends LitElement {
       color: var(--vscode-descriptionForeground);
     }
     .mdelta.up { color: var(--vscode-testing-iconPassed, #73c991); }
+    .mdelta.down { color: var(--vscode-testing-iconFailed, #f14c4c); }
 
     .pin-btn, .info-btn {
       flex-shrink: 0;
@@ -680,8 +742,17 @@ export class SystemMetricsElement extends LitElement {
   }
 
   private renderDashboard(snap: SystemMetricsSnapshot): TemplateResult {
-    const filtered = snap.samples.filter(s =>
-      matchesFilter(s, this.filter) && matchesQuery(s, this.query));
+    const filtered = snap.samples
+      .filter(s => matchesFilter(s, this.filter) && matchesQuery(s, this.query))
+      // Alphabetical by the DISPLAYED key (the ditto.-stripped form the user
+      // scans) — the snapshot arrives in accumulator insertion order, which
+      // reads as random in a long list and forces search for every lookup.
+      // Ties (an aggregate row beside a label-only sibling that survived
+      // collapse) fall back to the label signature for a stable order.
+      .sort((a, b) => {
+        const byKey = stripPrefix(a.key).localeCompare(stripPrefix(b.key));
+        return byKey !== 0 ? byKey : labelLine(a).localeCompare(labelLine(b));
+      });
     const since = new Date(snap.sinceMs).toLocaleTimeString();
     const polled = new Date(snap.polledAtMs).toLocaleTimeString();
     return html`
@@ -756,8 +827,12 @@ export class SystemMetricsElement extends LitElement {
           </div>
           <div class="mvals">
             <div class="mval">${formatHeadline(s)}</div>
-            <div class="mdelta ${s.periodDelta > 0 ? 'up' : ''}">
-              ${s.periodDelta > 0 ? html`▲ +${formatDelta(s)}` : html`—`}
+            <div class="mdelta ${s.periodDelta > 0 ? 'up' : s.periodDelta < 0 ? 'down' : ''}">
+              ${s.periodDelta > 0
+                ? html`▲ +${formatDelta(s)}`
+                : s.periodDelta < 0
+                  ? html`▼ −${formatDelta({ ...s, periodDelta: -s.periodDelta })}`
+                  : html`—`}
             </div>
           </div>
           ${dragRef ? html`
@@ -783,7 +858,7 @@ export class SystemMetricsElement extends LitElement {
         ${s.description ? html`<p class="desc">${s.description}</p>` : nothing}
         <dl>
           <dt>Metric</dt><dd class="fullkey">${s.key}</dd>
-          <dt>Kind</dt><dd>${s.kind === 'histogram' ? 'Histogram' : 'Counter'}</dd>
+          <dt>Kind</dt><dd>${s.kind === 'histogram' ? 'Histogram' : s.kind === 'gauge' ? 'Gauge' : 'Counter'}</dd>
           ${s.unit ? html`<dt>Unit</dt><dd>${s.unit}</dd>` : nothing}
           ${avg !== undefined ? html`<dt>Avg since connect</dt><dd>${avg}</dd>` : nothing}
           ${max !== undefined ? html`<dt>Abs max</dt><dd>${max}</dd>` : nothing}

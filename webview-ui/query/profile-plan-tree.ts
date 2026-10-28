@@ -56,7 +56,9 @@ export class DittoProfilePlanTree extends LitElement {
     .box .name { font-size: 12px; font-weight: 600; }
     .box .key  { font-size: 11px; color: var(--vscode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .box .time { font-size: 11px; font-variant-numeric: tabular-nums; }
+    .box .stor { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--vscode-charts-teal, #009688); }
     .box .io   { font-size: 10px; color: var(--vscode-descriptionForeground); }
+    .box .yields { font-size: 10px; color: var(--vscode-descriptionForeground); font-style: italic; }
     svg.connectors { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
     /* Tree-indent-guides is VS Code's purpose-built stroke for connector
      * lines (used by the File Explorer tree). It's theme-aware and far
@@ -121,6 +123,7 @@ export class DittoProfilePlanTree extends LitElement {
   private renderBox(f: LaidOutNode & { absX: number }, totalExec: number): TemplateResult {
     const node = f.node;
     const execNs = node.stats?.execNs;
+    const storNs = node.stats?.storNs;
     const share = execNs !== undefined && totalExec > 0 ? execNs / totalExec : 0;
     const hotspot = share >= HOTSPOT_THRESHOLD;
     const keyAttr = pickKeyAttribute(node);
@@ -130,7 +133,13 @@ export class DittoProfilePlanTree extends LitElement {
           const pct = percentOfTotal(execNs, totalExec, 0);
           return pct ? `${formatNs(execNs)}  (${pct})` : formatNs(execNs);
         })();
+    const storLabel: string | undefined = storNs !== undefined
+      ? `stor ${formatNs(storNs)}`
+      : undefined;
     const ioLabel = formatIo(node.stats);
+    const yieldsLabel = node.stats?.yields
+      ? `yields: ${Object.entries(node.stats.yields).map(([k, v]) => `${k} ${v.toLocaleString()}`).join(' · ')}`
+      : undefined;
     return html`
       <div
         class=${`box ${hotspot ? 'hotspot' : 'normal'}`}
@@ -139,7 +148,9 @@ export class DittoProfilePlanTree extends LitElement {
         <div class="name">${node.name}</div>
         ${keyAttr ? html`<div class="key" title=${keyAttr}>${keyAttr}</div>` : null}
         ${timeLabel ? html`<div class="time">${timeLabel}</div>` : null}
+        ${storLabel ? html`<div class="stor">${storLabel}</div>` : null}
         ${ioLabel ? html`<div class="io">${ioLabel}</div>` : null}
+        ${yieldsLabel ? html`<div class="yields">${yieldsLabel}</div>` : null}
       </div>
     `;
   }
@@ -158,8 +169,10 @@ function formatIo(stats: QueryProfileOperator['stats']): string | undefined {
   if (!stats) { return undefined; }
   const inV = stats.documentsIn;
   const outV = stats.documentsOut;
-  if (inV !== undefined && outV !== undefined) { return `${inV.toLocaleString()} in / ${outV.toLocaleString()} out`; }
-  if (inV !== undefined) { return `${inV.toLocaleString()} in`; }
-  if (outV !== undefined) { return `${outV.toLocaleString()} out`; }
-  return undefined;
+  const skippedV = stats.documentsSkipped;
+  const parts: string[] = [];
+  if (inV !== undefined) { parts.push(`${inV.toLocaleString()} in`); }
+  if (outV !== undefined) { parts.push(`${outV.toLocaleString()} out`); }
+  if (skippedV !== undefined && skippedV > 0) { parts.push(`${skippedV.toLocaleString()} skipped`); }
+  return parts.length > 0 ? parts.join(' / ') : undefined;
 }

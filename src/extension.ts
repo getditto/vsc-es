@@ -25,6 +25,8 @@ import { ObserverPanel } from './panels/ObserverPanel.js';
 import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
+import { SupportBundleService } from './ditto/SupportBundleService.js';
+import { BugReportService } from './bugreport/BugReportService.js';
 import { CollectionsRepository } from './ditto/CollectionsRepository.js';
 import { isBareIdentifier, quoteIdentifier } from './ditto/dql-identifier.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
@@ -181,15 +183,41 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const sessionId = crypto.randomUUID();
   const fileDir = path.join(context.globalStorageUri.fsPath, 'logs');
   const analyzerSink = new AnalyzerSink();
+  // Log-retention settings (dittoVsce.log*): read once here for the sink's
+  // initial limits, watched below for live updates.
+  const readLogLimits = () => {
+    const cfg = vscode.workspace.getConfiguration('dittoVsce');
+    return {
+      maxBytes: Math.max(1, cfg.get<number>('logMaxMegabytes', 5)) * 1024 * 1024,
+      retain: Math.max(0, Math.round(cfg.get<number>('logRetainFiles', 5))),
+      maxAgeDays: cfg.get<number>('logMaxAgeDays', 14),
+    };
+  };
+  const initialLogLimits = readLogLimits();
   logger = createLogger({
     channel,
     fileDir,
     sessionId,
+    fileMaxBytes: initialLogLimits.maxBytes,
+    fileRetain: initialLogLimits.retain,
     mode: context.extensionMode === vscode.ExtensionMode.Development
       || context.extensionMode === vscode.ExtensionMode.Test
         ? 'development' : 'production',
     extraSinks: [analyzerSink],
   });
+  // Age-based pruning, once per activation — the same point VS Code core
+  // prunes its own session log directories. 0 days disables pruning.
+  // activate() is synchronous, so this runs fire-and-forget; the task is
+  // self-contained background maintenance and reports through the log.
+  if (initialLogLimits.maxAgeDays > 0) {
+    void logger.pruneLogFilesOlderThan(initialLogLimits.maxAgeDays * 24 * 60 * 60 * 1000)
+      .then(pruned => {
+        if (pruned > 0) {
+          logger.info(`Pruned ${pruned} rotated log file(s) older than ${initialLogLimits.maxAgeDays} days`);
+        }
+      })
+      .catch(err => logger.error('Log pruning failed', { error: String(err) }));
+  }
   // NOTE: the logger's disposal is registered at the END of activate() —
   // VS Code disposes subscriptions in registration order, and everything
   // else (manager.disconnect above all) logs during its own teardown.
@@ -373,6 +401,12 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const extensionVersion =
     (context.extension?.packageJSON as { version?: unknown } | undefined)?.version as string | undefined
     ?? '0.0.0';
+  // The SDK version goes into the bug-report README so support can see at a
+  // glance which Ditto build produced the bundle. Read it from the bundled
+  // dependency declaration rather than hardcoding a string that drifts.
+  const sdkVersion =
+    (context.extension?.packageJSON as { dependencies?: Record<string, string> } | undefined)
+      ?.dependencies?.['@dittolive/ditto'] ?? 'unknown';
   // Tracks when each database last entered the 'active' lifecycle state.
   // The Log Analyzer uses this as a backfill floor so its histograms only
   // reflect the current connection — not weeks of rotated log history.
@@ -542,6 +576,13 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         // prefix match): port moves restart the listener when it's running
         // (the flag's on/off state is per-connection, on StoredDittoConfig).
         void mcpController.reconcile();
+      }
+      if (e.affectsConfiguration('dittoVsce.logMaxMegabytes')
+          || e.affectsConfiguration('dittoVsce.logRetainFiles')) {
+        // Live rotation-limit update — no restart needed. Stray rotations
+        // beyond a shrunken retain count are deleted by setLimits.
+        const limits = readLogLimits();
+        void logger.setFileLimits({ maxBytes: limits.maxBytes, retain: limits.retain });
       }
       if (e.affectsConfiguration('dittoVsce.logAnalyzer.customPatternsFile')) {
         // Repoint PatternStore at the new user file (or fall back to
@@ -1179,20 +1220,172 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     }),
     vscode.commands.registerCommand('dittoVsce.exportLogs', async () => {
       const ok = await vscode.window.showWarningMessage(
-        'The exported log may contain document data from your databases. Review before sharing.',
+        'The bug report bundles the application log with an SDK support bundle, and may contain document data from your databases. Review before sharing.',
         { modal: true },
-        'Open in Editor',
+        'Export Bug Report',
       );
-      if (ok !== 'Open in Editor') { return; }
-      const combined = await logger.readAllLogs();
-      const doc = await vscode.workspace.openTextDocument({ language: 'log', content: combined });
-      await vscode.window.showTextDocument(doc);
+      if (ok !== 'Export Bug Report') { return; }
+
+      const service = new BugReportService({
+        manager,
+        logger,
+        readAllLogs: () => logger.readAllLogs(),
+        extensionVersion,
+        sdkVersion,
+      });
+      try {
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Exporting bug report',
+            cancellable: false,
+          },
+          async (progress) => service.export({
+            report: (msg, inc) => {
+              const opts: { message: string; increment?: number } = { message: msg };
+              if (inc !== undefined) { opts.increment = inc; }
+              progress.report(opts);
+            },
+          }),
+        );
+        if (result) {
+          const sizeMB = (result.totalBytes / (1024 * 1024)).toFixed(1);
+          const bundleNote = result.includedSupportBundle
+            ? ''
+            : ' — application log only (see README.txt inside)';
+          void vscode.window.showInformationMessage(
+            `Bug report saved (${sizeMB} MB)${bundleNote}. Share ${result.savedPath} with Ditto support.`,
+            'Reveal in Finder',
+          ).then(action => {
+            if (action === 'Reveal in Finder') {
+              void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(result.savedPath));
+            }
+          });
+          if (!result.includedSupportBundle && result.bundleNote?.startsWith('support bundle collection failed')) {
+            void vscode.window.showWarningMessage(
+              `The bug report was saved without a support bundle — ${result.bundleNote}. The application log is included.`,
+            );
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.withTag('ext:exportLogs').error('Bug report export failed', { error: msg });
+        void vscode.window.showErrorMessage(`Bug report export failed: ${msg}`);
+      }
+    }),
+    vscode.commands.registerCommand('dittoVsce.exportSdkLogs', async () => {
+      if (!manager.getActiveConfigId()) {
+        void vscode.window.showWarningMessage(
+          'Connect to a database first — SDK logs are exported from the active Ditto instance.',
+        );
+        return;
+      }
+      const ok = await vscode.window.showWarningMessage(
+        'The exported SDK log may contain document data from your databases. Review before sharing.',
+        { modal: true },
+        'Export',
+      );
+      if (ok !== 'Export') { return; }
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const suggested = `ditto-sdk-logs-${timestamp}.jsonl.gz`;
+      const target = await vscode.window.showSaveDialog({
+        defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri
+          ? vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, suggested)
+          : vscode.Uri.file(suggested),
+        filters: { 'Compressed JSON Lines': ['jsonl.gz'] },
+        saveLabel: 'Export SDK Logs',
+      });
+      if (!target) { return; }
+
+      try {
+        const bytesWritten = await DittoLogger.exportToFile(target.fsPath);
+        const sizeMB = (bytesWritten / (1024 * 1024)).toFixed(1);
+        void vscode.window.showInformationMessage(
+          `SDK logs exported (${sizeMB} MB). Share ${target.fsPath} with Ditto support.`,
+          'Reveal in Finder',
+        ).then(action => {
+          if (action === 'Reveal in Finder') {
+            void vscode.commands.executeCommand('revealFileInOS', target);
+          }
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.withTag('ext:exportSdkLogs').error('SDK log export failed', { error: msg });
+        void vscode.window.showErrorMessage(`SDK log export failed: ${msg}`);
+      }
+    }),
+    vscode.commands.registerCommand('dittoVsce.collectSupportBundle', async () => {
+      if (!manager.getActiveConfigId()) {
+        void vscode.window.showWarningMessage(
+          'Connect to a database first, then run the query you want to diagnose before collecting a support bundle.',
+        );
+        return;
+      }
+
+      // Ask whether to run a query for trace collection, or capture
+      // the current state as-is. Running a query fills the dial9 ring
+      // buffer with task-level trace data for that workload.
+      const choice = await vscode.window.showInformationMessage(
+        'Collect a support bundle with dial9 trace data for Ditto support. ' +
+        'For best results, run the slow query first so the trace captures it.',
+        { modal: true },
+        'Collect Now',
+        'Cancel',
+      );
+      if (choice !== 'Collect Now') { return; }
+
+      const service = new SupportBundleService(manager, logger);
+      try {
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Collecting support bundle',
+            cancellable: false,
+          },
+          async (progress) => {
+            return service.collect(undefined, {
+              report: (msg, inc) => {
+                const opts: { message: string; increment?: number } = { message: msg };
+                if (inc !== undefined) { opts.increment = inc; }
+                progress.report(opts);
+              },
+            });
+          },
+        );
+        if (result) {
+          const sizeMB = (result.compressedBytes / (1024 * 1024)).toFixed(1);
+          void vscode.window.showInformationMessage(
+            `Support bundle saved (${sizeMB} MB). Share ${result.savedPath} with Ditto support.`,
+            'Reveal in Finder',
+          ).then(action => {
+            if (action === 'Reveal in Finder') {
+              void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(result.savedPath));
+            }
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.withTag('ext:SupportBundle').error('Support bundle collection failed', { error: msg });
+        void vscode.window.showErrorMessage(`Support bundle collection failed: ${msg}`);
+      }
     }),
     vscode.commands.registerCommand('dittoVsce.showLogFile', () => {
       vscode.commands.executeCommand(
         'revealFileInOS',
         vscode.Uri.joinPath(context.globalStorageUri, 'logs', 'ditto-edge-studio.log'),
       );
+    }),
+    vscode.commands.registerCommand('dittoVsce.clearApplicationLog', async () => {
+      const ok = await vscode.window.showWarningMessage(
+        'Delete all application log files (the active log and every rotated backup)? This cannot be undone. Export a bug report first if you need the history.',
+        { modal: true },
+        'Delete Logs',
+      );
+      if (ok !== 'Delete Logs') { return; }
+      await logger.clearLogFiles();
+      logger.info('Application log cleared by user');
+      void vscode.window.showInformationMessage('Application log cleared — a fresh log starts now.');
     }),
     vscode.commands.registerCommand('dittoVsce.openLogAnalyzer', (databaseId?: string) => {
       // The Log Analyzer is per-database — invoked from the tree row of an

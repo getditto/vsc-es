@@ -39,7 +39,7 @@ import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import { detectPlatform, transportSupportFor } from '../util/platform.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import { isSelectStatement, alreadyHasProfilePrefix, isProfilableSelect, isAdviseStatement } from './QueryProfileParser.js';
-import { withSystemMetricsEnv, readCollectSystemMetrics } from './SystemMetricsService.js';
+import { readCollectSystemMetrics } from './SystemMetricsService.js';
 import { projectQueryRows } from './query-projection.js';
 import { installSessionLogObservers } from './session-log-observers.js';
 import { startSyncWithCollectionScopes } from './sync-scopes.js';
@@ -193,9 +193,30 @@ export class DittoManager {
       const persistenceDir = path.join(this.context.globalStorageUri.fsPath, 'dittoData', config.id);
       fs.mkdirSync(persistenceDir, { recursive: true });
 
-      const dittoCfg = new DittoConfig(
-        config.databaseId,
-        config.mode === 'server'
+      // Startup-gated system parameters are passed via the SDK's native
+      // `systemParameters` option (SDK 5.2+), which applies them before
+      // subsystems initialize. This replaces the previous
+      // `withSystemMetricsEnv` env-var workaround — the SDK validates
+      // parameter names and values at open time.
+      //
+      // NOTE: as of 5.2.0 GA (rc.1 onward) systemParameters are accepted ONLY
+      // via the DittoConfig options-object constructor; the 4th positional arg
+      // from the previews throws ("Pass systemParameters in a DittoConfig
+      // options object"). The positional 3-arg form still works but we
+      // need the options form for systemParameters.
+      //
+      // Currently sets:
+      // - `metrics_exporter_virtual_collection_enabled`: gates the
+      //   system:metrics virtual collection (default false; runtime
+      //   ALTER SYSTEM is ignored).
+      const systemParams: Record<string, string | number | boolean> = {};
+      if (readCollectSystemMetrics()) {
+        systemParams.metrics_exporter_virtual_collection_enabled = true;
+      }
+
+      const dittoCfg = new DittoConfig({
+        databaseID: config.databaseId,
+        connect: config.mode === 'server'
           ? { mode: 'server', url: normalizeDittoServerUrl(config.authUrl) }
           : {
               mode: 'smallPeersOnly' as const,
@@ -203,8 +224,9 @@ export class DittoManager {
               // string | null; treat empty/undefined as "no shared key".
               privateKey: secrets.secretKey || null,
             },
-        persistenceDir
-      );
+        persistenceDirectory: persistenceDir,
+        systemParameters: systemParams,
+      });
 
       // Apply per-DB SDK log level before opening the SDK. `config.logLevel`
       // is `SdkLogLevel` (lowercase 'warning'/'verbose'); the SDK runtime
@@ -218,16 +240,7 @@ export class DittoManager {
 
       let ditto: Ditto;
       try {
-        // The system:metrics exporter is a startup-gated system parameter
-        // (`metrics_exporter_virtual_collection_enabled`, default false;
-        // runtime ALTER SYSTEM is ignored). The SDK reads it from the
-        // DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED env var at open,
-        // so when the dittoVsce.collectSystemMetrics setting is on we flip
-        // the var just around Ditto.open and restore it after. Process-wide
-        // env caveat (another Ditto SDK in the same host would also see it)
-        // is accepted and documented in SystemMetricsService — this
-        // extension is the only SDK host in its process.
-        ditto = await withSystemMetricsEnv(readCollectSystemMetrics(), () => Ditto.open(dittoCfg));
+        ditto = await Ditto.open(dittoCfg);
       } catch (openErr) {
         // The SDK uses an OS-level advisory lock on `__ditto_lock_file` inside
         // the working directory; the file itself is an empty placeholder. When
@@ -279,6 +292,21 @@ export class DittoManager {
           support.bluetoothLE && (config.isBluetoothLeEnabled ?? support.bluetoothLE);
         c.peerToPeer.awdl.isEnabled =
           support.awdl && (config.isAwdlEnabled ?? support.awdl);
+        if (config.mode === 'server') {
+          // The JS SDK derives the sync websocket URL from the server URL by
+          // upgrading the scheme to wss:// unconditionally. Against a
+          // plain-HTTP Big Peer (self-managed, no TLS) that produces a TLS
+          // ClientHello on a plain port — nginx logs it as `\x16\x03\x01…`
+          // 400s, the SDK retries every ~5 s, and sync never establishes.
+          // Pin ws:// (or wss:// for an https server) explicitly. No path:
+          // the SDK appends /_ditto/ws itself; pinning the path yields
+          // repeating 404s.
+          const serverUrl = normalizeDittoServerUrl(config.authUrl);
+          const wsBase = serverUrl
+            .replace(/^http:\/\//i, 'ws://')
+            .replace(/^https:\/\//i, 'wss://');
+          c.connect.websocketURLs = [wsBase];
+        }
       });
       this.logTransportReadback(ditto, 'connect');
 

@@ -20,6 +20,8 @@ export interface CreateLoggerOptions {
   channel: vscode.LogOutputChannel;
   fileDir: string;
   fileMin?: LogLevel;                  // default 'info'
+  fileMaxBytes?: number;               // rotation threshold — default FileSink's 5 MB
+  fileRetain?: number;                 // rotated backups kept — default FileSink's 5
   mode?: 'development' | 'production'; // default 'production' — guard behavior
   sessionId?: string;
   extraSinks?: Sink[];
@@ -37,6 +39,8 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
       `# session ${opts.sessionId ?? 'unknown'}`,
       `# started ${new Date().toISOString()}`,
     ],
+    ...(opts.fileMaxBytes !== undefined ? { maxBytes: opts.fileMaxBytes } : {}),
+    ...(opts.fileRetain !== undefined ? { retain: opts.fileRetain } : {}),
   });
   const fileMin: LogLevel = opts.fileMin ?? 'info';
   const mode = opts.mode ?? 'production';
@@ -154,6 +158,9 @@ export function createLogger(opts: CreateLoggerOptions): InternalLogger {
         await fileSink.flush();
         return fileSink.readTailLines(maxLines);
       },
+      setFileLimits: (limits) => fileSink.setLimits(limits),
+      pruneLogFilesOlderThan: (maxAgeMs) => fileSink.pruneRotationsOlderThan(maxAgeMs),
+      clearLogFiles: () => fileSink.clear(),
       dispose: async () => {
         await fileSink.dispose();
         channelSink.dispose();

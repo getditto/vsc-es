@@ -215,9 +215,12 @@ export class DittoProfileViewer extends LitElement {
           <span class="section-title">Reading the badges</span>
           ${this.renderLegendRow('in', 'documents flowing in', 'blue')}
           ${this.renderLegendRow('out', 'documents flowing out', 'green')}
+          ${this.renderLegendRow('skipped', 'documents skipped (SDK 5.1+)', 'gray')}
           ${this.renderLegendRow('exec', 'CPU time inside this operator', 'red')}
           ${this.renderLegendRow('recv', 'time waiting on upstream operators', 'orange')}
           ${this.renderLegendRow('send', 'time pushing output downstream', 'purple')}
+          ${this.renderLegendRow('stor', 'time blocked on the store backend (SDK 5.1+)', 'teal')}
+          ${this.renderLegendRow('yields', 'cooperative scheduler yields (SDK 5.1+)', 'gray')}
           <div class="legend-row" style="margin-top:6px;">
             <span class="legend-swatch hotspot-swatch" aria-label="dashed orange border"></span>
             <span>bottleneck — operator uses ≥ 50% of plan CPU work (Plan view only)</span>

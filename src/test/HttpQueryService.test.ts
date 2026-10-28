@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createBodyAccumulator,
   createSettleOnce,
+  httpApiSchemeForServerUrl,
   interpretResponse,
   normalizeDittoServerUrl,
   validateDittoServerUrl,
@@ -190,6 +191,23 @@ test('validateDittoServerUrl: refuses unsafe or malformed values', () => {
   assert.match(validateDittoServerUrl('https://good.com@evil.com') ?? '', /must not contain a username/);
   assert.match(validateDittoServerUrl('ftp://example.ditto.live') ?? '', /must use http/);
   assert.match(validateDittoServerUrl('not a host') ?? '', /Not a valid server URL/);
+});
+
+test('httpApiSchemeForServerUrl: http only when the server URL says so', () => {
+  // A plain-HTTP Big Peer has no TLS listener — the HTTP API must use
+  // http too, or the query dies in the SSL handshake.
+  assert.equal(httpApiSchemeForServerUrl('http://localhost:8081'), 'http');
+  assert.equal(httpApiSchemeForServerUrl('HTTP://Big-Peer.Internal:8080'), 'http',
+    'the scheme match is case-insensitive');
+  assert.equal(httpApiSchemeForServerUrl('  http://localhost:8081  '), 'http',
+    'whitespace around the stored URL is tolerated');
+
+  // Everything else keeps the TLS default — Ditto Cloud URLs, legacy
+  // host-only values, and absent/empty fields all stay https.
+  assert.equal(httpApiSchemeForServerUrl('https://example.ditto.live'), 'https');
+  assert.equal(httpApiSchemeForServerUrl('example.ditto.live'), 'https');
+  assert.equal(httpApiSchemeForServerUrl(''), 'https');
+  assert.equal(httpApiSchemeForServerUrl(undefined), 'https');
 });
 
 test('executeRemoteQuery: refuses to send the bearer key to an `@`-trapped URL', async () => {

@@ -8,6 +8,14 @@ function formatDocs(n: number): string {
   return n.toLocaleString();
 }
 
+/** Format yield counters as a compact string: "receiver 2 · heartbeat 1".
+ *  Zero-valued entries are already dropped by the parser. */
+function formatYields(yields: Record<string, number>): string {
+  return Object.entries(yields)
+    .map(([k, v]) => `${k} ${v.toLocaleString()}`)
+    .join(' · ');
+}
+
 @customElement('ditto-profile-card-list')
 export class DittoProfileCardList extends LitElement {
   @property({ attribute: false }) root!: QueryProfileOperator;
@@ -44,6 +52,15 @@ export class DittoProfileCardList extends LitElement {
     }
     .attr-key { color: var(--vscode-descriptionForeground); }
     .attr-val { color: var(--vscode-foreground); word-break: break-word; user-select: text; }
+    .subplan-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--vscode-descriptionForeground);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+    .subplan-wrap { padding-left: 12px; margin-top: 12px; }
   `;
 
   override render() {
@@ -72,6 +89,12 @@ export class DittoProfileCardList extends LitElement {
             ${node.children.map(c => this.renderNode(c))}
           </div>
         ` : nothing}
+        ${node.subplans.map(sp => html`
+          <div class="subplan-wrap">
+            <div class="subplan-label">${sp.key}</div>
+            ${this.renderNode(sp.plan)}
+          </div>
+        `)}
       </div>
     `;
   }
@@ -81,9 +104,12 @@ export class DittoProfileCardList extends LitElement {
     return html`
       ${stats.documentsIn !== undefined ? html`<ditto-pill label="in" .value=${formatDocs(stats.documentsIn)} color="blue"></ditto-pill>` : nothing}
       ${stats.documentsOut !== undefined ? html`<ditto-pill label="out" .value=${formatDocs(stats.documentsOut)} color="green"></ditto-pill>` : nothing}
+      ${stats.documentsSkipped !== undefined && stats.documentsSkipped > 0 ? html`<ditto-pill label="skipped" .value=${formatDocs(stats.documentsSkipped)} color="gray"></ditto-pill>` : nothing}
       ${stats.execNs !== undefined ? html`<ditto-pill label="exec" .value=${formatNs(stats.execNs)} color="red"></ditto-pill>` : nothing}
       ${stats.recvNs !== undefined ? html`<ditto-pill label="recv" .value=${formatNs(stats.recvNs)} color="orange"></ditto-pill>` : nothing}
       ${stats.sendNs !== undefined ? html`<ditto-pill label="send" .value=${formatNs(stats.sendNs)} color="purple"></ditto-pill>` : nothing}
+      ${stats.storNs !== undefined ? html`<ditto-pill label="stor" .value=${formatNs(stats.storNs)} color="teal"></ditto-pill>` : nothing}
+      ${stats.yields ? html`<ditto-pill label="yields" .value=${formatYields(stats.yields)} color="gray"></ditto-pill>` : nothing}
     `;
   }
 }

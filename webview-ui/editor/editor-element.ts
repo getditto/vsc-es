@@ -549,11 +549,12 @@ export class DatabaseEditor extends LitElement {
         <h2>Ditto Server (BigPeer) Information</h2>
         <label for="auth-url">URL</label>
         <input id="auth-url" type="text" .value=${c.authUrl} @input=${(e: Event) => this.update_('authUrl', (e.target as HTMLInputElement).value)} />
-        <div class="help">Paste the Ditto Server URL from the Portal, including <code>https://</code>.</div>
+        <div class="help">Paste the Ditto Server URL from the Portal, including <code>https://</code>. For a local Big Peer serving plain HTTP, use <code>http://host:port</code>.</div>
 
         <h2>Ditto Server — HTTP API (Optional)</h2>
         <label for="http-api-url">HTTP API URL</label>
         <input id="http-api-url" type="text" .value=${c.httpApiUrl} @input=${(e: Event) => this.update_('httpApiUrl', (e.target as HTMLInputElement).value)} />
+        <div class="help">Host and port only, no scheme — queries use <code>http</code> or <code>https</code> to match the server URL above.</div>
         <label for="http-api-key">HTTP API Key</label>
         <input id="http-api-key" type="password" .value=${this.secrets.httpApiKey ?? ''} @input=${(e: Event) => this.updateSecret('httpApiKey', (e.target as HTMLInputElement).value)} />
         <div class="checkbox-row">

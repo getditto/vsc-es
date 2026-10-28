@@ -46,9 +46,62 @@ const SYSTEM_SNAPSHOT = {
       sinceConnect: 24, periodDelta: 2, sumSinceConnect: 0.024, absMax: 0.004,
     },
     {
+      key: 'ditto.store.changes',
+      labels: {}, description: 'Store rows changed', unit: 'count', kind: 'counter',
+      sinceConnect: 18, periodDelta: 4,
+    },
+    {
       key: 'ditto.replication.session_resets',
       labels: { cause: 'handshake_timeout' }, description: 'Resets', unit: 'count', kind: 'counter',
       sinceConnect: 2, periodDelta: 0,
+    },
+    {
+      key: 'ditto.query.executions_total',
+      labels: {}, description: 'Query executions', unit: 'count', kind: 'counter',
+      sinceConnect: 41, periodDelta: 3,
+    },
+    {
+      // Legacy dual-emitted series: the SDK reports every query metric
+      // twice — dql.requests alongside ditto.query.requests. The legacy
+      // row must land in the Query segment with its OTLP twin, not Other.
+      key: 'dql.requests',
+      labels: {}, description: 'Query requests (legacy alias)', unit: 'count', kind: 'counter',
+      sinceConnect: 41, periodDelta: 3,
+    },
+    {
+      key: 'ditto.discovery.mdns.active_browse_sessions',
+      labels: {}, description: 'Active mDNS browse sessions', unit: 'count', kind: 'counter',
+      sinceConnect: 2, periodDelta: 0,
+    },
+    {
+      key: 'ditto.multiplexer.phy.bytes_sent',
+      labels: { transport: 'tcp' }, description: 'Bytes sent at the physical link layer', unit: 'bytes', kind: 'counter',
+      sinceConnect: 4096, periodDelta: 512,
+    },
+    {
+      // A diffcaster mesh series — proves the broadened Sync segment
+      // catches more than ditto.sync.*/ditto.replication.*.
+      key: 'ditto.diffcaster.diffs_applied',
+      labels: {}, description: 'Diffs applied to the local store', unit: 'count', kind: 'counter',
+      sinceConnect: 7, periodDelta: 1,
+    },
+    {
+      // A NORM multicast transport series — proves Transport catches the
+      // multicast root, not just multiplexer/transport.
+      key: 'ditto.multicast.tx_objects_sent',
+      labels: {}, description: 'Multicast objects sent', unit: 'count', kind: 'counter',
+      sinceConnect: 3, periodDelta: 0,
+    },
+    {
+      // Peer identity/attachment series — its own segment.
+      key: 'ditto.peer.revocation_entries_stored',
+      labels: {}, description: 'Revocation entries stored', unit: 'count', kind: 'counter',
+      sinceConnect: 1, periodDelta: 0,
+    },
+    {
+      key: 'ditto.small_peer_info.write_store_duration_secs',
+      labels: {}, description: 'Small-peer-info store write duration', unit: 'seconds', kind: 'histogram',
+      sinceConnect: 9, periodDelta: 1, sumSinceConnect: 0.09, absMax: 0.02,
     },
     {
       key: 'custom.metric.from.somewhere_else',
@@ -105,12 +158,21 @@ test('SystemMetrics: a working snapshot renders one row per series, keys strippe
   const text = el.shadowRoot!.textContent ?? '';
   assert.match(text, /System Metrics/);
   assert.deepEqual(rows(el), [
-    'network.dsoq.connection.opened',
-    'network.dsoq.connection.closed',
     'backend.sqlite3.fsync_duration_secs',
-    'replication.session_resets',
     'custom.metric.from.somewhere_else',
-  ], 'every series renders under All, with the ditto. prefix stripped');
+    'diffcaster.diffs_applied',
+    'discovery.mdns.active_browse_sessions',
+    'dql.requests',
+    'multicast.tx_objects_sent',
+    'multiplexer.phy.bytes_sent',
+    'network.dsoq.connection.closed',
+    'network.dsoq.connection.opened',
+    'peer.revocation_entries_stored',
+    'query.executions_total',
+    'replication.session_resets',
+    'small_peer_info.write_store_duration_secs',
+    'store.changes',
+  ], 'every series renders under All, alphabetical by the stripped key');
   assert.match(text, /db=main/, 'series carry their labels');
   assert.match(text, /cause=handshake_timeout/);
   assert.match(text, /Since .* — updated /, 'footer anchors the accumulation window');
@@ -123,28 +185,58 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
   segment(el, 'Network').click();
   await el.updateComplete;
   assert.deepEqual(rows(el), [
-    'network.dsoq.connection.opened',
     'network.dsoq.connection.closed',
+    'network.dsoq.connection.opened',
   ]);
   assert.equal(segment(el, 'Network').getAttribute('aria-pressed'), 'true');
   assert.equal(segment(el, 'All').getAttribute('aria-pressed'), 'false');
 
   segment(el, 'Store').click();
   await el.updateComplete;
-  assert.deepEqual(rows(el), ['backend.sqlite3.fsync_duration_secs']);
+  assert.deepEqual(rows(el), [
+    'backend.sqlite3.fsync_duration_secs',
+    'small_peer_info.write_store_duration_secs',
+    'store.changes',
+  ], 'ditto.backend.*, ditto.store.* and ditto.small_peer_info.* series land in the Store segment');
 
   segment(el, 'Sync').click();
   await el.updateComplete;
-  assert.deepEqual(rows(el), ['replication.session_resets']);
+  assert.deepEqual(rows(el), ['diffcaster.diffs_applied', 'replication.session_resets'],
+    'Sync covers ditto.sync.*, ditto.replication.* and the diffcaster mesh');
 
-  segment(el, 'Other').click();
+  segment(el, 'Query').click();
   await el.updateComplete;
-  assert.deepEqual(rows(el), ['custom.metric.from.somewhere_else'],
-    'Other catches series outside every known namespace');
+  assert.deepEqual(rows(el), ['dql.requests', 'query.executions_total'],
+    'ditto.query.* and legacy dql.* series land in the Query segment');
+
+  segment(el, 'Discovery').click();
+  await el.updateComplete;
+  assert.deepEqual(rows(el), ['discovery.mdns.active_browse_sessions'],
+    'ditto.discovery.* series land in the Discovery segment');
+
+  segment(el, 'Transport').click();
+  await el.updateComplete;
+  assert.deepEqual(rows(el), ['multicast.tx_objects_sent', 'multiplexer.phy.bytes_sent'],
+    'ditto.multiplexer.* and ditto.multicast.* series land in the Transport segment');
+
+  segment(el, 'Peer').click();
+  await el.updateComplete;
+  assert.deepEqual(rows(el), ['peer.revocation_entries_stored'],
+    'ditto.peer.* series land in the Peer segment');
+
+  // No "Other" segment: the only unrouted series are the metrics pipeline's
+  // own telemetry and SDK additions, which stay visible under All rather
+  // than in a segment that would otherwise sit empty.
+  assert.equal(el.shadowRoot!.querySelectorAll('.seg button').length, 8,
+    'All + 7 topics, no Other');
+  const labels = [...el.shadowRoot!.querySelectorAll('.seg button')].map(b => b.textContent);
+  assert.ok(!labels.includes('Other'), 'no Other segment button');
 
   segment(el, 'All').click();
   await el.updateComplete;
-  assert.equal(rows(el).length, 5);
+  assert.equal(rows(el).length, 14);
+  assert.ok(rows(el).includes('custom.metric.from.somewhere_else'),
+    'unrouted series still render under All');
 });
 
 test('SystemMetrics: an empty namespace says so rather than showing a blank panel', async t => {
@@ -181,9 +273,83 @@ test('SystemMetrics: converged opened/closed totals render no banner', async t =
   assert.equal(el.shadowRoot!.querySelector('.banner'), null);
 });
 
+test('SystemMetrics: gauge rows render the absolute value and a ▼ for negative deltas', async t => {
+  const { el } = await mount(t);
+  fromHost({
+    type: 'sysMetrics.status',
+    status: {
+      kind: 'working',
+      snapshot: {
+        ...SYSTEM_SNAPSHOT,
+        samples: [
+          {
+            key: 'ditto.transport.awdl.interface_up',
+            labels: {}, description: 'AWDL interface status', unit: 'count', kind: 'gauge',
+            sinceConnect: 1, periodDelta: 0,
+          },
+          {
+            key: 'ditto.network.connections',
+            labels: {}, description: 'Active connections', unit: 'count', kind: 'gauge',
+            sinceConnect: 2, periodDelta: -3,
+          },
+        ],
+      },
+    },
+  });
+  await el.updateComplete;
+
+  const rowVals = [...el.shadowRoot!.querySelectorAll<HTMLElement>('.mrow')]
+    .map(r => ({
+      key: r.querySelector('.mkey')?.textContent,
+      headline: r.querySelector('.mval')?.textContent,
+      delta: r.querySelector('.mdelta')?.textContent?.trim(),
+      deltaCls: r.querySelector('.mdelta')?.className ?? '',
+    }));
+  assert.deepEqual(rowVals, [
+    { key: 'network.connections', headline: '2', delta: '▼ −3', deltaCls: 'mdelta down' },
+    { key: 'transport.awdl.interface_up', headline: '1', delta: '—', deltaCls: 'mdelta ' },
+  ], 'gauges show current value; negative period delta renders ▼ in the down colour');
+});
+
+test('SystemMetrics: epoch-timestamp gauges render as an age, not a raw epoch', async t => {
+  const { el } = await mount(t);
+  const nowSec = Date.now() / 1000;
+  fromHost({
+    type: 'sysMetrics.status',
+    status: {
+      kind: 'working',
+      snapshot: {
+        ...SYSTEM_SNAPSHOT,
+        samples: [
+          {
+            key: 'ditto.multiplexer.phy.last_sent_at',
+            labels: { transport_type: 'awdl' }, description: 'Last send',
+            unit: 'seconds', kind: 'gauge',
+            sinceConnect: nowSec - 12, periodDelta: 5,
+          },
+          {
+            key: 'ditto.multiplexer.phy.last_received_at',
+            labels: { transport_type: 'awdl' }, description: 'Last receive',
+            unit: 'seconds', kind: 'gauge',
+            sinceConnect: 0, periodDelta: 0,
+          },
+        ],
+      },
+    },
+  });
+  await el.updateComplete;
+
+  const headlines = [...el.shadowRoot!.querySelectorAll<HTMLElement>('.mrow .mval')]
+    .map(n => n.textContent);
+  assert.deepEqual(headlines, ['never', '12s ago'],
+    'epoch seconds render as a relative age; a zero epoch means no activity yet (rows sort alphabetically: last_received_at before last_sent_at)');
+});
+
 test('SystemMetrics: the info icon toggles the row details', async t => {
   const el = await mountWorking(t);
-  const firstRow = el.shadowRoot!.querySelector('.mrow')!;
+  // Rows sort alphabetically — locate the dsoq opened row by key, not position.
+  const firstRow = [...el.shadowRoot!.querySelectorAll<HTMLElement>('.mrow')]
+    .find(r => r.querySelector('.mkey')?.textContent === 'network.dsoq.connection.opened')!;
   const info = firstRow.querySelector<HTMLButtonElement>('.info-btn')!;
   assert.equal(info.getAttribute('aria-expanded'), 'false');
   assert.equal(firstRow.querySelector('.mdetail'), null, 'details start collapsed');
@@ -259,8 +425,8 @@ test('SystemMetrics: searching filters the master list by key, case-insensitivel
   typeSearch(el, 'NETWORK');
   await el.updateComplete;
   assert.deepEqual(masterKeys(el), [
-    'network.dsoq.connection.opened',
     'network.dsoq.connection.closed',
+    'network.dsoq.connection.opened',
   ]);
 });
 
@@ -289,13 +455,13 @@ test('SystemMetrics: search matches label keys and values (e.g. every ble series
   typeSearch(el, 'ble');
   await el.updateComplete;
   assert.deepEqual(masterKeys(el), [
-    'network.dsoq.connection.mx.end',
     'custom.other',
+    'network.dsoq.connection.mx.end',
   ], 'label values and label keys both participate');
 
   typeSearch(el, '   ');
   await el.updateComplete;
-  assert.equal(masterKeys(el).length, 7, 'a whitespace-only query is no filter at all');
+  assert.equal(masterKeys(el).length, 16, 'a whitespace-only query is no filter at all');
 });
 
 test('SystemMetrics: search composes with the namespace segment', async t => {

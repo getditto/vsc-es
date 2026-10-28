@@ -348,15 +348,20 @@ export interface SystemMetricSample {
   labels: Record<string, string>;
   description: string;
   unit: string;
-  /** `histogram` when the row carries `count`/`dcount`; otherwise `counter`.
-   *  (Counters and gauges share one row shape — `current`/`updates`/`delta`
-   *  — and no gauge-key metric is surfaced on the dashboard today.) */
-  kind: 'counter' | 'histogram';
+  /** `histogram` when the row carries `count`/`dcount`; `gauge` when the key
+   *  is a known SDK gauge (the exporter emits no kind marker — counters and
+   *  gauges share the `current`/`updates`/`delta` row shape, so the host
+   *  matches keys against the SDK's static gauge declarations); otherwise
+   *  `counter`. */
+  kind: 'counter' | 'histogram' | 'gauge';
   /** Running total since this extension host connected: counters accumulate
-   *  `delta`, histograms accumulate `dcount`. */
+   *  `delta`, histograms accumulate `dcount`. Gauges instead carry the
+   *  exporter's latest absolute `current` value (e.g. `awdl.interface_up`
+   *  reads 1 while the interface is up — a delta sum would be nonsense). */
   sinceConnect: number;
   /** The most recent read's delta alone (counters: `delta`; histograms:
-   *  `dcount`) — "what happened in the last poll interval". */
+   *  `dcount`; gauges: change in value over the last poll, may be
+   *  negative) — "what happened in the last poll interval". */
   periodDelta: number;
   /** Histograms only: accumulated `dsum` since connect (unit per metric:
    *  seconds for durations, pages for wal_size_pages). */

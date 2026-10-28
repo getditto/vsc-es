@@ -1,10 +1,9 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-/** Color name mapping. Five fixed slots so callers can't drift away from
- *  the legend at the bottom of the Profile viewer (which spells out
- *  blue/green/red/orange/purple). */
-export type PillColor = 'blue' | 'green' | 'red' | 'orange' | 'purple';
+/** Color name mapping. Fixed slots so callers can't drift away from
+ *  the legend at the bottom of the Profile viewer. */
+export type PillColor = 'blue' | 'green' | 'red' | 'orange' | 'purple' | 'teal' | 'gray';
 
 @customElement('ditto-pill')
 export class DittoPill extends LitElement {
@@ -38,6 +37,8 @@ export class DittoPill extends LitElement {
     :host([color='red'])    { background: rgba(229, 57, 53,0.16); border: 1px solid rgba(229, 57, 53,0.35); color: var(--vscode-charts-red,    #e53935); }
     :host([color='orange']) { background: rgba(245,124,  0,0.16); border: 1px solid rgba(245,124,  0,0.35); color: var(--vscode-charts-orange, #f57c00); }
     :host([color='purple']) { background: rgba(142, 36,170,0.16); border: 1px solid rgba(142, 36,170,0.35); color: var(--vscode-charts-purple, #8e24aa); }
+    :host([color='teal'])   { background: rgba(  0,150,136,0.16); border: 1px solid rgba(  0,150,136,0.35); color: var(--vscode-charts-teal,   #009688); }
+    :host([color='gray'])   { background: rgba(128,128,128,0.16); border: 1px solid rgba(128,128,128,0.35); color: var(--vscode-descriptionForeground, #888); }
   `;
 
   override render() {

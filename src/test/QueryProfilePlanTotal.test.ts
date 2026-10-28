@@ -9,6 +9,7 @@ function op(execNs: number | undefined, children: QueryProfileOperator[] = []): 
     stats: execNs === undefined ? undefined : { execNs },
     children,
     attributes: [],
+    subplans: [],
   };
 }
 
@@ -83,4 +84,45 @@ test('layout/flatten: three leaves at top level', () => {
   assert.equal(flat[1]?.absX, 80);
   assert.equal(flat[2]?.absX, 264);
   assert.equal(flat[3]?.absX, 448);
+});
+
+// ─── SDK 5.1+ subplan layout ────────────────────────────────────
+
+test('subtreeExecNs: includes subplan exec in the total', () => {
+  const inner: QueryProfileOperator = {
+    name: 'sequence',
+    children: [{ name: 'indexScan', stats: { execNs: 30 }, children: [], attributes: [], subplans: [] }],
+    attributes: [],
+    subplans: [],
+  };
+  const tree: QueryProfileOperator = {
+    name: 'nlJoin',
+    stats: { execNs: 100 },
+    children: [{ name: 'scan', stats: { execNs: 50 }, children: [], attributes: [], subplans: [] }],
+    attributes: [],
+    subplans: [{ key: 'inner', plan: inner }],
+  };
+  // 100 (nlJoin) + 50 (scan child) + 30 (indexScan in inner subplan) = 180
+  assert.equal(subtreeExecNs(tree), 180);
+});
+
+test('layout/flatten: subplans contribute to subtree width', () => {
+  const inner: QueryProfileOperator = {
+    name: 'sequence',
+    children: [{ name: 'indexScan', children: [], attributes: [], subplans: [] }],
+    attributes: [],
+    subplans: [],
+  };
+  const tree: QueryProfileOperator = {
+    name: 'nlJoin',
+    children: [{ name: 'scan', children: [], attributes: [], subplans: [] }],
+    attributes: [],
+    subplans: [{ key: 'inner', plan: inner }],
+  };
+  const laid = layout(tree, 0);
+  const flat = flatten(laid);
+  // nlJoin + scan (child) + sequence (subplan) + indexScan (subplan child) = 4
+  assert.equal(flat.length, 4);
+  // Width: children are scan(160) + gap + sequence(subtreeWidth=160) = 344
+  assert.equal(laid.subtreeWidth, 344);
 });

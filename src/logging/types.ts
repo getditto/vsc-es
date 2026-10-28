@@ -45,6 +45,18 @@ export interface Logger {
    *  window. */
   readRecentLogLines(maxLines: number): Promise<string[]>;
 
+  /** Update the file sink's rotation limits at runtime (the
+   *  `dittoVsce.logMaxMegabytes` / `dittoVsce.logRetainFiles` settings).
+   *  Rotations beyond a shrunken retain count are deleted immediately. */
+  setFileLimits(limits: { maxBytes: number; retain: number }): Promise<void>;
+  /** Delete rotated backups older than `maxAgeMs` (the active file is never
+   *  touched). Returns the number deleted. Runs at activation. */
+  pruneLogFilesOlderThan(maxAgeMs: number): Promise<number>;
+  /** Delete every application log file (active + rotations). The next write
+   *  re-creates the active file with its session header. Backs the Clear
+   *  Application Log command. */
+  clearLogFiles(): Promise<void>;
+
   /** Flush + close. Call from extension.deactivate(). */
   dispose(): Promise<void>;
 }

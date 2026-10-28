@@ -45,6 +45,7 @@ async function executeDql(ctx: McpToolContext, args: ExecuteDqlArgs): Promise<Ca
         httpApiUrl: cfg.httpApiUrl,
         httpApiKey: secrets.httpApiKey,
         allowUntrustedCerts: cfg.allowUntrustedCerts,
+        serverUrl: cfg.authUrl,
         query: args.query,
       }, ctx.logger);
       return ok({ mode: 'http', rows: res.items, rowCount: res.items.length });
