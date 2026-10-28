@@ -54,10 +54,10 @@ exactly one topic:
 - **Peer** — peer identity and the attachment P2P transfer state machine
   (`ditto.peer.*`): revocation handshakes, attachment link maintenance and
   fetch lifecycle.
-- **Other** — only the metrics pipeline's own telemetry (`ditto.metrics.*`,
-  `ditto.metrics_exporter.*`, `ditto.system_info.*`) and anything the SDK
-  adds that hasn't been routed to a topic yet.
-- **All** — every reported series.
+- **All** — every reported series. The metrics pipeline's own telemetry
+  (`ditto.metrics.*`, `ditto.metrics_exporter.*`, `ditto.system_info.*`)
+  and anything the SDK adds that hasn't been routed to a topic yet appear
+  here only — there is no separate "Other" segment.
 
 The **search box** (right of the segments) narrows the list to series whose
 metric name or labels contain the term, case-insensitively — for example

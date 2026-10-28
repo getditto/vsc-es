@@ -224,14 +224,19 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
   assert.deepEqual(rows(el), ['peer.revocation_entries_stored'],
     'ditto.peer.* series land in the Peer segment');
 
-  segment(el, 'Other').click();
-  await el.updateComplete;
-  assert.deepEqual(rows(el), ['custom.metric.from.somewhere_else'],
-    'Other catches series outside every known namespace');
+  // No "Other" segment: the only unrouted series are the metrics pipeline's
+  // own telemetry and SDK additions, which stay visible under All rather
+  // than in a segment that would otherwise sit empty.
+  assert.equal(el.shadowRoot!.querySelectorAll('.seg button').length, 8,
+    'All + 7 topics, no Other');
+  const labels = [...el.shadowRoot!.querySelectorAll('.seg button')].map(b => b.textContent);
+  assert.ok(!labels.includes('Other'), 'no Other segment button');
 
   segment(el, 'All').click();
   await el.updateComplete;
   assert.equal(rows(el).length, 14);
+  assert.ok(rows(el).includes('custom.metric.from.somewhere_else'),
+    'unrouted series still render under All');
 });
 
 test('SystemMetrics: an empty namespace says so rather than showing a blank panel', async t => {

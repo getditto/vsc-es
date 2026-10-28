@@ -45,9 +45,13 @@ type NamespaceFilter =
   | 'transport'
   | 'store'
   | 'query'
-  | 'peer'
-  | 'other';
+  | 'peer';
 
+// No "Other" segment: every routed series lands in exactly one of the
+// topics above, and the only unrouted series are the metrics pipeline's own
+// telemetry (ditto.metrics.*, ditto.metrics_exporter.*, ditto.system_info.*)
+// plus anything the SDK adds later — those stay visible under All rather
+// than in a segment that would otherwise sit empty.
 const SEGMENTS: ReadonlyArray<{ id: NamespaceFilter; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'discovery', label: 'Discovery' },
@@ -57,7 +61,6 @@ const SEGMENTS: ReadonlyArray<{ id: NamespaceFilter; label: string }> = [
   { id: 'store', label: 'Store' },
   { id: 'query', label: 'Query' },
   { id: 'peer', label: 'Peer' },
-  { id: 'other', label: 'Other' },
 ];
 
 const NAMESPACE_PREFIXES: ReadonlyArray<readonly [NamespaceFilter, readonly string[]]> = [
@@ -83,17 +86,10 @@ const NAMESPACE_PREFIXES: ReadonlyArray<readonly [NamespaceFilter, readonly stri
   // Peer covers peer identity and the attachment P2P transfer state machine
   // (revocation handshakes, attachment link maintenance, fetches).
   ['peer', ['ditto.peer.']],
-  // 'other' intentionally has no prefixes: it catches only the metrics-
-  // pipeline's own telemetry (ditto.metrics.*, ditto.metrics_exporter.*,
-  // ditto.system_info.*) and anything the SDK adds that we haven't routed.
 ];
 
 function matchesFilter(sample: SystemMetricSample, filter: NamespaceFilter): boolean {
   if (filter === 'all') { return true; }
-  if (filter === 'other') {
-    return !NAMESPACE_PREFIXES.some(([, prefixes]) =>
-      prefixes.some(p => sample.key.startsWith(p)));
-  }
   const prefixes = NAMESPACE_PREFIXES.find(([id]) => id === filter)?.[1] ?? [];
   return prefixes.some(p => sample.key.startsWith(p));
 }
@@ -229,11 +225,13 @@ export class SystemMetricsElement extends LitElement {
       font: inherit;
     }
 
-    /* Filter row: centered segment control (SwiftUI pattern — centering
-     * makes the picker read as governing the list below) with the search
-     * box right-aligned on the same row. */
+    /* Filter row: segment control with the search box right-aligned on the
+     * same row. The row WRAPS: when the panel is too narrow for both, the
+     * search box drops to its own line instead of overlapping the segment
+     * control. */
     .filter-row {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 10px;
       margin-bottom: 12px;
@@ -241,12 +239,12 @@ export class SystemMetricsElement extends LitElement {
     .seg-wrap {
       display: flex;
       justify-content: center;
-      flex: 1;
+      flex: 1 1 auto;
       min-width: 0;
     }
     .search {
-      flex: 0 0 auto;
-      width: 200px;
+      flex: 0 1 200px;
+      min-width: 140px;
       padding: 3px 8px;
       font: inherit;
       font-size: 12px;
@@ -258,23 +256,29 @@ export class SystemMetricsElement extends LitElement {
     }
     .search::placeholder { color: var(--vscode-input-placeholderForeground); }
     .search:focus { outline: 1px solid var(--vscode-focusBorder); }
+    /* The control sizes to its content, but shrinks under pressure and
+     * wraps its buttons onto extra rows so every segment stays clickable
+     * at any panel width — nothing clips or scrolls out of reach. */
     .seg {
       display: flex;
-      flex: 0 1 320px;
+      flex-wrap: wrap;
+      flex: 0 1 auto;
+      min-width: 0;
       border: 1px solid var(--vscode-panel-border);
       border-radius: 6px;
       overflow: hidden;
     }
     .seg button {
-      flex: 1;
-      padding: 4px 0;
+      flex: 0 0 auto;
+      padding: 5px 12px;
       border: none;
       border-right: 1px solid var(--vscode-panel-border);
       background: transparent;
       color: var(--vscode-foreground);
       cursor: pointer;
       font: inherit;
-      font-size: 12px;
+      font-size: 13px;
+      white-space: nowrap;
     }
     .seg button:last-child { border-right: none; }
     .seg button[aria-pressed="true"] {
