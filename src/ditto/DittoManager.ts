@@ -292,6 +292,21 @@ export class DittoManager {
           support.bluetoothLE && (config.isBluetoothLeEnabled ?? support.bluetoothLE);
         c.peerToPeer.awdl.isEnabled =
           support.awdl && (config.isAwdlEnabled ?? support.awdl);
+        if (config.mode === 'server') {
+          // The JS SDK derives the sync websocket URL from the server URL by
+          // upgrading the scheme to wss:// unconditionally. Against a
+          // plain-HTTP Big Peer (self-managed, no TLS) that produces a TLS
+          // ClientHello on a plain port — nginx logs it as `\x16\x03\x01…`
+          // 400s, the SDK retries every ~5 s, and sync never establishes.
+          // Pin ws:// (or wss:// for an https server) explicitly. No path:
+          // the SDK appends /_ditto/ws itself; pinning the path yields
+          // repeating 404s.
+          const serverUrl = normalizeDittoServerUrl(config.authUrl);
+          const wsBase = serverUrl
+            .replace(/^http:\/\//i, 'ws://')
+            .replace(/^https:\/\//i, 'wss://');
+          c.connect.websocketURLs = [wsBase];
+        }
       });
       this.logTransportReadback(ditto, 'connect');
 
