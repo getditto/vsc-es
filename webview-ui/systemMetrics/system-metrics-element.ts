@@ -30,34 +30,62 @@ import type {
 
 type In = SysMetricsOut;
 
-// ─── Namespace segment filter (parity with the SwiftUI app's
-//     SystemMetricsNamespaceFilter) ─────────────────────────────
-type NamespaceFilter = 'all' | 'network' | 'store' | 'query' | 'sync' | 'other';
+// ─── Namespace segment filter ────────────────────────────────
+// Every series the JS client SDK emits lives under `ditto.<root>.`, and
+// each root maps to exactly one topic segment so a metric appears in one
+// place only. Verified against the SDK's metric declarations
+// (crates/*/src/**/metrics.rs). Legacy non-`ditto.` roots in the SDK repo
+// (hydra_*, kafka_*, test fixtures) are Big Peer server-side or test-only
+// and never reach the client's `system:metrics`, so they need no segment.
+type NamespaceFilter =
+  | 'all'
+  | 'discovery'
+  | 'network'
+  | 'sync'
+  | 'transport'
+  | 'store'
+  | 'query'
+  | 'peer'
+  | 'other';
 
 const SEGMENTS: ReadonlyArray<{ id: NamespaceFilter; label: string }> = [
   { id: 'all', label: 'All' },
+  { id: 'discovery', label: 'Discovery' },
   { id: 'network', label: 'Network' },
+  { id: 'sync', label: 'Sync' },
+  { id: 'transport', label: 'Transport' },
   { id: 'store', label: 'Store' },
   { id: 'query', label: 'Query' },
-  { id: 'sync', label: 'Sync' },
+  { id: 'peer', label: 'Peer' },
   { id: 'other', label: 'Other' },
 ];
 
 const NAMESPACE_PREFIXES: ReadonlyArray<readonly [NamespaceFilter, readonly string[]]> = [
+  ['discovery', ['ditto.discovery.']],
   ['network', ['ditto.network.']],
-  // Store covers both the low-level storage engine (`ditto.backend.*` —
-  // sqlite3 txns, fsyncs) and store-API-level series (`ditto.store.*` —
-  // e.g. `ditto.store.changes`). Anything store-shaped belongs here, never
-  // in Other.
-  ['store', ['ditto.backend.', 'ditto.store.']],
+  // Sync covers the replication engine and everything that moves documents
+  // between peers: replication sessions, the diffcaster mesh, the RIBLT
+  // set-reconciliation sketch, presence evidence, and the sync byte stream.
+  ['sync', ['ditto.sync.', 'ditto.replication.', 'ditto.diffcaster.', 'ditto.riblt.', 'ditto.presence.', 'ditto.stream.']],
+  // Transport covers the link layer and the transports themselves: the
+  // physical/virtual multiplexer, the UDP multicast (NORM) transport and its
+  // attachment mover, the per-protocol transports, and the legacy _tcp key.
+  ['transport', ['ditto.transport.', 'ditto.multiplexer.', 'ditto.multicast.', 'ditto.multicast_attachment.', 'ditto._tcp.']],
+  // Store covers the persistence layer: the storage engine (sqlite3
+  // txns/fsync/WAL), the store API, small-peer-info writes, and the
+  // blob/attachment storage tiers.
+  ['store', ['ditto.backend.', 'ditto.store.', 'ditto.small_peer_info.', 'ditto.storage.', 'ditto.blob_storage.', 'ditto.blob_storage_tiered.']],
   // Query covers both the OTLP names (`ditto.query.*`, SDK 5.2+) and the
   // legacy `dql.*` series the SDK dual-emits alongside them
   // (crates/ditto-dql/src/metrics.rs: every dql.* counter/histogram has a
   // ditto.query.* alias — dql.requests ↔ ditto.query.requests, and so on).
-  // The legacy rows carry the same data, so they belong here rather than
-  // in Other.
   ['query', ['ditto.query.', 'dql.']],
-  ['sync', ['ditto.sync.', 'ditto.replication.']],
+  // Peer covers peer identity and the attachment P2P transfer state machine
+  // (revocation handshakes, attachment link maintenance, fetches).
+  ['peer', ['ditto.peer.']],
+  // 'other' intentionally has no prefixes: it catches only the metrics-
+  // pipeline's own telemetry (ditto.metrics.*, ditto.metrics_exporter.*,
+  // ditto.system_info.*) and anything the SDK adds that we haven't routed.
 ];
 
 function matchesFilter(sample: SystemMetricSample, filter: NamespaceFilter): boolean {

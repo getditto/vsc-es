@@ -266,6 +266,37 @@ export function accumulateMetricRows(
   }
 }
 
+/**
+ * Collapse each metric key to a single display series.
+ *
+ * The SDK emits a labelled metric as MULTIPLE rows: an unlabelled aggregate
+ * parent (`labels={}`) plus one labelled child per label combination (e.g.
+ * `ditto.small_peer_info.write_store_duration_secs` appears once bare and
+ * once with `{segment:"core"}`; `ditto.backend.sqlite3.fsync_total` appears
+ * bare plus `{db:"main"}` and `{db:"attachment"}`). Both flush from the same
+ * registry — the parent is the running total across every child. Rendered
+ * naively, the key then lists two-or-more times in the panel, once per label
+ * set, which reads as a duplicate.
+ *
+ * The aggregate is the most useful single number (it sums all children), so
+ * for any key that HAS an unlabelled series we keep only that one and drop
+ * the labelled children. A key with NO unlabelled series (labelled-only
+ * metrics) keeps all its rows — dropping them would hide the metric
+ * entirely. This keeps every key listing exactly once when the SDK provides
+ * an aggregate, while never losing a label-only series.
+ */
+export function collapseToAggregate(samples: SystemMetricSample[]): SystemMetricSample[] {
+  const keysWithAggregate = new Set<string>();
+  for (const s of samples) {
+    if (Object.keys(s.labels).length === 0) { keysWithAggregate.add(s.key); }
+  }
+  // Keep an unlabelled series always; keep a labelled series ONLY when its
+  // key has no aggregate (otherwise it's the duplicate child of a key
+  // already shown by its parent row).
+  return samples.filter(s =>
+    Object.keys(s.labels).length === 0 || !keysWithAggregate.has(s.key));
+}
+
 /** True when a SELECT answered but the exporter isn't installed — the row
  *  set is exactly the placeholder `{ status: "disabled", … }` shape. */
 export function isExporterDisabledRows(rows: Record<string, unknown>[]): boolean {
@@ -380,7 +411,7 @@ export class SystemMetricsService {
 
   private buildSnapshot(): SystemMetricsSnapshot {
     return {
-      samples: [...this.samples.values()],
+      samples: collapseToAggregate([...this.samples.values()]),
       sinceMs: this.sinceMs ?? Date.now(),
       polledAtMs: Date.now(),
       pollIntervalMs: this.intervalMs,

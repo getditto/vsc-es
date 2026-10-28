@@ -69,6 +69,41 @@ const SYSTEM_SNAPSHOT = {
       sinceConnect: 41, periodDelta: 3,
     },
     {
+      key: 'ditto.discovery.mdns.active_browse_sessions',
+      labels: {}, description: 'Active mDNS browse sessions', unit: 'count', kind: 'counter',
+      sinceConnect: 2, periodDelta: 0,
+    },
+    {
+      key: 'ditto.multiplexer.phy.bytes_sent',
+      labels: { transport: 'tcp' }, description: 'Bytes sent at the physical link layer', unit: 'bytes', kind: 'counter',
+      sinceConnect: 4096, periodDelta: 512,
+    },
+    {
+      // A diffcaster mesh series — proves the broadened Sync segment
+      // catches more than ditto.sync.*/ditto.replication.*.
+      key: 'ditto.diffcaster.diffs_applied',
+      labels: {}, description: 'Diffs applied to the local store', unit: 'count', kind: 'counter',
+      sinceConnect: 7, periodDelta: 1,
+    },
+    {
+      // A NORM multicast transport series — proves Transport catches the
+      // multicast root, not just multiplexer/transport.
+      key: 'ditto.multicast.tx_objects_sent',
+      labels: {}, description: 'Multicast objects sent', unit: 'count', kind: 'counter',
+      sinceConnect: 3, periodDelta: 0,
+    },
+    {
+      // Peer identity/attachment series — its own segment.
+      key: 'ditto.peer.revocation_entries_stored',
+      labels: {}, description: 'Revocation entries stored', unit: 'count', kind: 'counter',
+      sinceConnect: 1, periodDelta: 0,
+    },
+    {
+      key: 'ditto.small_peer_info.write_store_duration_secs',
+      labels: {}, description: 'Small-peer-info store write duration', unit: 'seconds', kind: 'histogram',
+      sinceConnect: 9, periodDelta: 1, sumSinceConnect: 0.09, absMax: 0.02,
+    },
+    {
       key: 'custom.metric.from.somewhere_else',
       labels: {}, description: 'A metric outside Ditto namespaces', unit: 'count', kind: 'counter',
       sinceConnect: 7, periodDelta: 0,
@@ -130,6 +165,12 @@ test('SystemMetrics: a working snapshot renders one row per series, keys strippe
     'replication.session_resets',
     'query.executions_total',
     'dql.requests',
+    'discovery.mdns.active_browse_sessions',
+    'multiplexer.phy.bytes_sent',
+    'diffcaster.diffs_applied',
+    'multicast.tx_objects_sent',
+    'peer.revocation_entries_stored',
+    'small_peer_info.write_store_duration_secs',
     'custom.metric.from.somewhere_else',
   ], 'every series renders under All, with the ditto. prefix stripped');
   assert.match(text, /db=main/, 'series carry their labels');
@@ -155,16 +196,33 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
   assert.deepEqual(rows(el), [
     'backend.sqlite3.fsync_duration_secs',
     'store.changes',
-  ], 'both ditto.backend.* and ditto.store.* series land in the Store segment');
+    'small_peer_info.write_store_duration_secs',
+  ], 'ditto.backend.*, ditto.store.* and ditto.small_peer_info.* series land in the Store segment');
 
   segment(el, 'Sync').click();
   await el.updateComplete;
-  assert.deepEqual(rows(el), ['replication.session_resets']);
+  assert.deepEqual(rows(el), ['replication.session_resets', 'diffcaster.diffs_applied'],
+    'Sync covers ditto.sync.*, ditto.replication.* and the diffcaster mesh');
 
   segment(el, 'Query').click();
   await el.updateComplete;
   assert.deepEqual(rows(el), ['query.executions_total', 'dql.requests'],
     'ditto.query.* and legacy dql.* series land in the Query segment');
+
+  segment(el, 'Discovery').click();
+  await el.updateComplete;
+  assert.deepEqual(rows(el), ['discovery.mdns.active_browse_sessions'],
+    'ditto.discovery.* series land in the Discovery segment');
+
+  segment(el, 'Transport').click();
+  await el.updateComplete;
+  assert.deepEqual(rows(el), ['multiplexer.phy.bytes_sent', 'multicast.tx_objects_sent'],
+    'ditto.multiplexer.* and ditto.multicast.* series land in the Transport segment');
+
+  segment(el, 'Peer').click();
+  await el.updateComplete;
+  assert.deepEqual(rows(el), ['peer.revocation_entries_stored'],
+    'ditto.peer.* series land in the Peer segment');
 
   segment(el, 'Other').click();
   await el.updateComplete;
@@ -173,7 +231,7 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
 
   segment(el, 'All').click();
   await el.updateComplete;
-  assert.equal(rows(el).length, 8);
+  assert.equal(rows(el).length, 14);
 });
 
 test('SystemMetrics: an empty namespace says so rather than showing a blank panel', async t => {
@@ -396,7 +454,7 @@ test('SystemMetrics: search matches label keys and values (e.g. every ble series
 
   typeSearch(el, '   ');
   await el.updateComplete;
-  assert.equal(masterKeys(el).length, 10, 'a whitespace-only query is no filter at all');
+  assert.equal(masterKeys(el).length, 16, 'a whitespace-only query is no filter at all');
 });
 
 test('SystemMetrics: search composes with the namespace segment', async t => {

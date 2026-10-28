@@ -4,6 +4,7 @@ import {
   SYSTEM_METRICS_ENV_VAR,
   SystemMetricsService,
   accumulateMetricRows,
+  collapseToAggregate,
   isExporterDisabledRows,
   readCollectSystemMetrics,
   withSystemMetricsEnv,
@@ -104,6 +105,64 @@ test('accumulateMetricRows histograms accumulate dcount/dsum and track the lates
   assert.equal(s.periodDelta, 2);
   assert.equal(s.sumSinceConnect, 0.02, 'dsum accumulates');
   assert.equal(s.absMax, 5);
+});
+
+// ─── collapseToAggregate ─────────────────────────────────────
+// The SDK emits a labelled metric as an unlabelled aggregate parent row
+// plus one labelled child per label set. The panel must show each key
+// once — the aggregate — without ever hiding a label-only metric.
+
+function sample(key: string, labels: Record<string, string> = {}): SystemMetricSample {
+  return {
+    key, labels, description: '', unit: 'count', kind: 'counter',
+    sinceConnect: 1, periodDelta: 0,
+  };
+}
+
+test('collapseToAggregate: a key with an aggregate keeps only the unlabelled row', () => {
+  const out = collapseToAggregate([
+    sample('ditto.small_peer_info.write_store_duration_secs'),
+    sample('ditto.small_peer_info.write_store_duration_secs', { segment: 'core' }),
+  ]);
+  assert.deepEqual(out.map(s => s.labels), [{}],
+    'the bare aggregate row wins; the segment=core child collapses away');
+});
+
+test('collapseToAggregate: a key with NO aggregate keeps every labelled series', () => {
+  // Some metrics are labelled-only (no unlabelled parent). Dropping them
+  // would hide the metric entirely — they must survive.
+  const out = collapseToAggregate([
+    sample('ditto.backend.sqlite3.fsync_total', { db: 'main' }),
+    sample('ditto.backend.sqlite3.fsync_total', { db: 'attachment' }),
+  ]);
+  assert.equal(out.length, 2, 'labelled-only series are never dropped');
+});
+
+test('collapseToAggregate: mixed keys collapse independently', () => {
+  const out = collapseToAggregate([
+    sample('ditto.network.connections'),                       // aggregate
+    sample('ditto.network.connections', { transport: 'ws' }),  // child → dropped
+    sample('ditto.store.changes'),                             // standalone aggregate
+    sample('custom.labelled_only', { a: '1' }),                // labelled-only → kept
+    sample('custom.labelled_only', { a: '2' }),                // labelled-only → kept
+  ]);
+  const byKey = new Map<string, number>();
+  for (const s of out) { byKey.set(s.key, (byKey.get(s.key) ?? 0) + 1); }
+  assert.equal(byKey.get('ditto.network.connections'), 1, 'aggregate key lists once');
+  assert.equal(byKey.get('ditto.store.changes'), 1);
+  assert.equal(byKey.get('custom.labelled_only'), 2, 'labelled-only key keeps both rows');
+  assert.equal(out.length, 4);
+});
+
+test('collapseToAggregate: the dsoq divergence keys collapse to their aggregate', () => {
+  // The leak banner sums opened/closed per key; with children collapsed it
+  // reads the aggregate once instead of double-counting parent+children.
+  const out = collapseToAggregate([
+    sample('ditto.network.dsoq.connection.opened'),
+    sample('ditto.network.dsoq.connection.opened', { transport: 'ws' }),
+  ]);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0]!.labels, {});
 });
 
 test('accumulateMetricRows gauges track the absolute current value, never a delta sum', () => {
