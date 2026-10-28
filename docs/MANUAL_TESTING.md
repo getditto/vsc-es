@@ -885,6 +885,50 @@ flow itself works everywhere.
 - Errors (no connection, unwritable path) surface as toasts and are logged
   with tag `ext:exportSdkLogs`.
 
+### T28 · Plain-HTTP Big Peer websocket pin (self-managed)
+
+**Purpose:** Verify the extension connects to a self-managed Big Peer serving
+plain HTTP — i.e., the websocket scheme pin in `DittoManager.ts` is doing its
+job and the SDK's unconditional `wss://` derivation is being overridden.
+
+**Pre-conditions:** A self-managed Big Peer reachable over plain HTTP (e.g.
+Ditto Server installed locally in Kubernetes via the BigPeer operator and
+exposed through an ingress-nginx port-forward at `http://localhost:8081`).
+You need its playground token (or a configured auth provider's token) and the
+app ID.
+
+**Steps:**
+
+1. Register a database in the extension: URL `http://localhost:8081` (base
+   URL only, no app id), the app's ID, and the playground token.
+2. Connect, then press **Start Sync**.
+3. Open a collection in the tree view (registers a subscription) and wait
+   ~10 s.
+4. Open the **Presence Graph**.
+5. In a terminal, watch the ingress controller's access log:
+   `kubectl -n nginx logs deploy/ingress-nginx-controller --tail=20`.
+
+**Expected:**
+
+- The nginx log shows `GET /_ditto/ws?app_id=…&sdk_language=JavaScript … 101`
+  — a successful websocket upgrade, **not** lines like
+  `"\x16\x03\x01\x00\xE7…" 400 150` (a TLS ClientHello hitting the plain-HTTP
+  port — the signature of the pin not being applied).
+- The websocket session is long-lived (nginx logs a websocket only when it
+  closes; a repeated stream of short-lived `101`s with ~5 s gaps means the
+  client is thrashing).
+- Collections fill with the Big Peer's documents.
+- The Presence Graph shows a **"Ditto Cloud Server"** node (the label is
+  hardcoded — it represents the Big Peer regardless of where it runs),
+  sourced from the `is_ditto_server: true` row in `system:data_sync_info`.
+- Regression check: connect to a Ditto Cloud database (`https://…`) and
+  confirm the cloud node still appears — the pin must be a no-op there.
+
+**Note:** `system:data_sync_info` cannot be queried via the Big Peer's REST
+API (`POST /api/v5/store/execute` returns `Unsupported feature:
+system:data_sync_info`); it works only over the SDK's sync websocket. Don't
+use curl to verify it.
+
 ## Troubleshooting
 
 ### The Output panel shows `SPIKE: failed: …`
@@ -900,6 +944,16 @@ Open the Output panel. The error log shows the failing call. Common causes:
 - Invalid token (expired or wrong) — re-issue from https://portal.ditto.live.
 - Wrong URL.
 - No network connectivity.
+
+### Connects fine, but collections stay empty and the Big Peer never appears in the Presence Graph
+
+A self-managed Big Peer over plain HTTP with the websocket scheme pin missing
+(see T28). nginx's access log tells you immediately: a stream of
+`"\x16\x03\x01…" 400 150` lines is a TLS ClientHello hitting the plain-HTTP
+port — the SDK derived `wss://` from an `http://` server URL. Rebuild the
+extension (`npm run build`), reload the Extension Development Host
+(`Cmd+R`), and reconnect. If you see it on a build that includes the pin,
+check that the connection's mode is `server` — the pin only applies there.
 
 ### Peer Listing shows "No sync status available"
 

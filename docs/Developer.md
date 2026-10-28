@@ -181,6 +181,39 @@ System-setting names and values are stored with the database config in
 `globalState`, not `SecretStorage`. They must never contain tokens, keys,
 passwords, or other credentials.
 
+#### The websocket scheme pin
+
+Inside the same server-mode `updateTransportConfig` block (applied after
+`Ditto.open()`, before `sync.start()`), `DittoManager` pins
+`connect.websocketURLs` to the configured server URL with its scheme swapped
+(`http:` → `ws:`, `https:` → `wss:`):
+
+```ts
+const serverUrl = normalizeDittoServerUrl(config.authUrl);
+const wsBase = serverUrl
+  .replace(/^http:\/\//i, 'ws://')
+  .replace(/^https:\/\//i, 'wss://');
+c.connect.websocketURLs = [wsBase];
+```
+
+This is required because the JS SDK derives the sync websocket URL from the
+server URL by upgrading the scheme to `wss://` **unconditionally**. A
+self-managed Big Peer serves plain HTTP, so the derived `wss://` URL sends a
+TLS ClientHello at a plain-HTTP port: nginx logs `"\x16\x03\x01…" 400` every
+~5 s (the SDK's retry cadence), sync never establishes,
+`system:data_sync_info` stays empty, and the Big Peer never appears in the
+Presence Graph — while auth and the REST API keep working, which makes it
+look like a server problem.
+
+Deliberately **not** gated on a "self-managed" flag: for a Ditto Cloud URL
+(`https://<app>.ditto.live`) the pin yields `wss://<app>.ditto.live`, which is
+identical to the SDK's own derivation, so the pin is a no-op for cloud and
+corrective only for plaintext endpoints. The scheme of the configured URL is
+the flag.
+
+Deliberately **without a path**: the SDK appends `/_ditto/ws` itself. Pinning
+`ws://host:8081/_ditto/ws` produces a repeating `404 Not Found` and no sync.
+
 ### 4.3 Storage layers
 
 | Key | Where | Why |
