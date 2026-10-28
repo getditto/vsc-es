@@ -24,19 +24,28 @@ import type { FakeExchange } from './fixtures/fake-node-https.js';
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === 'node:https'
-        && context.parentURL?.endsWith('/src/ditto/HttpQueryService.ts')) {
-      return {
-        url: new URL('./fixtures/fake-node-https.ts', import.meta.url).href,
-        shortCircuit: true,
-        format: 'module',
-      };
+    if (context.parentURL?.endsWith('/src/ditto/HttpQueryService.ts')) {
+      if (specifier === 'node:https') {
+        return {
+          url: new URL('./fixtures/fake-node-https.ts', import.meta.url).href,
+          shortCircuit: true,
+          format: 'module',
+        };
+      }
+      if (specifier === 'node:http') {
+        return {
+          url: new URL('./fixtures/fake-node-http.ts', import.meta.url).href,
+          shortCircuit: true,
+          format: 'module',
+        };
+      }
     }
     return nextResolve(specifier, context);
   },
 });
 
 const fakeHttps = await import('./fixtures/fake-node-https.js');
+const fakeHttp = await import('./fixtures/fake-node-http.js');
 const {
   executeRemoteQuery,
   HttpQueryError,
@@ -57,7 +66,125 @@ function lastExchange(): FakeExchange {
   return ex;
 }
 
-test.beforeEach(() => { fakeHttps.__resetFakeNodeHttps(); });
+test.beforeEach(() => {
+  fakeHttps.__resetFakeNodeHttps();
+  fakeHttp.__resetFakeNodeHttp();
+});
+
+// ─── Scheme selection (plain-HTTP Big Peer) ────────────────────
+
+test('executeRemoteQuery: a plain-HTTP server URL routes through node:http', async () => {
+  const promise = executeRemoteQuery({
+    ...REQ,
+    httpApiUrl: 'localhost:8081',
+    serverUrl: 'http://localhost:8081',
+  });
+
+  const ex = fakeHttp.exchanges[fakeHttp.exchanges.length - 1];
+  assert.ok(ex, 'the service opened no http request');
+  assert.equal(fakeHttps.exchanges.length, 0, 'no TLS attempt against a plaintext port');
+  assert.equal(ex.options.hostname, 'localhost');
+  assert.equal(ex.options.port, '8081', 'URL.port is the string form');
+  assert.equal(ex.options.path, '/api/v5/store/execute');
+
+  ex.respond();
+  ex.res.statusCode = 200;
+  ex.res.emit('data', Buffer.from('{"items":[{"_id":"a"}]}'));
+  ex.res.emit('end');
+  assert.deepEqual(await promise, { items: [{ _id: 'a' }] });
+});
+
+test('executeRemoteQuery: http falls back to port 80, https to 443', async () => {
+  const p1 = executeRemoteQuery({
+    ...REQ,
+    httpApiUrl: 'big-peer.internal',
+    serverUrl: 'http://big-peer.internal',
+  });
+  const httpEx = fakeHttp.exchanges[fakeHttp.exchanges.length - 1];
+  assert.ok(httpEx, 'the service opened no http request');
+  assert.equal(httpEx.options.port, 80, 'http default port');
+  httpEx.respond();
+  httpEx.res.statusCode = 200;
+  httpEx.res.emit('data', Buffer.from('{"items":[]}'));
+  httpEx.res.emit('end');
+  await p1;
+
+  const p2 = executeRemoteQuery({
+    ...REQ,
+    httpApiUrl: 'example.ditto.live',
+    serverUrl: 'https://example.ditto.live',
+  });
+  const httpsEx = lastExchange();
+  assert.equal(httpsEx.options.port, 443, 'https default port');
+  httpsEx.respond();
+  httpsEx.res.statusCode = 200;
+  httpsEx.res.emit('data', Buffer.from('{"items":[]}'));
+  httpsEx.res.emit('end');
+  await p2;
+});
+
+test('executeRemoteQuery: host-only and https server URLs stay on node:https', async () => {
+  // Legacy configs stored the server URL host-only, and Ditto Cloud URLs
+  // are https — both must keep the TLS default so this fix is a no-op
+  // for Cloud connections.
+  for (const serverUrl of ['example.ditto.live', 'https://example.ditto.live', undefined, '']) {
+    fakeHttps.__resetFakeNodeHttps();
+    fakeHttp.__resetFakeNodeHttp();
+    // exactOptionalPropertyTypes: an explicit `serverUrl: undefined` is not
+    // the same as omitting the key — model the omission honestly.
+    const promise = executeRemoteQuery(
+      serverUrl === undefined ? { ...REQ } : { ...REQ, serverUrl },
+    );
+    const ex = lastExchange();
+    assert.equal(fakeHttp.exchanges.length, 0, `serverUrl=${serverUrl} must stay on https`);
+    ex.respond();
+    ex.res.statusCode = 200;
+    ex.res.emit('data', Buffer.from('{"items":[]}'));
+    ex.res.emit('end');
+    await promise;
+  }
+});
+
+test('executeRemoteQuery: plaintext to a non-loopback host logs a warning', async () => {
+  const warns: { message: string; ctx: unknown }[] = [];
+  const self = {
+    error: () => {}, info: () => {}, debug: () => {}, trace: () => {},
+    warn: (m: string, ctx?: unknown) => { warns.push({ message: m, ctx }); },
+    withTag: () => self,
+    getChannelLevel: (): LogLevel => 'info',
+    onDidChangeChannelLevel: () => ({ dispose: () => {} }),
+  } as unknown as Logger;
+
+  const promise = executeRemoteQuery(
+    { ...REQ, httpApiUrl: 'big-peer.internal:8080', serverUrl: 'http://big-peer.internal:8080' },
+    self,
+  );
+  assert.equal(warns.length, 1, 'the bearer key is crossing the network in cleartext — say so');
+  assert.match(warns[0]!.message, /plaintext/);
+
+  const ex = fakeHttp.exchanges[fakeHttp.exchanges.length - 1];
+  assert.ok(ex);
+  ex.respond();
+  ex.res.statusCode = 200;
+  ex.res.emit('data', Buffer.from('{"items":[]}'));
+  ex.res.emit('end');
+  await promise;
+
+  // Loopback stays quiet — a local Big Peer is the expected plaintext case.
+  warns.length = 0;
+  const p2 = executeRemoteQuery(
+    { ...REQ, httpApiUrl: 'localhost:8081', serverUrl: 'http://localhost:8081' },
+    self,
+  );
+  assert.equal(warns.length, 0, 'localhost plaintext needs no warning');
+  const ex2 = fakeHttp.exchanges[fakeHttp.exchanges.length - 1];
+  assert.ok(ex2);
+  ex2.respond();
+  ex2.res.statusCode = 200;
+  ex2.res.emit('data', Buffer.from('{"items":[]}'));
+  ex2.res.emit('end');
+  await p2;
+});
 
 // ─── Request shape ─────────────────────────────────────────────
 

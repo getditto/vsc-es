@@ -214,6 +214,21 @@ the flag.
 Deliberately **without a path**: the SDK appends `/_ditto/ws` itself. Pinning
 `ws://host:8081/_ditto/ws` produces a repeating `404 Not Found` and no sync.
 
+#### The HTTP API scheme derivation
+
+The query path has the same constraint from the other direction:
+`HttpQueryService.executeRemoteQuery` calls the server's REST endpoint
+(`/api/v5/store/execute`), and the stored `httpApiUrl` is host-only. The
+scheme comes from `httpApiSchemeForServerUrl(authUrl)` — `http://` server
+URL → `http`, everything else → `https`. A plain-HTTP Big Peer has no TLS
+listener on that port, so always-https (the pre-fix behavior, which SwiftUI
+Edge Studio still has) dies in the SSL handshake with "wrong version
+number" — and **Allow untrusted certificates** cannot rescue it, because
+that flag only relaxes certificate verification (`rejectUnauthorized: false`),
+it does not downgrade a TLS handshake to plaintext. Plaintext requests to a
+non-loopback host log a warning, since the bearer key crosses the network
+unencrypted; loopback (the expected local-Big-Peer case) stays quiet.
+
 ### 4.3 Storage layers
 
 | Key | Where | Why |

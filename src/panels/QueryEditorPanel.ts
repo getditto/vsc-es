@@ -13,7 +13,7 @@ import type { QueryResultMetadata } from '../inspector/inspector-state.js';
 import type { QueryHistoryStore } from '../storage/QueryHistoryStore.js';
 import type { QueryFavoritesStore } from '../storage/QueryFavoritesStore.js';
 import type { QueryMetricsStore } from '../storage/QueryMetricsStore.js';
-import { executeRemoteQuery } from '../ditto/HttpQueryService.js';
+import { executeRemoteQuery, type HttpQueryRequest } from '../ditto/HttpQueryService.js';
 import { extractQueryAdvice } from '../ditto/advise.js';
 import { isAdviseStatement } from '../ditto/QueryProfileParser.js';
 import { extractCollectionName } from '../ditto/import-subscription-parser.js';
@@ -457,6 +457,7 @@ export class QueryEditorPanel {
       httpApiUrl: cfg.httpApiUrl,
       httpApiKey: secrets.httpApiKey,
       allowUntrustedCerts: cfg.allowUntrustedCerts,
+      serverUrl: cfg.authUrl,
     };
     const start = performance.now();
     const response = await executeRemoteQuery({ ...httpReq, query }, this.logger);
@@ -492,7 +493,7 @@ export class QueryEditorPanel {
    *  EXPLAIN, matching DittoManager.runExplain on the local path. ADVISE
    *  is skipped too — `EXPLAIN ADVISE …` is not valid syntax. */
   private async fetchHttpExplain(
-    httpReq: { httpApiUrl: string; httpApiKey: string; allowUntrustedCerts: boolean },
+    httpReq: Omit<HttpQueryRequest, 'query'>,
     query: string,
   ): Promise<string> {
     if (query.trimStart().toUpperCase().startsWith('EXPLAIN')) { return ''; }

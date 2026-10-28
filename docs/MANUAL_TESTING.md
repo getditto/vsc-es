@@ -900,15 +900,25 @@ app ID.
 **Steps:**
 
 1. Register a database in the extension: URL `http://localhost:8081` (base
-   URL only, no app id), the app's ID, and the playground token.
+   URL only, no app id), the app's ID, and the playground token. Set the
+   **HTTP API URL** to `localhost:8081` (host and port only, no scheme)
+   with the HTTP API key.
 2. Connect, then press **Start Sync**.
 3. Open a collection in the tree view (registers a subscription) and wait
    ~10 s.
 4. Open the **Presence Graph**.
 5. In a terminal, watch the ingress controller's access log:
    `kubectl -n nginx logs deploy/ingress-nginx-controller --tail=20`.
+6. Run a query over the HTTP API: open the query editor, switch to HTTP
+   mode, and run `SELECT * FROM <collection> LIMIT 10`.
 
 **Expected:**
+
+- Step 6 returns rows over **plain HTTP** — no SSL error. The nginx log
+  shows `POST /api/v5/store/execute … 200`. Before the scheme derivation
+  fix, this step failed with an SSL "wrong version number" error even with
+  **Allow untrusted certificates** checked (that flag only relaxes cert
+  verification; it cannot downgrade TLS to plaintext).
 
 - The nginx log shows `GET /_ditto/ws?app_id=…&sdk_language=JavaScript … 101`
   — a successful websocket upgrade, **not** lines like
@@ -954,6 +964,17 @@ port — the SDK derived `wss://` from an `http://` server URL. Rebuild the
 extension (`npm run build`), reload the Extension Development Host
 (`Cmd+R`), and reconnect. If you see it on a build that includes the pin,
 check that the connection's mode is `server` — the pin only applies there.
+
+### HTTP-mode queries fail with an SSL error against a local Big Peer
+
+`write EPROTO … wrong version number` (or similar) means the query went out
+over TLS to a plain-HTTP port. The HTTP API's scheme follows the
+connection's **URL** field: it must be entered as `http://host:port` (not
+host-only, which defaults to https). **Allow untrusted certificates** does
+not help here — it skips certificate verification on TLS connections; it
+cannot turn TLS into plaintext. Conversely, if the Big Peer serves HTTPS
+with a self-signed certificate, keep the URL at `https://…` and check that
+box instead.
 
 ### Peer Listing shows "No sync status available"
 

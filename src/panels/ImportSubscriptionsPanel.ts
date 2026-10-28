@@ -145,6 +145,7 @@ export class ImportSubscriptionsPanel {
         httpApiUrl: cfg.httpApiUrl,
         httpApiKey: secrets.httpApiKey,
         allowUntrustedCerts: cfg.allowUntrustedCerts,
+        serverUrl: cfg.authUrl,
         query: 'SELECT * FROM __small_peer_info',
       }, this.logger);
 
