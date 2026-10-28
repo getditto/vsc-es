@@ -50,7 +50,13 @@ const NAMESPACE_PREFIXES: ReadonlyArray<readonly [NamespaceFilter, readonly stri
   // e.g. `ditto.store.changes`). Anything store-shaped belongs here, never
   // in Other.
   ['store', ['ditto.backend.', 'ditto.store.']],
-  ['query', ['ditto.query.']],
+  // Query covers both the OTLP names (`ditto.query.*`, SDK 5.2+) and the
+  // legacy `dql.*` series the SDK dual-emits alongside them
+  // (crates/ditto-dql/src/metrics.rs: every dql.* counter/histogram has a
+  // ditto.query.* alias — dql.requests ↔ ditto.query.requests, and so on).
+  // The legacy rows carry the same data, so they belong here rather than
+  // in Other.
+  ['query', ['ditto.query.', 'dql.']],
   ['sync', ['ditto.sync.', 'ditto.replication.']],
 ];
 

@@ -34,7 +34,10 @@ The segment control filters rows by namespace:
 - **Sync** — replication state (`ditto.sync.*`, `ditto.replication.*`).
   Non-zero recovery counts mean sync sessions were torn down — check the
   `cause` label and the Log Analyzer.
-- **Query** — query-engine metrics (`ditto.query.*`, SDK 5.2+).
+- **Query** — query-engine metrics: the OTLP series (`ditto.query.*`, SDK
+  5.2+) and their legacy `dql.*` aliases, which the SDK dual-emits
+  alongside (`dql.requests` carries the same count as
+  `ditto.query.requests`).
 - **Other** — anything outside those namespaces.
 - **All** — every reported series.
 

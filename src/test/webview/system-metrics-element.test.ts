@@ -61,6 +61,14 @@ const SYSTEM_SNAPSHOT = {
       sinceConnect: 41, periodDelta: 3,
     },
     {
+      // Legacy dual-emitted series: the SDK reports every query metric
+      // twice — dql.requests alongside ditto.query.requests. The legacy
+      // row must land in the Query segment with its OTLP twin, not Other.
+      key: 'dql.requests',
+      labels: {}, description: 'Query requests (legacy alias)', unit: 'count', kind: 'counter',
+      sinceConnect: 41, periodDelta: 3,
+    },
+    {
       key: 'custom.metric.from.somewhere_else',
       labels: {}, description: 'A metric outside Ditto namespaces', unit: 'count', kind: 'counter',
       sinceConnect: 7, periodDelta: 0,
@@ -121,6 +129,7 @@ test('SystemMetrics: a working snapshot renders one row per series, keys strippe
     'store.changes',
     'replication.session_resets',
     'query.executions_total',
+    'dql.requests',
     'custom.metric.from.somewhere_else',
   ], 'every series renders under All, with the ditto. prefix stripped');
   assert.match(text, /db=main/, 'series carry their labels');
@@ -154,8 +163,8 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
 
   segment(el, 'Query').click();
   await el.updateComplete;
-  assert.deepEqual(rows(el), ['query.executions_total'],
-    'ditto.query.* series land in the Query segment');
+  assert.deepEqual(rows(el), ['query.executions_total', 'dql.requests'],
+    'ditto.query.* and legacy dql.* series land in the Query segment');
 
   segment(el, 'Other').click();
   await el.updateComplete;
@@ -164,7 +173,7 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
 
   segment(el, 'All').click();
   await el.updateComplete;
-  assert.equal(rows(el).length, 7);
+  assert.equal(rows(el).length, 8);
 });
 
 test('SystemMetrics: an empty namespace says so rather than showing a blank panel', async t => {
@@ -387,7 +396,7 @@ test('SystemMetrics: search matches label keys and values (e.g. every ble series
 
   typeSearch(el, '   ');
   await el.updateComplete;
-  assert.equal(masterKeys(el).length, 9, 'a whitespace-only query is no filter at all');
+  assert.equal(masterKeys(el).length, 10, 'a whitespace-only query is no filter at all');
 });
 
 test('SystemMetrics: search composes with the namespace segment', async t => {
