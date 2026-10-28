@@ -183,15 +183,41 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const sessionId = crypto.randomUUID();
   const fileDir = path.join(context.globalStorageUri.fsPath, 'logs');
   const analyzerSink = new AnalyzerSink();
+  // Log-retention settings (dittoVsce.log*): read once here for the sink's
+  // initial limits, watched below for live updates.
+  const readLogLimits = () => {
+    const cfg = vscode.workspace.getConfiguration('dittoVsce');
+    return {
+      maxBytes: Math.max(1, cfg.get<number>('logMaxMegabytes', 5)) * 1024 * 1024,
+      retain: Math.max(0, Math.round(cfg.get<number>('logRetainFiles', 5))),
+      maxAgeDays: cfg.get<number>('logMaxAgeDays', 14),
+    };
+  };
+  const initialLogLimits = readLogLimits();
   logger = createLogger({
     channel,
     fileDir,
     sessionId,
+    fileMaxBytes: initialLogLimits.maxBytes,
+    fileRetain: initialLogLimits.retain,
     mode: context.extensionMode === vscode.ExtensionMode.Development
       || context.extensionMode === vscode.ExtensionMode.Test
         ? 'development' : 'production',
     extraSinks: [analyzerSink],
   });
+  // Age-based pruning, once per activation — the same point VS Code core
+  // prunes its own session log directories. 0 days disables pruning.
+  // activate() is synchronous, so this runs fire-and-forget; the task is
+  // self-contained background maintenance and reports through the log.
+  if (initialLogLimits.maxAgeDays > 0) {
+    void logger.pruneLogFilesOlderThan(initialLogLimits.maxAgeDays * 24 * 60 * 60 * 1000)
+      .then(pruned => {
+        if (pruned > 0) {
+          logger.info(`Pruned ${pruned} rotated log file(s) older than ${initialLogLimits.maxAgeDays} days`);
+        }
+      })
+      .catch(err => logger.error('Log pruning failed', { error: String(err) }));
+  }
   // NOTE: the logger's disposal is registered at the END of activate() —
   // VS Code disposes subscriptions in registration order, and everything
   // else (manager.disconnect above all) logs during its own teardown.
@@ -550,6 +576,13 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         // prefix match): port moves restart the listener when it's running
         // (the flag's on/off state is per-connection, on StoredDittoConfig).
         void mcpController.reconcile();
+      }
+      if (e.affectsConfiguration('dittoVsce.logMaxMegabytes')
+          || e.affectsConfiguration('dittoVsce.logRetainFiles')) {
+        // Live rotation-limit update — no restart needed. Stray rotations
+        // beyond a shrunken retain count are deleted by setLimits.
+        const limits = readLogLimits();
+        void logger.setFileLimits({ maxBytes: limits.maxBytes, retain: limits.retain });
       }
       if (e.affectsConfiguration('dittoVsce.logAnalyzer.customPatternsFile')) {
         // Repoint PatternStore at the new user file (or fall back to
@@ -1342,6 +1375,17 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
         'revealFileInOS',
         vscode.Uri.joinPath(context.globalStorageUri, 'logs', 'ditto-edge-studio.log'),
       );
+    }),
+    vscode.commands.registerCommand('dittoVsce.clearApplicationLog', async () => {
+      const ok = await vscode.window.showWarningMessage(
+        'Delete all application log files (the active log and every rotated backup)? This cannot be undone. Export a bug report first if you need the history.',
+        { modal: true },
+        'Delete Logs',
+      );
+      if (ok !== 'Delete Logs') { return; }
+      await logger.clearLogFiles();
+      logger.info('Application log cleared by user');
+      void vscode.window.showInformationMessage('Application log cleared — a fresh log starts now.');
     }),
     vscode.commands.registerCommand('dittoVsce.openLogAnalyzer', (databaseId?: string) => {
       // The Log Analyzer is per-database — invoked from the tree row of an

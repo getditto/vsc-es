@@ -8,6 +8,7 @@ export type LoggingNode =
   | { kind: 'openOutput' }
   | { kind: 'exportLogs' }
   | { kind: 'showLogFile' }
+  | { kind: 'clearLogs' }
   | { kind: 'openPatternEditor' };
 
 export class LoggingTreeProvider implements vscode.TreeDataProvider<LoggingNode> {
@@ -26,6 +27,7 @@ export class LoggingTreeProvider implements vscode.TreeDataProvider<LoggingNode>
       { kind: 'openOutput' },
       { kind: 'exportLogs' },
       { kind: 'showLogFile' },
+      { kind: 'clearLogs' },
       { kind: 'openPatternEditor' },
     ];
   }
@@ -62,6 +64,12 @@ export class LoggingTreeProvider implements vscode.TreeDataProvider<LoggingNode>
         const it = new vscode.TreeItem('Show Log File in Finder', vscode.TreeItemCollapsibleState.None);
         it.iconPath = new vscode.ThemeIcon('folder');
         it.command = { command: 'dittoVsce.showLogFile', title: 'Show Log File' };
+        return it;
+      }
+      case 'clearLogs': {
+        const it = new vscode.TreeItem('Clear Application Log…', vscode.TreeItemCollapsibleState.None);
+        it.iconPath = new vscode.ThemeIcon('trash');
+        it.command = { command: 'dittoVsce.clearApplicationLog', title: 'Clear Application Log' };
         return it;
       }
       case 'openPatternEditor': {

@@ -662,6 +662,36 @@ add a fourth:
   messages bridge to the host's logger via the `LogIn` IPC type
   (`src/ipc/messages.ts`).
 
+#### Log retention
+
+The application log is a rotating file set under
+`<globalStorage>/logs/`: an active `ditto-edge-studio.log` plus numbered
+rotations `ditto-edge-studio.log.1` … `.N`. Three settings control it, all
+applied live (no restart):
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `dittoVsce.logMaxMegabytes` | `5` | Size at which the active log rotates. |
+| `dittoVsce.logRetainFiles` | `5` | Number of rotated backups kept. |
+| `dittoVsce.logMaxAgeDays` | `14` | Rotations older than this are deleted at activation. `0` disables age pruning. |
+
+The on-disk ceiling is roughly `logMaxMegabytes × (logRetainFiles + 1)` — 30 MB
+at the defaults.
+
+- `src/logging/FileSink.ts` owns the rotation set. `setLimits()` applies new
+  limits at runtime and deletes rotations beyond a shrunken retain count
+  (rotation alone only ever shifts indices *up to* `retain`, so a lowered
+  value would otherwise orphan the extras on disk forever).
+  `pruneRotationsOlderThan()` deletes aged rotations — never the active file,
+  which is live state — and runs once per activation, the same point VS Code
+  core prunes its own session log directories. `clear()` deletes the whole
+  set; the next write re-creates the active file with its session header.
+- **Ditto: Clear Application Log…** (`dittoVsce.clearApplicationLog`) is the
+  user-facing on-demand clean-up: a modal confirm, then the whole set is
+  deleted. It is also a row in the **Logging** tree panel.
+- `activate()` is synchronous, so the activation-time prune is fire-and-forget
+  (`void promise.then(...).catch(...)`) — it must never block activation.
+
 ---
 
 ## 9. Known gaps & future work

@@ -550,6 +550,41 @@ still require manual verification.
 9. Disconnect, then reconnect. Verify the SDK level reverts to the per-DB config default (not the live `verbose` we set).
 10. Lower channel level back to `info` via Logging panel; subsequent `debug`/`trace` lines stop appearing in the channel but **still appear in the file**.
 
+### T16a · Log retention — rotation limits, age pruning, and clear
+
+**Pre-conditions:** none. The log lives in the extension's global storage —
+run **Ditto: Show Log File in Finder** to reveal it, or inspect
+`$(ls -d ~/Library/Application\ Support/Code/User/globalStorage/getditto.ditto-vsce/logs)` on
+macOS (the folder name varies by VS Code flavour — Cursor, Antigravity).
+
+**Steps:**
+
+1. Open the **Logging** panel — a **Clear Application Log…** row sits between
+   *Show Log File in Finder* and *Manage Log Patterns*.
+2. Generate traffic (connect, run a query, open panels) so the active log has
+   content. Note the file count in the log folder.
+3. Click **Clear Application Log…** → a modal warning appears → click
+   **Delete Logs**. The folder is now empty and a toast confirms
+   "Application log cleared — a fresh log starts now."
+4. Generate more traffic → the active `ditto-edge-studio.log` reappears with
+   the `# Ditto Edge Studio log` / `# session …` / `# started …` header, and
+   contains only the new lines (the pre-clear history is gone).
+5. Open Settings → search `dittoVsce.log` and set **Log Max Megabytes** to
+   `1` and **Log Retain Files** to `2`. Both apply immediately — no reload
+   needed.
+6. Fill the log past 1 MB (a busy session, or temporarily raise the
+   application log level to `trace`). The active file rotates to
+   `ditto-edge-studio.log.1`; with a retain count of 2, the folder holds at
+   most the active file plus two backups.
+7. Lower **Log Retain Files** to `0` — the extra backups are deleted
+   immediately; only the active file remains.
+8. Set **Log Max Age Days** to `1`, then back to `14`. Age pruning runs at
+   **activation**: reload the window and confirm a "Pruned N rotated log
+   file(s)…" line appears in the log only when a backup really was older
+   than the cutoff.
+9. Set **Log Max Age Days** to `0` — age pruning is disabled; reloading the
+   window leaves aged rotations in place.
+
 ### T23 · Debug Socket Console (SDK 5.1 `debug_socket`)
 
 **Pre-conditions:** macOS or Linux (no debug socket on Windows). You need an app

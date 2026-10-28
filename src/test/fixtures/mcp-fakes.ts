@@ -67,6 +67,9 @@ export function makeFakeLogger(canned: string[] = []): Logger & { written: strin
     clearKnownSecrets: (): void => { /* no-op */ },
     readAllLogs: (): Promise<string> => Promise.resolve(canned.join('\n')),
     readRecentLogLines: (n: number): Promise<string[]> => Promise.resolve(canned.slice(-n)),
+    setFileLimits: (): Promise<void> => Promise.resolve(),
+    pruneLogFilesOlderThan: (): Promise<number> => Promise.resolve(0),
+    clearLogFiles: (): Promise<void> => Promise.resolve(),
     dispose: (): Promise<void> => Promise.resolve(),
   };
   return self;

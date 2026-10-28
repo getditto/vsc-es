@@ -229,6 +229,10 @@
         "title": "Ditto: Show Log File in Finder"
       },
       {
+        "command": "dittoVsce.clearApplicationLog",
+        "title": "Ditto: Clear Application Log…"
+      },
+      {
         "command": "dittoVsce.toggleInspector",
         "title": "Ditto: Toggle Inspector",
         "icon": "$(layout-sidebar-right)"
@@ -519,6 +523,25 @@
           "type": "boolean",
           "default": true,
           "description": "Enable Ditto's startup-gated system:metrics virtual collection for connections this extension opens (sets DITTO_METRICS_EXPORTER_VIRTUAL_COLLECTION_ENABLED around Ditto.open), feeding the System Metrics panel. Changes apply at the NEXT connect — the SDK parameter is startup-only."
+        },
+        "dittoVsce.logMaxMegabytes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "Size at which the application log rotates, in MB. Rotation keeps the active log plus the number of backups set in dittoVsce.logRetainFiles. Applies immediately."
+        },
+        "dittoVsce.logRetainFiles": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 20,
+          "description": "Number of rotated application-log backups to keep. The total on-disk ceiling is roughly logMaxMegabytes × (logRetainFiles + 1). Lowering this deletes the extra backups immediately."
+        },
+        "dittoVsce.logMaxAgeDays": {
+          "type": "number",
+          "default": 14,
+          "minimum": 0,
+          "description": "Rotated application-log backups older than this many days are deleted when the extension activates (the active log is never deleted). Set to 0 to disable age-based pruning."
         },
         "dittoVsce.mcpServer.port": {
           "type": "number",

@@ -30,8 +30,8 @@ test('LoggingTreeProvider: returns 6 root nodes in fixed order', async () => {
   const f = fakeLogger();
   const p = new LoggingTreeProvider(f.api);
   const nodes = p.getChildren();
-  assert.equal(nodes.length, 6);
-  assert.deepEqual(nodes.map(n => n.kind), ['appLevel', 'sdkLevel', 'openOutput', 'exportLogs', 'showLogFile', 'openPatternEditor']);
+  assert.equal(nodes.length, 7);
+  assert.deepEqual(nodes.map(n => n.kind), ['appLevel', 'sdkLevel', 'openOutput', 'exportLogs', 'showLogFile', 'clearLogs', 'openPatternEditor']);
 });
 
 test('LoggingTreeProvider: appLevel item description shows current level', async () => {
@@ -150,6 +150,17 @@ test('LoggingTreeProvider: showLogFile row wiring', async () => {
   assert.equal((item.iconPath as vscode.ThemeIcon).id, 'folder');
   assert.equal(item.command?.command, 'dittoVsce.showLogFile');
   assert.equal(item.command?.title, 'Show Log File');
+});
+
+test('LoggingTreeProvider: clearLogs row wiring', async () => {
+  const f = fakeLogger();
+  const p = new LoggingTreeProvider(f.api);
+  const node = p.getChildren().find(n => n.kind === 'clearLogs')!;
+  const item = p.getTreeItem(node);
+  assert.equal(item.label, 'Clear Application Log…');
+  assert.equal((item.iconPath as vscode.ThemeIcon).id, 'trash');
+  assert.equal(item.command?.command, 'dittoVsce.clearApplicationLog');
+  assert.equal(item.command?.title, 'Clear Application Log');
 });
 
 test('LoggingTreeProvider: openOutput and openPatternEditor rows are iconed leaves', async () => {
