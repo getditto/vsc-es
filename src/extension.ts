@@ -26,6 +26,7 @@ import { ImportSubscriptionsPanel } from './panels/ImportSubscriptionsPanel.js';
 import { AddIndexPanel } from './panels/AddIndexPanel.js';
 import { DittoManager } from './ditto/DittoManager.js';
 import { SupportBundleService } from './ditto/SupportBundleService.js';
+import { BugReportService } from './bugreport/BugReportService.js';
 import { CollectionsRepository } from './ditto/CollectionsRepository.js';
 import { isBareIdentifier, quoteIdentifier } from './ditto/dql-identifier.js';
 import { OpenPanelsTracker } from './ditto/OpenPanelsTracker.js';
@@ -374,6 +375,12 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
   const extensionVersion =
     (context.extension?.packageJSON as { version?: unknown } | undefined)?.version as string | undefined
     ?? '0.0.0';
+  // The SDK version goes into the bug-report README so support can see at a
+  // glance which Ditto build produced the bundle. Read it from the bundled
+  // dependency declaration rather than hardcoding a string that drifts.
+  const sdkVersion =
+    (context.extension?.packageJSON as { dependencies?: Record<string, string> } | undefined)
+      ?.dependencies?.['@dittolive/ditto'] ?? 'unknown';
   // Tracks when each database last entered the 'active' lifecycle state.
   // The Log Analyzer uses this as a backfill floor so its histograms only
   // reflect the current connection — not weeks of rotated log history.
@@ -1180,14 +1187,58 @@ export function activate(context: vscode.ExtensionContext): TestApi | undefined 
     }),
     vscode.commands.registerCommand('dittoVsce.exportLogs', async () => {
       const ok = await vscode.window.showWarningMessage(
-        'The exported log may contain document data from your databases. Review before sharing.',
+        'The bug report bundles the application log with an SDK support bundle, and may contain document data from your databases. Review before sharing.',
         { modal: true },
-        'Open in Editor',
+        'Export Bug Report',
       );
-      if (ok !== 'Open in Editor') { return; }
-      const combined = await logger.readAllLogs();
-      const doc = await vscode.workspace.openTextDocument({ language: 'log', content: combined });
-      await vscode.window.showTextDocument(doc);
+      if (ok !== 'Export Bug Report') { return; }
+
+      const service = new BugReportService({
+        manager,
+        logger,
+        readAllLogs: () => logger.readAllLogs(),
+        extensionVersion,
+        sdkVersion,
+      });
+      try {
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Exporting bug report',
+            cancellable: false,
+          },
+          async (progress) => service.export({
+            report: (msg, inc) => {
+              const opts: { message: string; increment?: number } = { message: msg };
+              if (inc !== undefined) { opts.increment = inc; }
+              progress.report(opts);
+            },
+          }),
+        );
+        if (result) {
+          const sizeMB = (result.totalBytes / (1024 * 1024)).toFixed(1);
+          const bundleNote = result.includedSupportBundle
+            ? ''
+            : ' — application log only (see README.txt inside)';
+          void vscode.window.showInformationMessage(
+            `Bug report saved (${sizeMB} MB)${bundleNote}. Share ${result.savedPath} with Ditto support.`,
+            'Reveal in Finder',
+          ).then(action => {
+            if (action === 'Reveal in Finder') {
+              void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(result.savedPath));
+            }
+          });
+          if (!result.includedSupportBundle && result.bundleNote?.startsWith('support bundle collection failed')) {
+            void vscode.window.showWarningMessage(
+              `The bug report was saved without a support bundle — ${result.bundleNote}. The application log is included.`,
+            );
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.withTag('ext:exportLogs').error('Bug report export failed', { error: msg });
+        void vscode.window.showErrorMessage(`Bug report export failed: ${msg}`);
+      }
     }),
     vscode.commands.registerCommand('dittoVsce.exportSdkLogs', async () => {
       if (!manager.getActiveConfigId()) {

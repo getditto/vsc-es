@@ -13,6 +13,10 @@ export class EventEmitter {
 
 export const LogLevel = { Off: 0, Trace: 1, Debug: 2, Info: 3, Warning: 4, Error: 5 };
 
+// The host version string (vscode.version) — surfaces in diagnostics like
+// the bug-report README. A fixed stub value keeps test output deterministic.
+export const version = '1.106.0-stub';
+
 export class TreeItem {
   constructor(label, collapsibleState) {
     this.label = label;

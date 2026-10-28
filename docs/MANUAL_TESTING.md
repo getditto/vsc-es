@@ -543,8 +543,8 @@ still require manual verification.
 3. Click **Open Output Channel** — the Ditto Edge Studio channel opens, showing previously-logged lines tagged `[ext:...]`, `[sdk]`, `[webview:...]`.
 4. Connect a database, run a query, click a few panels. New lines appear with timestamps + tags + levels.
 5. Click **Ditto SDK Log Level** → choose `verbose`. SDK lines start showing more detail.
-6. Click **Export Logs for Bug Report…** → confirm modal warning → "Open in Editor" → new untitled doc opens, language `log`.
-7. Save the document somewhere — verify file roundtrips cleanly.
+6. Click **Export Logs for Bug Report…** → confirm modal warning ("Export Bug Report") → a progress notification runs ("Requesting support bundle…" when connected) → save dialog suggests `ditto-bug-report-<timestamp>.zip` → pick a location → success notification offers **Reveal in Finder**.
+7. Unzip the export — verify three entries: `README.txt` (versions, contents list, privacy note), `application.log` (the extension log, chronological), and `support-bundle.tar.gz` (the SDK bundle; `tar tzf` lists `dial9/dial9.bin.gz` + logs). When disconnected at step 6, the zip holds only `README.txt` + `application.log` and the README explains the bundle was skipped.
 8. Command Palette → **Ditto: Export SDK Logs (gzip)…** → confirm modal → save dialog → a `.jsonl.gz` is written; `gzip -dc` shows JSON-lines SDK records (distinct from the extension log in step 6). Covered in detail by T27.
 8. In **Help** panel: click each link, verify it opens the right URL in the system browser.
 9. Disconnect, then reconnect. Verify the SDK level reverts to the per-DB config default (not the live `verbose` we set).

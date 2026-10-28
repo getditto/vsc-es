@@ -833,10 +833,11 @@ connected, or even registered.
 - **History is session-only.** The last 50 runs are kept in the webview, newest first;
   nothing is persisted.
 
-### 14.4 Support bundles and SDK log export (SDK 5.2)
+### 14.4 Support bundles, bug-report export, and SDK log export (SDK 5.2)
 
-Two command-palette diagnostics features ship the data Ditto support asks for.
-Both require an active connection and SDK 5.2+.
+Three command-palette diagnostics features ship the data Ditto support asks
+for. The support bundle and SDK log export require an active connection and
+SDK 5.2+; the bug-report export degrades to log-only without one.
 
 - **Ditto: Collect Support Bundle (dial9)…** — `SupportBundleService`
   (`src/ditto/SupportBundleService.ts`) mirrors benchy's
@@ -860,6 +861,24 @@ Both require an active connection and SDK 5.2+.
   already in the ring buffer and never starts/stops the recorder. Note the
   SDK rate-limits `system_request_support_bundle` (~3 requests per 10 min
   per store); surface the SDK's error rather than retrying.
+
+  The service splits at the save dialog: `collectBytes()` runs phases 1–4
+  and returns the gzipped bundle in memory; `collect()` adds the
+  `showSaveDialog` write. The bug-report export uses `collectBytes()` so
+  the bundle can become a zip entry instead of a file of its own.
+- **Ditto: Export Logs for Bug Report…** — `BugReportService`
+  (`src/bugreport/BugReportService.ts`) packs the application log
+  (`logger.readAllLogs()` — all rotations, chronological) plus a
+  `collectBytes()` support bundle into ONE zip saved where the user
+  chooses, with a `README.txt` recording extension/SDK/VS Code versions
+  and the archive contents. Degrades to a log-only zip when disconnected
+  or when bundle collection fails — the README records the reason, since
+  a bug report about a connection failure is exactly the case that can't
+  wait for one. The bundle is captured as-is (no 70 s query loop). The
+  zip writer is in-house (`src/bugreport/zip.ts` — local headers +
+  central directory + EOCD, deflate for text, store for the already-
+  compressed bundle, table-driven CRC32) so the feature adds no
+  archiving dependency.
 - **Ditto: Export SDK Logs (gzip)…** — `DittoLogger.exportToFile(path)`
   writes the SDK's internal ring buffer (Debug+, ~15 MB / 15-day retention,
   independent of `Logger.enabled`/`minimumLogLevel`) as `.jsonl.gz`. The

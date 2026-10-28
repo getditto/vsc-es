@@ -34,6 +34,20 @@ export interface SupportBundleResult {
   querySeconds: number;
 }
 
+/** The collected bundle as in-memory bytes, before any save dialog — the
+ *  shape callers need when the bundle becomes part of a larger artifact
+ *  (the bug-report zip) rather than a file of its own. */
+export interface SupportBundleBytes {
+  /** The gzipped bundle, ready to write or pack. */
+  gzBytes: Buffer;
+  /** Size of the original `.tar` in bytes. */
+  originalBytes: number;
+  /** Number of query executions completed during the trace window. */
+  queryExecutions: number;
+  /** Actual seconds of query execution accumulated. */
+  querySeconds: number;
+}
+
 /** Progress reporter passed to the collection flow so the caller decides
  *  how to surface status (VS Code progress notification, MCP log, test
  *  harness, …). */
@@ -71,22 +85,17 @@ export class SupportBundleService {
   ) {}
 
   /**
-   * Run the full collection flow. Returns the result on success, or
-   * `null` if the user cancelled the save dialog.
-   *
-   * @param query  The DQL SELECT to loop for trace collection. When
-   *               omitted, skips the load-generation phase (the bundle
-   *               still contains whatever dial9 has already captured).
-   * @param progress  Optional progress reporter.
-   * @param minQuerySeconds  Override the minimum query-execution window
-   *                         (default {@link MIN_QUERY_SECONDS}). Used by
-   *                         tests to avoid a real 70-second wait.
+   * Run the collection flow and return the bundle as in-memory bytes —
+   * phases 1–4 (load generation, bundle request, attachment fetch,
+   * compression) with no save dialog. {@link collect} adds the dialog;
+   * callers embedding the bundle in a larger artifact (the bug-report
+   * zip) use this directly.
    */
-  async collect(
+  async collectBytes(
     query?: string,
     progress?: SupportBundleProgress,
     minQuerySeconds?: number,
-  ): Promise<SupportBundleResult | null> {
+  ): Promise<SupportBundleBytes> {
     const log = this.logger.withTag('ext:SupportBundle');
     const targetSeconds = minQuerySeconds ?? MIN_QUERY_SECONDS;
 
@@ -118,6 +127,34 @@ export class SupportBundleService {
     const gzBytes = await gzip(tarBytes);
     log.info('Bundle compressed', { original: tarBytes.length, compressed: gzBytes.length });
 
+    return {
+      gzBytes,
+      originalBytes: tarBytes.length,
+      queryExecutions,
+      querySeconds,
+    };
+  }
+
+  /**
+   * Run the full collection flow. Returns the result on success, or
+   * `null` if the user cancelled the save dialog.
+   *
+   * @param query  The DQL SELECT to loop for trace collection. When
+   *               omitted, skips the load-generation phase (the bundle
+   *               still contains whatever dial9 has already captured).
+   * @param progress  Optional progress reporter.
+   * @param minQuerySeconds  Override the minimum query-execution window
+   *                         (default {@link MIN_QUERY_SECONDS}). Used by
+   *                         tests to avoid a real 70-second wait.
+   */
+  async collect(
+    query?: string,
+    progress?: SupportBundleProgress,
+    minQuerySeconds?: number,
+  ): Promise<SupportBundleResult | null> {
+    const log = this.logger.withTag('ext:SupportBundle');
+    const bytes = await this.collectBytes(query, progress, minQuerySeconds);
+
     // ── Phase 5: Save dialog ─────────────────────────────────────
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const suggested = `ditto-support-bundle-${timestamp}.tar.gz`;
@@ -133,15 +170,15 @@ export class SupportBundleService {
       return null;
     }
 
-    await fs.writeFile(target.fsPath, gzBytes);
-    log.info('Support bundle saved', { path: target.fsPath, bytes: gzBytes.length });
+    await fs.writeFile(target.fsPath, bytes.gzBytes);
+    log.info('Support bundle saved', { path: target.fsPath, bytes: bytes.gzBytes.length });
 
     return {
       savedPath: target.fsPath,
-      compressedBytes: gzBytes.length,
-      originalBytes: tarBytes.length,
-      queryExecutions,
-      querySeconds,
+      compressedBytes: bytes.gzBytes.length,
+      originalBytes: bytes.originalBytes,
+      queryExecutions: bytes.queryExecutions,
+      querySeconds: bytes.querySeconds,
     };
   }
 
