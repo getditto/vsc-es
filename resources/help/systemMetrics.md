@@ -66,6 +66,11 @@ Search and the segment filter compose (Store + `wal` → the WAL metrics of
 the Store namespace). The Pinned section is not affected by either filter —
 it is your stable set.
 
+The master list is sorted **alphabetically by metric name**, so you can
+scan straight to a series instead of searching; series that share a name
+(a rare label-only pair) order by their labels. The Pinned section keeps
+the order you set by dragging — it is not sorted.
+
 The **ⓘ icon** on a row expands the series' details: the metric's
 description from the SDK registry, its kind (counter / gauge / histogram)
 and unit, the full metric name, and — for histograms — the average and

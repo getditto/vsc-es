@@ -742,8 +742,17 @@ export class SystemMetricsElement extends LitElement {
   }
 
   private renderDashboard(snap: SystemMetricsSnapshot): TemplateResult {
-    const filtered = snap.samples.filter(s =>
-      matchesFilter(s, this.filter) && matchesQuery(s, this.query));
+    const filtered = snap.samples
+      .filter(s => matchesFilter(s, this.filter) && matchesQuery(s, this.query))
+      // Alphabetical by the DISPLAYED key (the ditto.-stripped form the user
+      // scans) — the snapshot arrives in accumulator insertion order, which
+      // reads as random in a long list and forces search for every lookup.
+      // Ties (an aggregate row beside a label-only sibling that survived
+      // collapse) fall back to the label signature for a stable order.
+      .sort((a, b) => {
+        const byKey = stripPrefix(a.key).localeCompare(stripPrefix(b.key));
+        return byKey !== 0 ? byKey : labelLine(a).localeCompare(labelLine(b));
+      });
     const since = new Date(snap.sinceMs).toLocaleTimeString();
     const polled = new Date(snap.polledAtMs).toLocaleTimeString();
     return html`

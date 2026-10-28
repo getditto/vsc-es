@@ -158,21 +158,21 @@ test('SystemMetrics: a working snapshot renders one row per series, keys strippe
   const text = el.shadowRoot!.textContent ?? '';
   assert.match(text, /System Metrics/);
   assert.deepEqual(rows(el), [
-    'network.dsoq.connection.opened',
-    'network.dsoq.connection.closed',
     'backend.sqlite3.fsync_duration_secs',
-    'store.changes',
-    'replication.session_resets',
-    'query.executions_total',
-    'dql.requests',
-    'discovery.mdns.active_browse_sessions',
-    'multiplexer.phy.bytes_sent',
-    'diffcaster.diffs_applied',
-    'multicast.tx_objects_sent',
-    'peer.revocation_entries_stored',
-    'small_peer_info.write_store_duration_secs',
     'custom.metric.from.somewhere_else',
-  ], 'every series renders under All, with the ditto. prefix stripped');
+    'diffcaster.diffs_applied',
+    'discovery.mdns.active_browse_sessions',
+    'dql.requests',
+    'multicast.tx_objects_sent',
+    'multiplexer.phy.bytes_sent',
+    'network.dsoq.connection.closed',
+    'network.dsoq.connection.opened',
+    'peer.revocation_entries_stored',
+    'query.executions_total',
+    'replication.session_resets',
+    'small_peer_info.write_store_duration_secs',
+    'store.changes',
+  ], 'every series renders under All, alphabetical by the stripped key');
   assert.match(text, /db=main/, 'series carry their labels');
   assert.match(text, /cause=handshake_timeout/);
   assert.match(text, /Since .* — updated /, 'footer anchors the accumulation window');
@@ -185,8 +185,8 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
   segment(el, 'Network').click();
   await el.updateComplete;
   assert.deepEqual(rows(el), [
-    'network.dsoq.connection.opened',
     'network.dsoq.connection.closed',
+    'network.dsoq.connection.opened',
   ]);
   assert.equal(segment(el, 'Network').getAttribute('aria-pressed'), 'true');
   assert.equal(segment(el, 'All').getAttribute('aria-pressed'), 'false');
@@ -195,18 +195,18 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
   await el.updateComplete;
   assert.deepEqual(rows(el), [
     'backend.sqlite3.fsync_duration_secs',
-    'store.changes',
     'small_peer_info.write_store_duration_secs',
+    'store.changes',
   ], 'ditto.backend.*, ditto.store.* and ditto.small_peer_info.* series land in the Store segment');
 
   segment(el, 'Sync').click();
   await el.updateComplete;
-  assert.deepEqual(rows(el), ['replication.session_resets', 'diffcaster.diffs_applied'],
+  assert.deepEqual(rows(el), ['diffcaster.diffs_applied', 'replication.session_resets'],
     'Sync covers ditto.sync.*, ditto.replication.* and the diffcaster mesh');
 
   segment(el, 'Query').click();
   await el.updateComplete;
-  assert.deepEqual(rows(el), ['query.executions_total', 'dql.requests'],
+  assert.deepEqual(rows(el), ['dql.requests', 'query.executions_total'],
     'ditto.query.* and legacy dql.* series land in the Query segment');
 
   segment(el, 'Discovery').click();
@@ -216,7 +216,7 @@ test('SystemMetrics: the segment control filters rows by namespace', async t => 
 
   segment(el, 'Transport').click();
   await el.updateComplete;
-  assert.deepEqual(rows(el), ['multiplexer.phy.bytes_sent', 'multicast.tx_objects_sent'],
+  assert.deepEqual(rows(el), ['multicast.tx_objects_sent', 'multiplexer.phy.bytes_sent'],
     'ditto.multiplexer.* and ditto.multicast.* series land in the Transport segment');
 
   segment(el, 'Peer').click();
@@ -306,8 +306,8 @@ test('SystemMetrics: gauge rows render the absolute value and a ▼ for negative
       deltaCls: r.querySelector('.mdelta')?.className ?? '',
     }));
   assert.deepEqual(rowVals, [
-    { key: 'transport.awdl.interface_up', headline: '1', delta: '—', deltaCls: 'mdelta ' },
     { key: 'network.connections', headline: '2', delta: '▼ −3', deltaCls: 'mdelta down' },
+    { key: 'transport.awdl.interface_up', headline: '1', delta: '—', deltaCls: 'mdelta ' },
   ], 'gauges show current value; negative period delta renders ▼ in the down colour');
 });
 
@@ -341,13 +341,15 @@ test('SystemMetrics: epoch-timestamp gauges render as an age, not a raw epoch', 
 
   const headlines = [...el.shadowRoot!.querySelectorAll<HTMLElement>('.mrow .mval')]
     .map(n => n.textContent);
-  assert.deepEqual(headlines, ['12s ago', 'never'],
-    'epoch seconds render as a relative age; a zero epoch means no activity yet');
+  assert.deepEqual(headlines, ['never', '12s ago'],
+    'epoch seconds render as a relative age; a zero epoch means no activity yet (rows sort alphabetically: last_received_at before last_sent_at)');
 });
 
 test('SystemMetrics: the info icon toggles the row details', async t => {
   const el = await mountWorking(t);
-  const firstRow = el.shadowRoot!.querySelector('.mrow')!;
+  // Rows sort alphabetically — locate the dsoq opened row by key, not position.
+  const firstRow = [...el.shadowRoot!.querySelectorAll<HTMLElement>('.mrow')]
+    .find(r => r.querySelector('.mkey')?.textContent === 'network.dsoq.connection.opened')!;
   const info = firstRow.querySelector<HTMLButtonElement>('.info-btn')!;
   assert.equal(info.getAttribute('aria-expanded'), 'false');
   assert.equal(firstRow.querySelector('.mdetail'), null, 'details start collapsed');
@@ -423,8 +425,8 @@ test('SystemMetrics: searching filters the master list by key, case-insensitivel
   typeSearch(el, 'NETWORK');
   await el.updateComplete;
   assert.deepEqual(masterKeys(el), [
-    'network.dsoq.connection.opened',
     'network.dsoq.connection.closed',
+    'network.dsoq.connection.opened',
   ]);
 });
 
@@ -453,8 +455,8 @@ test('SystemMetrics: search matches label keys and values (e.g. every ble series
   typeSearch(el, 'ble');
   await el.updateComplete;
   assert.deepEqual(masterKeys(el), [
-    'network.dsoq.connection.mx.end',
     'custom.other',
+    'network.dsoq.connection.mx.end',
   ], 'label values and label keys both participate');
 
   typeSearch(el, '   ');
