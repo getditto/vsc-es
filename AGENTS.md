@@ -16,6 +16,11 @@
 - `engines.vscode` is `^1.106.0` because `contributes.viewsContainers.secondarySidebar`
   (the Inspector's container) only became stable in VS Code 1.106. Lowering it makes
   the Inspector fall back to the Explorer without any error.
+- `@types/vscode` must not be newer than the `engines.vscode` floor — `vsce package`
+  refuses to build when it is ("`@types/vscode` greater than `engines.vscode`").
+  When the types need a bump, pin them to the floor (`~1.106.1`) rather than raising
+  `engines.vscode`, which would drop support for the VS Code releases the README
+  advertises. `src/test/manifest.test.ts` asserts this invariant.
 - Treat `dist/` as generated output. Do not hand-edit it.
 - Read `docs/Developer.md` for architecture and `docs/MANUAL_TESTING.md` only when a change needs Extension Development Host verification.
 

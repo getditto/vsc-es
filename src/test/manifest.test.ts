@@ -21,6 +21,7 @@ const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as {
   };
   capabilities?: Record<string, unknown>;
   activationEvents: string[];
+  devDependencies?: Record<string, string>;
 };
 
 /** Minimum `major.minor` the manifest's contribution points require. */
@@ -113,6 +114,30 @@ test('command ids are unique and namespaced', () => {
   );
   const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
   assert.deepEqual(dupes, [], 'duplicate command declarations');
+});
+
+test('@types/vscode does not outrun the declared engines.vscode floor', () => {
+  // `vsce package` refuses to build when the types package is newer than the
+  // engine floor: "@types/vscode ~1.140.0 greater than engines.vscode
+  // ^1.106.0. Either upgrade engines.vscode or use an older @types/vscode
+  // version". Raising engines.vscode to satisfy the types would drop support
+  // for every VS Code release below it (the README documents ≥ 1.106), so the
+  // types are the side that has to move. This assertion fails at test time
+  // rather than in the release pipeline, where it red-screens a tagged build.
+  const raw = manifest.engines.vscode;
+  const m = /^\^?(\d+)\.(\d+)\./.exec(raw);
+  assert.ok(m, `engines.vscode should be a caret semver, got ${raw}`);
+  const floor = `${Number(m[1])}.${Number(m[2])}`;
+  const types = manifest.devDependencies?.['@types/vscode'];
+  assert.ok(types, '@types/vscode must be declared as a devDependency');
+  const tm = /(\d+)\.(\d+)/.exec(types);
+  assert.ok(tm, `@types/vscode should be a semver range, got ${types}`);
+  assert.ok(
+    Number(tm[1]) < Number(m[1]) || (Number(tm[1]) === Number(m[1]) && Number(tm[2]) <= Number(m[2])),
+    `@types/vscode ${types} is newer than engines.vscode ${raw} (floor ${floor}) — `
+    + 'vsce package will refuse to build. Pin @types/vscode to the engine floor '
+    + 'rather than raising engines.vscode.',
+  );
 });
 
 test('package.json version has matching release notes (release gate pre-check)', () => {
