@@ -15,10 +15,11 @@ import type { ImportableSubscription } from '../ditto/import-subscription-parser
 import type { ObserverEvent } from '../ditto/ObserverEventStore.js';
 
 // ─── Welcome / first-run onboarding panel ──────────────────────
-/** Webview → host. The welcome panel has two action buttons: a primary
- *  "Register Database" that fans out to dittoVsce.registerDatabase, and
- *  a soft "Close" that disposes the panel. */
+/** Webview → host. The panel signals readiness after its listener attaches.
+ *  Register Database and Get Quickstarts dispatch their corresponding extension
+ *  commands. Close disposes the panel. */
 export type WelcomeIn =
+  | { type: 'welcome.ready' }
   | { type: 'welcome.registerDatabase' }
   | { type: 'welcome.getQuickstarts' }
   | { type: 'welcome.close' };

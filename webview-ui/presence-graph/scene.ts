@@ -710,8 +710,7 @@ export class PresenceGraphScene {
       this.exitFocusView();
       return;
     }
-    const invalid = key !== undefined && (!this.peers.has(key) || key === this.localKey);
-    if (invalid) {
+    if (!this.peers.has(key) || key === this.localKey) {
       this.selectedPeerKey = undefined;
       return;
     }

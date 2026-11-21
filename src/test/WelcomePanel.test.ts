@@ -24,7 +24,7 @@ interface FakePanel {
   disposed: boolean;
   revealCount: number;
   iconPath: unknown;
-  webview: { posted: unknown[]; html: string };
+  webview: { posted: unknown[]; html: string; postMessage(msg: unknown): Promise<boolean> };
   dispose(): void;
   fireMessage(msg: unknown): void;
   fireViewState(active: boolean): void;
@@ -61,14 +61,16 @@ function addConfig(fake: ConfigFake): void {
   for (const l of [...fake.changeListeners]) { l(); }
 }
 
-function recordingLogger(): { logger: Logger; infos: string[] } {
+function recordingLogger(): { logger: Logger; infos: string[]; warnings: string[] } {
   const infos: string[] = [];
+  const warnings: string[] = [];
   const self = {
     info: (m: string, _c?: LogContext) => { infos.push(m); },
-    warn: () => {}, error: () => {}, debug: () => {}, trace: () => {},
+    warn: (m: string) => { warnings.push(m); },
+    error: () => {}, debug: () => {}, trace: () => {},
     withTag: () => self,
   } as unknown as Logger;
-  return { logger: self, infos };
+  return { logger: self, infos, warnings };
 }
 
 function fakeContext(version = '9.9.9-test'): vscode.ExtensionContext {
@@ -101,9 +103,9 @@ async function waitFor(pred: () => boolean, ms = 3000): Promise<void> {
   }
 }
 
-/** The constructor defers welcome.init by one tick — wait for it. */
-async function settled(panel: FakePanel): Promise<void> {
-  await waitFor(() => panel.webview.posted.some(m => (m as { type: string }).type === 'welcome.init'));
+async function signalReady(panel: FakePanel): Promise<void> {
+  panel.fireMessage({ type: 'welcome.ready' });
+  await waitFor(() => inits(panel).length > 0);
 }
 
 function inits(panel: FakePanel): { hasExistingDatabases: boolean; version: string }[] {
@@ -123,21 +125,31 @@ test.afterEach(() => { WelcomePanel.dispose(); stub.__resetStub(); });
 test('opening with no databases posts hasExistingDatabases false', async () => {
   const { panel } = showPanel(0);
   assert.equal(panel.title, 'Welcome to Ditto');
-  await settled(panel);
+  await signalReady(panel);
 
   assert.deepEqual(inits(panel), [{ hasExistingDatabases: false, version: '9.9.9-test' }]);
 });
 
 test('opening with databases configured posts hasExistingDatabases true', async () => {
   const { panel } = showPanel(2);
-  await settled(panel);
+  await signalReady(panel);
 
+  assert.deepEqual(inits(panel), [{ hasExistingDatabases: true, version: '9.9.9-test' }]);
+});
+
+test('init waits for a slow webview, including when the panel is revealed again', async () => {
+  const { panel } = showPanel(1);
+  WelcomePanel.show(fakeContext(), fakeConfigStore(1).store, recordingLogger().logger);
+  await new Promise(resolve => setTimeout(resolve, 75));
+  assert.equal(panel.revealCount, 1);
+  assert.deepEqual(inits(panel), []);
+  await signalReady(panel);
   assert.deepEqual(inits(panel), [{ hasExistingDatabases: true, version: '9.9.9-test' }]);
 });
 
 test('the init payload carries the installed extension version', async () => {
   const { panel } = showPanel();
-  await settled(panel);
+  await signalReady(panel);
 
   const [init] = inits(panel);
   assert.ok(init, 'the init payload was posted');
@@ -153,7 +165,7 @@ test('a manifest without a version falls back rather than rendering undefined', 
   );
   const panel = stub.createdWebviewPanels[stub.createdWebviewPanels.length - 1];
   assert.ok(panel, 'panel created');
-  await settled(panel);
+  await signalReady(panel);
 
   const [init] = inits(panel);
   assert.ok(init, 'the init payload was posted');
@@ -169,7 +181,7 @@ test('the panel carries the Ditto icon in both themes', async () => {
 
 test('showing again reveals the existing panel and re-posts init', async () => {
   const { panel } = showPanel(1);
-  await settled(panel);
+  await signalReady(panel);
 
   WelcomePanel.show(fakeContext(), fakeConfigStore(1).store, recordingLogger().logger);
 
@@ -178,18 +190,33 @@ test('showing again reveals the existing panel and re-posts init', async () => {
   await waitFor(() => inits(panel).length === 2);
 });
 
-test('the static dispose closes a live panel', async () => {
-  const { panel } = showPanel();
-  await settled(panel);
+test('the static dispose closes a live panel and removes its store listener', async () => {
+  const { panel, configs } = showPanel();
+  await signalReady(panel);
   WelcomePanel.dispose();
   assert.equal(panel.disposed, true);
+  assert.equal(configs.disposedSubs, 1);
+  assert.deepEqual(configs.changeListeners, []);
+});
+
+test('an init transport failure is logged without preventing the next ready signal', async () => {
+  const { panel, log } = showPanel();
+  const postMessage = panel.webview.postMessage.bind(panel.webview);
+  panel.webview.postMessage = () => Promise.reject(new Error('webview unavailable'));
+  panel.fireMessage({ type: 'welcome.ready' });
+  await waitFor(() => log.warnings.length > 0);
+  assert.deepEqual(log.warnings, ['Welcome message failed']);
+
+  panel.webview.postMessage = postMessage;
+  await signalReady(panel);
+  assert.equal(inits(panel).length, 1);
 });
 
 // ─── Command fan-out ───────────────────────────────────────────
 
 test('welcome.registerDatabase fans out to the registerDatabase command', async () => {
   const { panel } = showPanel();
-  await settled(panel);
+  await signalReady(panel);
 
   panel.fireMessage({ type: 'welcome.registerDatabase' });
   await waitFor(() => stub.commands.executed.length === 1);
@@ -200,7 +227,7 @@ test('welcome.registerDatabase fans out to the registerDatabase command', async 
 
 test('welcome.getQuickstarts fans out to the getQuickstarts command', async () => {
   const { panel } = showPanel();
-  await settled(panel);
+  await signalReady(panel);
 
   panel.fireMessage({ type: 'welcome.getQuickstarts' });
   await waitFor(() => stub.commands.executed.length === 1);
@@ -210,7 +237,7 @@ test('welcome.getQuickstarts fans out to the getQuickstarts command', async () =
 
 test('welcome.close disposes the panel', async () => {
   const { panel } = showPanel();
-  await settled(panel);
+  await signalReady(panel);
 
   panel.fireMessage({ type: 'welcome.close' });
   await Promise.resolve();
@@ -222,7 +249,7 @@ test('welcome.close disposes the panel', async () => {
 
 test('registering the first database auto-closes the panel and logs why', async () => {
   const { panel, configs, log } = showPanel(0);
-  await settled(panel);
+  await signalReady(panel);
 
   addConfig(configs);
 
@@ -232,7 +259,7 @@ test('registering the first database auto-closes the panel and logs why', async 
 
 test('a config change that leaves the store empty does not close the panel', async () => {
   const { panel, configs } = showPanel(0);
-  await settled(panel);
+  await signalReady(panel);
 
   // A delete/replace event with the store still empty.
   for (const l of [...configs.changeListeners]) { l(); }
@@ -246,7 +273,7 @@ test('a later database added while databases already existed does not close the 
   // Opened as a reference card (databases already configured) — its job was
   // never onboarding, so adding a second database must not yank it away.
   const { panel, configs, log } = showPanel(1);
-  await settled(panel);
+  await signalReady(panel);
 
   addConfig(configs);
   await new Promise(r => setTimeout(r, 40));
@@ -257,7 +284,7 @@ test('a later database added while databases already existed does not close the 
 
 test('closing the panel unsubscribes from the config store', async () => {
   const { panel, configs } = showPanel(0);
-  await settled(panel);
+  await signalReady(panel);
 
   panel.dispose();
   await Promise.resolve();

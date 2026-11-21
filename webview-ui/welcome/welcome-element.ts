@@ -5,15 +5,12 @@
 // their portal credentials so the Register Database flow doesn't drop
 // them in front of an empty form with no idea what to type.
 //
-// External anchor hrefs are clicked through VS Code's default browser
-// handler — the webview's CSP allows `https:` connect-src by default
-// for navigation. We don't need `command:` URIs here.
+// VS Code handles navigation to the external HTTPS links in this panel.
 
 import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost, HostMessages } from '../shared/messaging.js';
-
-type Msg = { type: 'welcome.init'; hasExistingDatabases: boolean; version: string };
+import type { WelcomeIn, WelcomeOut } from '../../src/ipc/messages.js';
 
 interface Feature {
   title: string;
@@ -270,8 +267,7 @@ export class WelcomeElement extends LitElement {
     }
     .learn-more a { font-size: 12px; }
 
-    /* Version footer — pinned to the very bottom of the panel so the
-       installed build is always visible without scrolling for it. */
+    /* Version footer follows the onboarding content in the scroll flow. */
     .version-footer {
       margin-top: 24px;
       padding-top: 12px;
@@ -285,23 +281,29 @@ export class WelcomeElement extends LitElement {
 
   /** Host-message subscription. The controller owns its own lifetime, so a
    *  re-attach cannot leave a second handler bound to the stale element. */
-  readonly hostMessages = new HostMessages<Msg>(this, (msg) => {
+  readonly hostMessages = new HostMessages<WelcomeOut>(this, (msg) => {
     if (msg.type === 'welcome.init') {
       this.hasExistingDatabases = msg.hasExistingDatabases;
       this.version = msg.version;
     }
   });
 
+  override connectedCallback(): void {
+    // Lit connects HostMessages before we ask the host for the initial state.
+    super.connectedCallback();
+    postToHost<WelcomeIn>({ type: 'welcome.ready' });
+  }
+
   private registerDatabase = (): void => {
-    postToHost({ type: 'welcome.registerDatabase' });
+    postToHost<WelcomeIn>({ type: 'welcome.registerDatabase' });
   };
 
   private onGetQuickstarts = (): void => {
-    postToHost({ type: 'welcome.getQuickstarts' });
+    postToHost<WelcomeIn>({ type: 'welcome.getQuickstarts' });
   };
 
   private close = (): void => {
-    postToHost({ type: 'welcome.close' });
+    postToHost<WelcomeIn>({ type: 'welcome.close' });
   };
 
   override render(): TemplateResult {

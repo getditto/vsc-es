@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as net from 'node:net';
 import * as fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -537,13 +538,12 @@ test('fetch_attachment streams the blob to disk via the native copy path', async
   assert.equal(payload.savedTo, dest);
   assert.equal(payload.bytes, 7);
   assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
-  // The native copier receives the CANONICAL path (symlink-resolved): the
-  // root-containment check and the write must act on the same target.
-  // os.tmpdir() itself is symlinked on macOS (/var → /private/var).
-  assert.deepEqual(
-    bundle.manager.state.attachmentScript.savedTo,
-    [await fs.promises.realpath(dest)],
-  );
+  const [staged] = bundle.manager.state.attachmentScript.savedTo;
+  assert.ok(staged, 'the SDK copied to a staging file');
+  assert.notEqual(staged, await fs.promises.realpath(dest));
+  assert.equal(path.dirname(path.dirname(staged)), await fs.promises.realpath(os.tmpdir()));
+  assert.equal(fs.existsSync(path.dirname(staged)), false, 'native staging is cleaned up after publication');
+  assert.deepEqual(fs.readdirSync(dir), ['photo.png']);
 });
 
 test('fetch_attachment guards: bad len, relative path, no overwrite without the flag', async (t) => {
@@ -646,7 +646,192 @@ test('fetch_attachment overwrite:false claims the destination atomically — con
   assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
 });
 
-test('fetch_attachment removes its claim placeholder when the download fails', async (t) => {
+test('fetch_attachment keeps a file created by another writer during the download', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dest = path.join(dir, 'other-writer.bin');
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  const script = pngScript();
+  script.fetch = () => Promise.resolve({
+    copyToPath: async (staged: string) => {
+      await fs.promises.writeFile(staged, 'PNGDATA');
+      await fs.promises.writeFile(dest, 'keep', { flag: 'wx' });
+    },
+  });
+  bundle.manager.state.attachmentScript = script;
+
+  const result = await find(attachmentTools, 'fetch_attachment').handler(bundle.ctx, {
+    token: { id: 'att-race', len: 7 }, save_to_path: dest, overwrite: false,
+  });
+
+  assert.equal(result.isError, true);
+  assert.match(errText(result), /already exists/);
+  assert.equal(fs.readFileSync(dest, 'utf8'), 'keep');
+  const [staged] = script.savedTo;
+  assert.ok(staged);
+  assert.equal(fs.existsSync(path.dirname(staged)), false);
+});
+
+test('fetch_attachment stops if the destination directory moves during the download', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const parent = path.join(dir, 'destination');
+  const moved = path.join(dir, 'moved');
+  const dest = path.join(parent, 'keep.bin');
+  fs.mkdirSync(parent);
+  fs.writeFileSync(dest, 'keep');
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  const script = pngScript();
+  script.fetch = () => Promise.resolve({
+    copyToPath: async (staged: string) => {
+      await fs.promises.rename(parent, moved);
+      await fs.promises.mkdir(parent);
+      await fs.promises.writeFile(staged, 'PNGDATA');
+    },
+  });
+  bundle.manager.state.attachmentScript = script;
+
+  const result = await find(attachmentTools, 'fetch_attachment').handler(bundle.ctx, {
+    token: { id: 'att-move', len: 7 }, save_to_path: dest, overwrite: true,
+  });
+
+  assert.equal(result.isError, true);
+  assert.match(errText(result), /directory changed/);
+  assert.equal(fs.existsSync(dest), false);
+  assert.equal(fs.readFileSync(path.join(moved, 'keep.bin'), 'utf8'), 'keep');
+  const [staged] = script.savedTo;
+  assert.ok(staged);
+  assert.equal(fs.existsSync(path.dirname(staged)), false);
+});
+
+for (const errorCode of ['ENOTSUP', 'EISDIR']) {
+  test(`fetch_attachment falls back to exclusive creation when link returns ${errorCode}`, async (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const link = t.mock.method(fs.promises, 'link', () =>
+      Promise.reject(Object.assign(new Error('hard links unavailable'), { code: errorCode })));
+    syncBuiltinESMExports();
+    t.after(() => { link.mock.restore(); syncBuiltinESMExports(); });
+
+    const dest = path.join(dir, 'fresh.bin');
+    const bundle = makeContext({ activeId: 'cfg-1' });
+    const script = pngScript();
+    bundle.manager.state.attachmentScript = script;
+    const result = await find(attachmentTools, 'fetch_attachment').handler(bundle.ctx, {
+      token: { id: 'att-excl', len: 7 }, save_to_path: dest, overwrite: false,
+    });
+
+    assert.equal(result.isError ?? false, false, errText(result));
+    assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
+    assert.equal(link.mock.callCount(), 1);
+  });
+}
+
+test('fetch_attachment stages an overwrite on the destination volume when rename is cross-device', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const renameFile = fs.promises.rename;
+  const canonicalParent = await fs.promises.realpath(dir);
+  const rename = t.mock.method(fs.promises, 'rename', async (source: string, dest: string) => {
+    if (path.dirname(path.dirname(source)) !== canonicalParent) {
+      throw Object.assign(new Error('cross-device rename'), { code: 'EXDEV' });
+    }
+    await renameFile(source, dest);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { rename.mock.restore(); syncBuiltinESMExports(); });
+
+  const dest = path.join(dir, 'replace.bin');
+  fs.writeFileSync(dest, 'keep');
+  if (process.platform !== 'win32') { fs.chmodSync(dest, 0o640); }
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.attachmentScript = pngScript();
+  const result = await find(attachmentTools, 'fetch_attachment').handler(bundle.ctx, {
+    token: { id: 'att-volume', len: 7 }, save_to_path: dest, overwrite: true,
+  });
+
+  assert.equal(result.isError ?? false, false, errText(result));
+  assert.equal(rename.mock.callCount(), 2);
+  assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
+  if (process.platform !== 'win32') { assert.equal(fs.statSync(dest).mode & 0o777, 0o640); }
+  assert.deepEqual(fs.readdirSync(dir), ['replace.bin']);
+});
+
+test('fetch_attachment refuses to replace a linked destination', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dest = path.join(dir, 'linked');
+  const target = path.join(dir, 'target');
+  if (process.platform === 'win32') {
+    fs.mkdirSync(target);
+    fs.symlinkSync(target, dest, 'junction');
+  } else {
+    fs.writeFileSync(target, 'keep');
+    fs.symlinkSync(target, dest, 'file');
+  }
+
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.attachmentScript = pngScript();
+  const tool = find(attachmentTools, 'fetch_attachment');
+  const result = await tool.handler(bundle.ctx, {
+    token: { id: 'att-linked', len: 7 }, save_to_path: dest, overwrite: true,
+  });
+
+  assert.equal(result.isError, true);
+  assert.match(errText(result), /regular file/);
+  assert.equal(bundle.manager.state.attachmentScript.fetchCalls.length, 0);
+  assert.equal(fs.lstatSync(dest).isSymbolicLink(), true);
+});
+
+test('fetch_attachment publishes a completed overwrite as a new directory entry', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const original = path.join(dir, 'original.bin');
+  const dest = path.join(dir, 'replace.bin');
+  fs.writeFileSync(original, 'keep');
+  fs.linkSync(original, dest);
+
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.attachmentScript = pngScript();
+  const tool = find(attachmentTools, 'fetch_attachment');
+  const result = await tool.handler(bundle.ctx, {
+    token: { id: 'att-replace', len: 7 }, save_to_path: dest, overwrite: true,
+  });
+
+  assert.equal(result.isError ?? false, false, errText(result));
+  assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
+  assert.equal(fs.readFileSync(original, 'utf8'), 'keep');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['original.bin', 'replace.bin']);
+});
+
+test('fetch_attachment keeps an existing file if the native copy fails partway', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dest = path.join(dir, 'keep.bin');
+  fs.writeFileSync(dest, 'keep');
+
+  const bundle = makeContext({ activeId: 'cfg-1' });
+  bundle.manager.state.attachmentScript = {
+    fetchCalls: [], savedTo: [],
+    fetch: () => Promise.resolve({
+      copyToPath: async (staged: string) => {
+        await fs.promises.writeFile(staged, 'partial');
+        throw new Error('disk full');
+      },
+    }),
+  };
+  const tool = find(attachmentTools, 'fetch_attachment');
+  const result = await tool.handler(bundle.ctx, {
+    token: { id: 'att-fail', len: 7 }, save_to_path: dest, overwrite: true,
+  });
+
+  assert.equal(result.isError, true);
+  assert.match(errText(result), /disk full/);
+  assert.equal(fs.readFileSync(dest, 'utf8'), 'keep');
+  assert.deepEqual(fs.readdirSync(dir), ['keep.bin'], 'partial staging data is removed');
+});
+
+test('fetch_attachment leaves no destination entry when the download fails', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const dest = path.join(dir, 'will-fail.bin');

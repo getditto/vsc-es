@@ -31,7 +31,7 @@ export class WelcomePanel {
   ): void {
     if (WelcomePanel.current) {
       WelcomePanel.current.panel.reveal();
-      WelcomePanel.current.postInit();
+      if (WelcomePanel.current.ready) { WelcomePanel.current.postInit(); }
       return;
     }
     WelcomePanel.current = new WelcomePanel(context, configStore, logger);
@@ -44,6 +44,7 @@ export class WelcomePanel {
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
+  private ready = false;
   /** Installed extension version, shown in the panel footer so the user
    *  can tell which build they are running without opening the
    *  Extensions view. Read from the manifest rather than hardcoded so
@@ -79,12 +80,6 @@ export class WelcomePanel {
     const scriptUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview-ui', 'welcome.js'),
     );
-    this.panel.webview.html = panelHtml({
-      title: 'Welcome to Ditto',
-      scriptUri,
-      cspSource: this.panel.webview.cspSource,
-    });
-
     this.panel.webview.onDidReceiveMessage(
       webviewMessageHandler<WelcomeIn>(
         this.logger, 'ext:welcome', 'Welcome action failed', (msg) => this.handle(msg),
@@ -101,22 +96,34 @@ export class WelcomePanel {
     // direct command, etc.) — the welcome screen's job is done either
     // way.
     const initialCount = this.configStore.list().length;
-    const cfgSub = this.configStore.onDidChange(() => {
+    this.disposables.push(this.configStore.onDidChange(() => {
       if (initialCount === 0 && this.configStore.list().length > 0) {
         this.logger.withTag('ext:Welcome').info('First database registered — closing welcome panel');
         this.panel.dispose();
       }
-    });
-    this.panel.onDidDispose(() => cfgSub.dispose(), null, this.disposables);
+    }));
 
-    // Defensive setTimeout — webview script needs a tick to register
-    // its message listener before init lands. Same race the other
-    // panels work around.
-    setTimeout(() => { this.postInit(); }, 50);
+    this.panel.webview.html = panelHtml({
+      title: 'Welcome to Ditto',
+      scriptUri,
+      cspSource: this.panel.webview.cspSource,
+    });
   }
 
   private post(msg: WelcomeOut): void {
-    void this.panel.webview.postMessage(msg);
+    void this.panel.webview.postMessage(msg).then(
+      delivered => {
+        if (!delivered && WelcomePanel.current === this) {
+          this.logger.withTag('ext:welcome').warn('Welcome message was not delivered', { type: msg.type });
+        }
+      },
+      (error: unknown) => {
+        if (WelcomePanel.current === this) {
+          const detail = error instanceof Error ? error.message : String(error);
+          this.logger.withTag('ext:welcome').warn('Welcome message failed', { type: msg.type, err: detail });
+        }
+      },
+    );
   }
 
   private postInit(): void {
@@ -129,6 +136,10 @@ export class WelcomePanel {
 
   private async handle(msg: WelcomeIn): Promise<void> {
     switch (msg.type) {
+      case 'welcome.ready':
+        this.ready = true;
+        this.postInit();
+        return;
       case 'welcome.registerDatabase':
         // Fan out to the existing command — keeps the Register flow
         // single-sourced. The DatabaseEditorPanel.show() handler is

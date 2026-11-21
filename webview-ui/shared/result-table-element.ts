@@ -3,9 +3,8 @@ import { customElement, property } from 'lit/decorators.js';
 
 const TRUNCATE_AT = 120;
 
-/** Stringify a value that is known not to be a plain object/array. */
-function primitiveText(value: unknown): string {
-  if (value === null || value === undefined) { return ''; }
+/** Format a non-nullish value after the caller handles structured data. */
+function primitiveText(value: NonNullable<unknown>): string {
   if (typeof value === 'string') { return value; }
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     return String(value);

@@ -16,8 +16,8 @@ await import('../../../webview-ui/welcome/welcome-element.js');
 
 /**
  * First-run onboarding. The contract is one inbound message — `welcome.init`
- * flips the copy between "first run" and "reference" modes — and three
- * outbound CTAs (register a database, clone a quickstart, close). Every
+ * flips the copy between "first run" and "reference" modes — and readiness
+ * plus three outbound CTAs (register a database, clone a quickstart, close). Every
  * section renders unconditionally, so the surface worth pinning is the mode
  * flip, the exact outbound message each CTA posts, and the HostMessages
  * lifecycle across VS Code's panel re-parenting.
@@ -35,6 +35,8 @@ async function mount(t: { after(fn: () => void): void }): Promise<{ host: HTMLEl
   render(html`<ditto-welcome></ditto-welcome>`, host);
   const el = host.querySelector('ditto-welcome') as unknown as Element;
   await el.updateComplete;
+  assert.deepEqual(posted, [{ type: 'welcome.ready' }]);
+  posted.length = 0;
   return { host, el };
 }
 
@@ -105,8 +107,7 @@ test('Welcome: the footer sits below the learn-more strip', async t => {
   const footer = el.shadowRoot!.querySelector('.version-footer');
   const learnMore = el.shadowRoot!.querySelector('.learn-more');
   assert.ok(footer && learnMore, 'both the learn-more strip and the footer render');
-  // The footer is the last rendered block, so the version is always at the
-  // bottom of the panel without scrolling.
+  // The version footer follows the learn-more strip in document order.
   const blocks = [...el.shadowRoot!.children].filter(c => !(c as HTMLElement).tagName.includes('STYLE'));
   assert.equal(blocks[blocks.length - 1], footer, 'the version footer is the last element on the panel');
   assert.ok(
@@ -193,6 +194,7 @@ test('Welcome: ignores host messages while detached and resumes on re-attach', a
 
   document.body.appendChild(host);
   await el.updateComplete;
+  assert.deepEqual(posted, [{ type: 'welcome.ready' }], 're-attach requests fresh state');
   init(false);
   await el.updateComplete;
   assert.match(el.shadowRoot!.textContent ?? '', /Get started in three steps/,
