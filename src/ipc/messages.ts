@@ -26,9 +26,10 @@ export type WelcomeIn =
 /** Host → webview. The init payload tells the panel whether at least
  *  one database is already configured — when it is, the panel hides
  *  its "this is a guided first-run" framing and reads as a reference
- *  card the user re-opened on purpose. */
+ *  card the user re-opened on purpose. It also carries the installed
+ *  extension version so the footer can show which build is running. */
 export type WelcomeOut =
-  | { type: 'welcome.init'; hasExistingDatabases: boolean };
+  | { type: 'welcome.init'; hasExistingDatabases: boolean; version: string };
 
 // ─── Database editor panel ─────────────────────────────────────
 export type EditorIn =

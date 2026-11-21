@@ -71,8 +71,13 @@ function recordingLogger(): { logger: Logger; infos: string[] } {
   return { logger: self, infos };
 }
 
-function fakeContext(): vscode.ExtensionContext {
-  return { extensionUri: vscode.Uri.file('/ext') } as unknown as vscode.ExtensionContext;
+function fakeContext(version = '9.9.9-test'): vscode.ExtensionContext {
+  return {
+    extensionUri: vscode.Uri.file('/ext'),
+    // The panel reads the installed version off the manifest, exactly as
+    // the real ExtensionContext exposes it.
+    extension: { packageJSON: { version } },
+  } as unknown as vscode.ExtensionContext;
 }
 
 function showPanel(configCount = 0): {
@@ -101,10 +106,13 @@ async function settled(panel: FakePanel): Promise<void> {
   await waitFor(() => panel.webview.posted.some(m => (m as { type: string }).type === 'welcome.init'));
 }
 
-function inits(panel: FakePanel): { hasExistingDatabases: boolean }[] {
+function inits(panel: FakePanel): { hasExistingDatabases: boolean; version: string }[] {
   return panel.webview.posted
     .filter(m => (m as { type: string }).type === 'welcome.init')
-    .map(m => ({ hasExistingDatabases: (m as { hasExistingDatabases: boolean }).hasExistingDatabases }));
+    .map(m => ({
+      hasExistingDatabases: (m as { hasExistingDatabases: boolean }).hasExistingDatabases,
+      version: (m as { version: string }).version,
+    }));
 }
 
 test.beforeEach(() => { stub.__resetStub(); });
@@ -117,14 +125,39 @@ test('opening with no databases posts hasExistingDatabases false', async () => {
   assert.equal(panel.title, 'Welcome to Ditto');
   await settled(panel);
 
-  assert.deepEqual(inits(panel), [{ hasExistingDatabases: false }]);
+  assert.deepEqual(inits(panel), [{ hasExistingDatabases: false, version: '9.9.9-test' }]);
 });
 
 test('opening with databases configured posts hasExistingDatabases true', async () => {
   const { panel } = showPanel(2);
   await settled(panel);
 
-  assert.deepEqual(inits(panel), [{ hasExistingDatabases: true }]);
+  assert.deepEqual(inits(panel), [{ hasExistingDatabases: true, version: '9.9.9-test' }]);
+});
+
+test('the init payload carries the installed extension version', async () => {
+  const { panel } = showPanel();
+  await settled(panel);
+
+  const [init] = inits(panel);
+  assert.ok(init, 'the init payload was posted');
+  assert.equal(init.version, '9.9.9-test', 'the footer version comes from the manifest');
+});
+
+test('a manifest without a version falls back rather than rendering undefined', async () => {
+  const { store } = fakeConfigStore(0);
+  WelcomePanel.show(
+    { extensionUri: vscode.Uri.file('/ext') } as unknown as vscode.ExtensionContext,
+    store,
+    recordingLogger().logger,
+  );
+  const panel = stub.createdWebviewPanels[stub.createdWebviewPanels.length - 1];
+  assert.ok(panel, 'panel created');
+  await settled(panel);
+
+  const [init] = inits(panel);
+  assert.ok(init, 'the init payload was posted');
+  assert.equal(init.version, '0.0.0');
 });
 
 test('the panel carries the Ditto icon in both themes', async () => {

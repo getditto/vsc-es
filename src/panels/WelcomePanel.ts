@@ -44,12 +44,20 @@ export class WelcomePanel {
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
+  /** Installed extension version, shown in the panel footer so the user
+   *  can tell which build they are running without opening the
+   *  Extensions view. Read from the manifest rather than hardcoded so
+   *  it can never drift from `package.json`. */
+  private readonly version: string;
 
   private constructor(
     context: vscode.ExtensionContext,
     private readonly configStore: ConfigStore,
     private readonly logger: Logger,
   ) {
+    this.version =
+      (context.extension?.packageJSON as { version?: unknown } | undefined)?.version as string | undefined
+      ?? '0.0.0';
     this.panel = vscode.window.createWebviewPanel(
       'dittoWelcome',
       'Welcome to Ditto',
@@ -115,6 +123,7 @@ export class WelcomePanel {
     this.post({
       type: 'welcome.init',
       hasExistingDatabases: this.configStore.list().length > 0,
+      version: this.version,
     });
   }
 

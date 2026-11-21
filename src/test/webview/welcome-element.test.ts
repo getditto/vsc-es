@@ -38,9 +38,9 @@ async function mount(t: { after(fn: () => void): void }): Promise<{ host: HTMLEl
   return { host, el };
 }
 
-function init(hasExistingDatabases: boolean): void {
+function init(hasExistingDatabases: boolean, version = '9.9.9-test'): void {
   window.dispatchEvent(new MessageEvent('message', {
-    data: { type: 'welcome.init', hasExistingDatabases },
+    data: { type: 'welcome.init', hasExistingDatabases, version },
   }));
 }
 
@@ -85,6 +85,41 @@ test('Welcome: welcome.init without databases keeps the first-run copy', async t
   assert.match(text, /Get started in three steps/);
   assert.match(text, /quick tour/);
   button(el, 'Maybe later');
+});
+
+test('Welcome: renders the installed extension version in the footer', async t => {
+  const { el } = await mount(t);
+  init(false, '0.9.6');
+  await el.updateComplete;
+
+  const footer = el.shadowRoot!.querySelector('.version-footer');
+  assert.ok(footer, 'the version footer is rendered');
+  assert.equal(footer.textContent?.trim(), 'Ditto Edge Studio v0.9.6');
+});
+
+test('Welcome: the footer sits below the learn-more strip', async t => {
+  const { el } = await mount(t);
+  init(false, '0.9.6');
+  await el.updateComplete;
+
+  const footer = el.shadowRoot!.querySelector('.version-footer');
+  const learnMore = el.shadowRoot!.querySelector('.learn-more');
+  assert.ok(footer && learnMore, 'both the learn-more strip and the footer render');
+  // The footer is the last rendered block, so the version is always at the
+  // bottom of the panel without scrolling.
+  const blocks = [...el.shadowRoot!.children].filter(c => !(c as HTMLElement).tagName.includes('STYLE'));
+  assert.equal(blocks[blocks.length - 1], footer, 'the version footer is the last element on the panel');
+  assert.ok(
+    blocks.indexOf(footer) > blocks.indexOf(learnMore),
+    'the footer sits below the learn-more strip',
+  );
+});
+
+test('Welcome: no footer is rendered before the host init arrives', async t => {
+  const { el } = await mount(t);
+
+  assert.equal(el.shadowRoot!.querySelector('.version-footer'), null,
+    'the footer waits for the host rather than rendering an empty version');
 });
 
 test('Welcome: Register Database posts welcome.registerDatabase', async t => {

@@ -13,7 +13,7 @@ import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { postToHost, HostMessages } from '../shared/messaging.js';
 
-type Msg = { type: 'welcome.init'; hasExistingDatabases: boolean };
+type Msg = { type: 'welcome.init'; hasExistingDatabases: boolean; version: string };
 
 interface Feature {
   title: string;
@@ -74,6 +74,10 @@ export class WelcomeElement extends LitElement {
    *  with a connection already configured — we soften "Get started"
    *  to "Reference" in that mode. */
   @state() private hasExistingDatabases = false;
+
+  /** Installed extension version, shown in the footer. Empty until the
+   *  host's init arrives — the footer renders nothing before then. */
+  @state() private version = '';
 
   static override styles = css`
     :host {
@@ -265,6 +269,18 @@ export class WelcomeElement extends LitElement {
       color: var(--vscode-descriptionForeground);
     }
     .learn-more a { font-size: 12px; }
+
+    /* Version footer — pinned to the very bottom of the panel so the
+       installed build is always visible without scrolling for it. */
+    .version-footer {
+      margin-top: 24px;
+      padding-top: 12px;
+      border-top: 1px solid var(--vscode-panel-border);
+      text-align: center;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.8;
+    }
   `;
 
   /** Host-message subscription. The controller owns its own lifetime, so a
@@ -272,6 +288,7 @@ export class WelcomeElement extends LitElement {
   readonly hostMessages = new HostMessages<Msg>(this, (msg) => {
     if (msg.type === 'welcome.init') {
       this.hasExistingDatabases = msg.hasExistingDatabases;
+      this.version = msg.version;
     }
   });
 
@@ -295,6 +312,7 @@ export class WelcomeElement extends LitElement {
       ${this.renderGetStarted()}
       ${this.renderQuickstarts()}
       ${this.renderLearnMore()}
+      ${this.renderVersionFooter()}
     `;
   }
 
@@ -454,6 +472,16 @@ export class WelcomeElement extends LitElement {
         and the
         <a href="https://docs.ditto.live/sdk/latest/sync/using-mesh-presence" target="_blank" rel="noopener">Mesh Presence guide</a>.
       </div>
+    `;
+  }
+
+  /** The installed extension version, so the user can tell which build
+   *  is running without leaving the panel. Renders nothing until the
+   *  host's init lands. */
+  private renderVersionFooter(): TemplateResult {
+    if (!this.version) { return html``; }
+    return html`
+      <div class="version-footer">Ditto Edge Studio v${this.version}</div>
     `;
   }
 }
