@@ -53,6 +53,18 @@ export class DittoProfilePlanTree extends LitElement {
       background: rgba(245,124,0,0.22);
       border: 2px dashed rgba(245,124,0,0.75);
     }
+    .operator-heading:has(.subplan-label) {
+      display: flex;
+      justify-content: center;
+      gap: 4px;
+      white-space: nowrap;
+    }
+    .operator-heading:has(.subplan-label) > span { overflow: hidden; text-overflow: ellipsis; }
+    .subplan-label {
+      max-width: 50%;
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+    }
     .box .name { font-size: 12px; font-weight: 600; }
     .box .key  { font-size: 11px; color: var(--vscode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .box .time { font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -145,7 +157,12 @@ export class DittoProfilePlanTree extends LitElement {
         class=${`box ${hotspot ? 'hotspot' : 'normal'}`}
         style=${`left:${f.absX - BOX_WIDTH / 2}px; top:${f.y}px;`}
       >
-        <div class="name">${node.name}</div>
+        <div class="operator-heading">
+          ${f.subplanKey !== undefined
+            ? html`<span class="subplan-label" title=${f.subplanKey}>${f.subplanKey}</span>`
+            : null}
+          <span class="name" title=${node.name}>${node.name}</span>
+        </div>
         ${keyAttr ? html`<div class="key" title=${keyAttr}>${keyAttr}</div>` : null}
         ${timeLabel ? html`<div class="time">${timeLabel}</div>` : null}
         ${storLabel ? html`<div class="stor">${storLabel}</div>` : null}

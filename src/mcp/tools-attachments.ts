@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { BigIntStats } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -14,6 +15,7 @@ import type { McpToolContext } from './context.js';
  *  works through execute_dql using newAttachment… which the MCP surface
  *  intentionally doesn't expose as a standalone upload tool today. */
 const MAX_ATTACHMENT_BYTES = 512 * 1024 * 1024;
+const pendingExclusiveDownloads = new Set<string>();
 
 interface FetchArgs {
   token: { id: string; len: number | string; metadata?: Record<string, string> };
@@ -43,12 +45,13 @@ async function allowedRoots(ctx: McpToolContext): Promise<string[]> {
   return await Promise.all(roots.map(canonicalPath));
 }
 
-/** Both the canonical candidate and canonical root must agree. Comparing via
- * `relative()` avoids prefix collisions (`C:\\temp2` is not inside `C:\\temp`),
- * and normalizing case covers Windows' case-insensitive filesystem. */
+function normalizeCase(value: string): string {
+  return process.platform === 'win32' ? value.toLowerCase() : value;
+}
+
+/** Relative-path comparison avoids treating a sibling with a shared prefix as inside the root. */
 function isInsideRoot(candidate: string, root: string): boolean {
-  const normalize = (p: string) => process.platform === 'win32' ? p.toLowerCase() : p;
-  const relative = path.relative(normalize(root), normalize(candidate));
+  const relative = path.relative(normalizeCase(root), normalizeCase(candidate));
   return relative === ''
     || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
@@ -92,6 +95,86 @@ async function resolveDestination(
   return { ok: true, path: canonical };
 }
 
+async function isSameDirectory(directory: string, expected: BigIntStats): Promise<boolean> {
+  try {
+    const current = await fs.lstat(directory, { bigint: true });
+    return current.isDirectory() && current.dev === expected.dev && current.ino === expected.ino
+      && normalizeCase(await fs.realpath(directory)) === normalizeCase(directory);
+  } catch {
+    return false;
+  }
+}
+
+/** Check directory identity after long-running I/O and before publication.
+ * The final operation still uses a path because Node has no portable
+ * directory-handle-relative rename or link. */
+async function assertSameDirectory(directory: string, expected: BigIntStats): Promise<void> {
+  if (!await isSameDirectory(directory, expected)) {
+    throw new Error('The attachment destination or staging directory changed during the download.');
+  }
+}
+
+async function withStagedAttachment<T>(
+  parent: string,
+  use: (file: string, verifyDirectory: () => Promise<void>) => Promise<T>,
+): Promise<T> {
+  const directory = await fs.mkdtemp(path.join(parent, '.ditto-attachment-'));
+  const file = path.join(directory, 'attachment');
+  const identity = await fs.lstat(directory, { bigint: true });
+  const verifyDirectory = () => assertSameDirectory(directory, identity);
+  try {
+    await verifyDirectory();
+    return await use(file, verifyDirectory);
+  } finally {
+    if (await isSameDirectory(directory, identity)) {
+      await fs.unlink(file).catch(() => { /* best effort */ });
+      await fs.rmdir(directory).catch(() => { /* best effort */ });
+    }
+  }
+}
+
+async function publishAttachment(
+  staged: string,
+  destination: string,
+  overwrite: boolean,
+  mode: number,
+  verifyParent: () => Promise<void>,
+): Promise<void> {
+  if (overwrite) {
+    try {
+      // Replace the directory entry without opening its previous target.
+      await fs.rename(staged, destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EXDEV') { throw error; }
+      // A rename across volumes needs a complete copy on the target volume.
+      // The private source may have the previous file's write-only mode.
+      await fs.chmod(staged, 0o600);
+      await verifyParent();
+      await withStagedAttachment(path.dirname(destination), async (localStage, verifyLocalStage) => {
+        await fs.copyFile(staged, localStage, fs.constants.COPYFILE_EXCL);
+        await verifyLocalStage();
+        await fs.chmod(localStage, mode);
+        await verifyParent();
+        await fs.rename(localStage, destination);
+      });
+    }
+    return;
+  }
+
+  try {
+    // Link publishes the complete file only if the destination is absent.
+    await fs.link(staged, destination);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // On Windows, exFAT may report EISDIR for an unsupported hard link.
+    if (!code || !['EXDEV', 'EPERM', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EISDIR'].includes(code)) { throw error; }
+    // Cross-volume paths and filesystems without hard links still support
+    // exclusive creation. Readers may see the file before the copy finishes.
+    await verifyParent();
+    await fs.copyFile(staged, destination, fs.constants.COPYFILE_EXCL);
+  }
+}
+
 async function fetchAttachment(ctx: McpToolContext, args: FetchArgs): Promise<CallToolResult> {
   requireActiveConfig(ctx);
   const len = typeof args.token.len === 'string' ? Number.parseInt(args.token.len, 10) : args.token.len;
@@ -107,50 +190,60 @@ async function fetchAttachment(ctx: McpToolContext, args: FetchArgs): Promise<Ca
   const dest = await resolveDestination(ctx, args.save_to_path);
   if (!dest.ok) { return err(dest.reason); }
 
-  // overwrite:false claims the destination ATOMICALLY (exclusive create).
-  // The old stat-then-copy gap let a second caller pass the existence
-  // check while the first was still fetching, and the loser's file got
-  // clobbered — and it turns "exists?" into the answer at claim time, not
-  // at some earlier read.
-  const claimed = !args.overwrite;
-  if (claimed) {
-    try {
-      await fs.writeFile(dest.path, '', { flag: 'wx' });
-    } catch {
-      return err(`File already exists: ${dest.path}. Pass overwrite: true to replace it.`);
-    }
+  const existsError = () => err(`File already exists: ${dest.path}. Pass overwrite: true to replace it.`);
+  const reservation = args.overwrite ? undefined : normalizeCase(dest.path);
+  if (reservation !== undefined) {
+    if (pendingExclusiveDownloads.has(reservation)) { return existsError(); }
+    pendingExclusiveDownloads.add(reservation);
   }
 
-  const dropClaim = async (): Promise<void> => {
-    // Our own exclusively-created placeholder — safe to remove, and a
-    // stranded 0-byte file would read as a successful 0-byte download.
-    if (claimed) { await fs.unlink(dest.path).catch(() => { /* best effort */ }); }
-  };
-
   try {
+    const parent = path.dirname(dest.path);
+    const parentIdentity = await fs.lstat(parent, { bigint: true });
+    const verifyParent = () => assertSameDirectory(parent, parentIdentity);
+    await verifyParent();
+    const existing = await fs.lstat(dest.path).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return undefined; }
+      throw error;
+    });
+    if (existing && !args.overwrite) { return existsError(); }
+    if (existing && !existing.isFile()) {
+      return err(`Refusing to replace a destination that is not a regular file: ${dest.path}`);
+    }
+
     const fetcher = ctx.manager.fetchAttachment(
       { id: args.token.id, len, metadata: args.token.metadata ?? {} },
     );
-    if (!fetcher) { await dropClaim(); return err('No active session.'); }
+    if (!fetcher) { return err('No active session.'); }
     const attachment = await fetcher;
     if (!attachment) {
-      await dropClaim();
       return err('The attachment could not be fetched (deleted or unavailable).');
     }
-    // Native store→disk copy: no JS-side byte materialization (same path the
-    // Inspector's Download action uses).
-    await ctx.manager.saveAttachmentToPath(attachment, dest.path);
-    const written = await fs.stat(dest.path).catch(() => null);
-    return ok({
-      // Report the path as requested — the canonical destination resolves
-      // to the same file, and callers think in their own paths.
-      savedTo: args.save_to_path,
-      bytes: written?.size ?? len,
-      attachmentId: args.token.id,
+
+    // Keep the native SDK's write in OS scratch space under a private
+    // directory instead of giving it a path in the caller's workspace.
+    return await withStagedAttachment(await fs.realpath(os.tmpdir()), async (staged, verifyStage) => {
+      // Read the default mode from a new file without querying the
+      // process-wide umask, which Node implements by rewriting it.
+      await fs.writeFile(staged, '', { flag: 'wx' });
+      const initialMode = (await fs.lstat(staged)).mode;
+      await ctx.manager.saveAttachmentToPath(attachment, staged);
+      await verifyStage();
+      const written = await fs.lstat(staged);
+      if (!written.isFile()) { return err('The attachment download did not produce a regular file.'); }
+      const mode = (existing?.mode ?? initialMode) & 0o777;
+      await fs.chmod(staged, mode);
+      await verifyParent();
+      try {
+        await publishAttachment(staged, dest.path, args.overwrite, mode, verifyParent);
+      } catch (error) {
+        if (!args.overwrite && (error as NodeJS.ErrnoException).code === 'EEXIST') { return existsError(); }
+        throw error;
+      }
+      return ok({ savedTo: args.save_to_path, bytes: written.size, attachmentId: args.token.id });
     });
-  } catch (e) {
-    await dropClaim();
-    throw (e instanceof Error ? e : new Error(String(e)));
+  } finally {
+    if (reservation !== undefined) { pendingExclusiveDownloads.delete(reservation); }
   }
 }
 

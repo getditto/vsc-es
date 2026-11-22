@@ -20,10 +20,8 @@ export async function deleteConnectionAtomically(
   const previousConfig = configs.get(id);
   if (!previousConfig || !secrets.deleteAll) { throw new Error('Connection no longer exists.'); }
   const previousSecrets = await secrets.read(id);
-  let secretDeleteAttempted = false;
   let configDeleteAttempted = false;
   try {
-    secretDeleteAttempted = true;
     await secrets.deleteAll(id);
     configDeleteAttempted = true;
     await configs.delete(id);
@@ -32,9 +30,8 @@ export async function deleteConnectionAtomically(
     if (configDeleteAttempted) {
       try { await configs.save(previousConfig); } catch { rollbackFailed = true; }
     }
-    if (secretDeleteAttempted) {
-      try { await secrets.write(id, previousSecrets); } catch { rollbackFailed = true; }
-    }
+    // Secret deletion is always attempted before either operation can fail.
+    try { await secrets.write(id, previousSecrets); } catch { rollbackFailed = true; }
     throw new ConnectionPersistenceError(rollbackFailed, 'deleted');
   }
 }

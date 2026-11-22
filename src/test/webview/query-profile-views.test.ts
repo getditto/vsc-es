@@ -488,7 +488,7 @@ test('ProfilePlanTree: yields label renders in the box', async t => {
   assert.match(yields.textContent, /budget 1/);
 });
 
-test('ProfilePlanTree: subplan nodes render as additional boxes', async t => {
+test('ProfilePlanTree: subplan roots render their branch label', async t => {
   const tree = op('nlJoin', {
     stats: { execNs: 100_000 },
     children: [op('scan', { stats: { execNs: 50_000 } })],
@@ -508,4 +508,8 @@ test('ProfilePlanTree: subplan nodes render as additional boxes', async t => {
   assert.ok(names.includes('scan'));
   assert.ok(names.includes('sequence'));
   assert.ok(names.includes('indexScan'));
+  const labels = el.shadowRoot!.querySelectorAll('.subplan-label');
+  assert.equal(labels.length, 1);
+  assert.equal(labels[0]?.textContent, 'inner');
+  assert.equal(labels[0]?.closest('.box')?.querySelector('.name')?.textContent, 'sequence');
 });

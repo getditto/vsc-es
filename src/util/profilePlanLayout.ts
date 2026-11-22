@@ -19,6 +19,8 @@ export const BOX_HEIGHT_EST = 90;
 
 export interface LaidOutNode {
   node: QueryProfileOperator;
+  /** Label of the incoming subplan branch, when present. */
+  subplanKey: string | undefined;
   /** Width of the subtree rooted at this node (in px). */
   subtreeWidth: number;
   /** X of the center of this node's box (relative to subtree's left edge). */
@@ -38,27 +40,20 @@ export function subtreeExecNs(node: QueryProfileOperator): number {
   return node.subplans.reduce((acc, sp) => acc + subtreeExecNs(sp.plan), childSum);
 }
 
-export function layout(node: QueryProfileOperator, y: number): LaidOutNode {
-  // Combine children and subplans for layout — subplans (e.g. nlJoin's
-  // `inner`) render as additional children in the tree view.
-  const allChildren = [
-    ...node.children.map(c => ({ plan: c, isSubplan: false })),
-    ...node.subplans.map(sp => ({ plan: sp.plan, isSubplan: true })),
-  ];
-  if (allChildren.length === 0) {
-    return { node, subtreeWidth: BOX_WIDTH, centerX: BOX_WIDTH / 2, y, children: [] };
-  }
+export function layout(node: QueryProfileOperator, y: number, subplanKey?: string): LaidOutNode {
+  const childY = y + BOX_HEIGHT_EST + ROW_GAP_Y;
   // Each child's centerX stays in its own subtree-local frame.
-  // `flatten()` and the renderer reconstruct absolute positions by
-  // composing a walking `childLeftEdge` with each child's local
-  // centerX, so positioning here would double-count.
-  const laidOutChildren = allChildren.map(c => layout(c.plan, y + BOX_HEIGHT_EST + ROW_GAP_Y));
+  // Subplan roots keep the label of the branch that leads to them.
+  const laidOutChildren = [
+    ...node.children.map(child => layout(child, childY)),
+    ...node.subplans.map(subplan => layout(subplan.plan, childY, subplan.key)),
+  ];
   const totalChildWidth =
     laidOutChildren.reduce((a, b) => a + b.subtreeWidth, 0)
     + Math.max(0, laidOutChildren.length - 1) * BOX_GAP_X;
   const subtreeWidth = Math.max(BOX_WIDTH, totalChildWidth);
   const centerX = subtreeWidth / 2;
-  return { node, subtreeWidth, centerX, y, children: laidOutChildren };
+  return { node, subplanKey, subtreeWidth, centerX, y, children: laidOutChildren };
 }
 
 export function flatten(n: LaidOutNode, offsetX = 0): Array<LaidOutNode & { absX: number }> {
