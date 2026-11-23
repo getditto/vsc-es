@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { removeSdkTempDir } from '../fixtures/remove-sdk-temp-dir.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
@@ -46,7 +47,7 @@ suite('Activation', () => {
         await ditto.close();
       }
     } finally {
-      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      await removeSdkTempDir(dir);
     }
   });
 

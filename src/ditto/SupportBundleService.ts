@@ -2,6 +2,7 @@
 
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 import { promisify } from 'node:util';
@@ -271,7 +272,7 @@ export class SupportBundleService {
     return withSdkResource(attachment, log, async attachment => {
       // Export through the same path as regular attachments, including
       // support for bundles stored in an encrypted database.
-      const tmpDir = await fs.mkdtemp(path.join(process.env.TMPDIR ?? '/tmp', 'ditto-bundle-'));
+      const tmpDir = await fs.mkdtemp(path.join(tmpdir(), 'ditto-bundle-'));
       const tmpPath = path.join(tmpDir, 'bundle.tar');
       try {
         await this.manager.saveAttachmentToPath(attachment, tmpPath);

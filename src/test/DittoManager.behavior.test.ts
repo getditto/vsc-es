@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { removeSdkTempDir } from './fixtures/remove-sdk-temp-dir.js';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -37,22 +38,6 @@ import type { Logger, LogContext } from '../logging/types.js';
 DittoLogger.enabled = false;
 
 const NOT_ACTIVATED = /has not yet been activated/;
-
-function removeTempDir(dir: string): void {
-  // The native SDK can release attachment handles a few milliseconds after
-  // `close()` resolves. On Windows, some handles can remain until the Node
-  // process exits, even after rimraf's retry window. The OS temp directory
-  // owns this test-only residue; do not conceal cleanup errors elsewhere.
-  try {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  } catch (error: unknown) {
-    if (process.platform === 'win32' && typeof error === 'object' && error !== null
-      && 'code' in error && error.code === 'EBUSY') {
-      return;
-    }
-    throw error;
-  }
-}
 
 function tmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ditto-mgr-behavior-'));
@@ -182,7 +167,7 @@ async function stageSession(
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* already down */ }
     try { await ditto.close(); } catch { /* disconnect owns it */ }
-    removeTempDir(dir);
+    await removeSdkTempDir(dir);
   });
   if (opts.attachPresence) { internals(mgr).attachPresenceObserver(ditto); }
   return { mgr, dir, ditto, log };
@@ -296,7 +281,7 @@ test('encrypted connections reopen with the saved key and can export decrypted a
   const mgr = new DittoManager(contextIn(dir), recordingLogger().logger);
   t.after(async () => {
     await mgr.disconnect();
-    removeTempDir(dir);
+    await removeSdkTempDir(dir);
   });
 
   const open = Ditto.open.bind(Ditto);
@@ -338,7 +323,7 @@ test('encrypted connections reopen with the saved key and can export decrypted a
 
 test('an encrypted connection with a missing or invalid key never opens the store', async t => {
   const dir = tmpdir();
-  t.after(() => removeTempDir(dir));
+  t.after(() => removeSdkTempDir(dir));
   const cfg = makeConfig({ encryptLocalStore: true });
   const mgr = new DittoManager(contextIn(dir), recordingLogger().logger);
   const open = t.mock.method(Ditto, 'open', async () => { throw new Error('unexpected open'); });
@@ -661,7 +646,7 @@ test('applyTransportConfig refuses a concurrent apply', async t => {
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    removeTempDir(dir);
+    await removeSdkTempDir(dir);
   });
 
   let parked: (() => void) | undefined;
@@ -999,7 +984,7 @@ test('a failed connect still applies the config transport prefs before sync.star
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    removeTempDir(dir);
+    await removeSdkTempDir(dir);
   });
 
   const cfg = makeConfig({ isLanEnabled: false });
@@ -1016,7 +1001,7 @@ test('an invalid startup system setting fails the connect with the parameter nam
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    removeTempDir(dir);
+    await removeSdkTempDir(dir);
   });
 
   const cfg = makeConfig({
@@ -1040,7 +1025,7 @@ test('a failed connect clears the redaction set it never registered', async t =>
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    removeTempDir(dir);
+    await removeSdkTempDir(dir);
   });
 
   // A secretKey that is not valid base64 makes Ditto.open reject before the

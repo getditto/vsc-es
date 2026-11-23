@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { removeSdkTempDir } from './fixtures/remove-sdk-temp-dir.js';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -37,22 +38,6 @@ DittoLogger.enabled = false;
  *  the connect path starts succeeding and these tests must be revisited rather
  *  than silently passing for a new reason. */
 const NOT_ACTIVATED = /has not yet been activated/;
-
-function removeTempDir(dir: string): void {
-  // The native SDK can release attachment handles a few milliseconds after
-  // `close()` resolves. On Windows, some handles can remain until the Node
-  // process exits, even after rimraf's retry window. The OS temp directory
-  // owns this test-only residue; do not conceal cleanup errors elsewhere.
-  try {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  } catch (error: unknown) {
-    if (process.platform === 'win32' && typeof error === 'object' && error !== null
-      && 'code' in error && error.code === 'EBUSY') {
-      return;
-    }
-    throw error;
-  }
-}
 
 function tmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ditto-mgr-test-'));
@@ -114,7 +99,7 @@ function withManager(t: { after(fn: () => void | Promise<void>): void }): {
   const mgr = new DittoManager(contextIn(dir), logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* already down */ }
-    removeTempDir(dir);
+    await removeSdkTempDir(dir);
   });
   return { mgr, dir, errors, warns };
 }
