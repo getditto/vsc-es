@@ -12,7 +12,7 @@ class FakeSecretStorage {
 
 test('write() then read() returns the saved secrets', async () => {
   const store = new SecretStore(new FakeSecretStorage());
-  const secrets: SecretSet = { token: 't', secretKey: 'sk', httpApiKey: 'hk' };
+  const secrets: SecretSet = { token: 't', secretKey: 'sk', httpApiKey: 'hk', encryptionKey: 'test-value' };
   await store.write('cfg-1', secrets);
   assert.deepEqual(await store.read('cfg-1'), secrets);
 });
@@ -34,10 +34,11 @@ test('write() with optional fields undefined deletes them', async () => {
 
 test('deleteAll(id) clears every secret for that id', async () => {
   const store = new SecretStore(new FakeSecretStorage());
-  await store.write('cfg-1', { token: 't', secretKey: 'sk', httpApiKey: 'hk' });
+  await store.write('cfg-1', { token: 't', secretKey: 'sk', httpApiKey: 'hk', encryptionKey: 'test-value' });
   await store.deleteAll('cfg-1');
   const s = await store.read('cfg-1');
   assert.equal(s.token, '');
   assert.equal(s.secretKey, undefined);
   assert.equal(s.httpApiKey, undefined);
+  assert.equal(s.encryptionKey, undefined);
 });

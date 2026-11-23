@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import type { EditorIn, EditorOut } from '../../src/ipc/messages.js';
 import { postToHost, HostMessages } from '../shared/messaging.js';
 
 interface StoredDittoConfig {
@@ -13,6 +14,7 @@ interface StoredDittoConfig {
   allowUntrustedCerts: boolean;
   logLevel: 'error' | 'warning' | 'info' | 'debug' | 'verbose';
   isStrictModeEnabled: boolean;
+  encryptLocalStore?: boolean;
   advancedConfig?: {
     collectionSyncScopes?: CollectionSyncScopeEntry[];
     systemSettings?: SystemSetting[];
@@ -43,22 +45,17 @@ const COLLECTION_SYNC_SCOPES = new Set<string>([
   'AllPeers', 'BigPeerOnly', 'SmallPeersOnly', 'LocalPeerOnly',
 ]);
 
-interface SecretSet { token: string; secretKey?: string; httpApiKey?: string; }
-
-type In =
-  | { type: 'editor.init'; config: StoredDittoConfig; secrets: SecretSet; isActiveConnection: boolean }
-  | { type: 'editor.initError'; message: string }
-  | { type: 'editor.activeConnectionChanged'; isActiveConnection: boolean }
-  | { type: 'editor.systemSettingsLoaded'; options: SystemSettingOption[] }
-  | { type: 'editor.systemSettingsLoadError'; message: string }
-  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' };
+type EditorSave = Extract<EditorIn, { type: 'editor.save' }>;
 
 @customElement('ditto-database-editor')
 export class DatabaseEditor extends LitElement {
   @state() private config: StoredDittoConfig | null = null;
-  @state() private secrets: SecretSet = { token: '' };
+  @state() private secrets: EditorSave['secrets'] = { token: '' };
+  @state() private encryptionKey = '';
+  @state() private encryptionKeyError: string | null = null;
   @state() private validationError: string | null = null;
   @state() private advancedOpen = false;
+  @state() private isNewConnection = false;
   @state() private isActiveConnection = false;
   @state() private systemSettingOptions: SystemSettingOption[] = [];
   @state() private systemSettingsLoadError: string | null = null;
@@ -121,10 +118,13 @@ export class DatabaseEditor extends LitElement {
 
   /** Host-message subscription. The controller owns its own lifetime, so a
    *  re-attach cannot leave a second handler bound to the stale element. */
-  readonly hostMessages = new HostMessages<In>(this, msg => {
+  readonly hostMessages = new HostMessages<EditorOut>(this, msg => {
     if (msg.type === 'editor.init') {
       this.config = msg.config;
       this.secrets = msg.secrets;
+      this.encryptionKey = '';
+      this.encryptionKeyError = null;
+      this.isNewConnection = msg.isNewConnection;
       this.isActiveConnection = msg.isActiveConnection;
       this.initialSystemSettings = structuredClone(this.systemSettings());
       this.systemSettingOptions = [];
@@ -148,10 +148,11 @@ export class DatabaseEditor extends LitElement {
     if (msg.type === 'editor.systemSettingsLoadError') {
       this.systemSettingsLoadError = msg.message;
     }
-      if (msg.type === 'editor.validationError') {
-        this.saving = false;
-        this.validationError = msg.message;
-      if (msg.field === 'advancedConfig') { this.advancedOpen = true; }
+    if (msg.type === 'editor.validationError') {
+      this.saving = false;
+      this.encryptionKeyError = msg.field === 'encryptionKey' ? msg.message : null;
+      this.validationError = msg.field === 'encryptionKey' ? null : msg.message;
+      if (msg.field) { this.advancedOpen = true; }
     }
   });
 
@@ -160,8 +161,14 @@ export class DatabaseEditor extends LitElement {
     this.config = { ...this.config, [field]: value };
   }
 
-  private updateSecret(field: keyof SecretSet, value: string) {
+  private updateSecret(field: keyof EditorSave['secrets'], value: string) {
     this.secrets = { ...this.secrets, [field]: value };
+  }
+
+  private setLocalEncryption(enabled: boolean) {
+    this.update_('encryptLocalStore', enabled);
+    if (!enabled) { this.encryptionKey = ''; }
+    this.encryptionKeyError = null;
   }
 
   private scopes(): CollectionSyncScopeEntry[] {
@@ -506,10 +513,17 @@ export class DatabaseEditor extends LitElement {
       return;
     }
     this.saving = true;
-    postToHost({ type: 'editor.save', config: this.config, secrets: this.secrets });
+    const encryptionKey = this.encryptionKey.trim();
+    postToHost<EditorSave>({
+      type: 'editor.save',
+      // Scope and system setting drafts have passed validation above.
+      config: this.config as EditorSave['config'],
+      secrets: this.secrets,
+      ...(this.isNewConnection && this.config.encryptLocalStore && encryptionKey ? { encryptionKey } : {}),
+    });
   }
 
-  private cancel() { postToHost({ type: 'editor.cancel' }); }
+  private cancel() { postToHost<EditorIn>({ type: 'editor.cancel' }); }
 
   override render() {
     if (!this.config) {
@@ -578,6 +592,32 @@ export class DatabaseEditor extends LitElement {
           <span class="scope-count">${this.isActiveConnection && settingChanges.total > 0 ? 'Reconnect required' : advancedCount}</span>
         </summary>
         <div class="advanced-content">
+          ${this.isNewConnection || c.encryptLocalStore ? html`<h2>Local Database Encryption</h2>` : nothing}
+          ${this.isNewConnection ? html`
+            <div class="checkbox-row">
+              <input type="checkbox" id="cb-encrypt-local-store" aria-describedby="local-encryption-help"
+                .checked=${c.encryptLocalStore === true}
+                @change=${(e: Event) => this.setLocalEncryption((e.target as HTMLInputElement).checked)} />
+              <label for="cb-encrypt-local-store" style="margin: 0">Encrypt local database</label>
+            </div>
+            <div id="local-encryption-help" class="help">Choose this when registering the database. VS Code stores the key in Secret Storage.</div>
+            ${c.encryptLocalStore ? html`
+              <label for="local-encryption-key">Encryption key (optional)</label>
+              <input id="local-encryption-key" type="password" autocomplete="off" spellcheck="false"
+                .value=${this.encryptionKey}
+                aria-invalid=${this.encryptionKeyError ? 'true' : 'false'}
+                aria-describedby=${this.encryptionKeyError ? 'local-encryption-key-help local-encryption-key-error' : 'local-encryption-key-help'}
+                @input=${(e: Event) => {
+                  this.encryptionKey = (e.target as HTMLInputElement).value;
+                  this.encryptionKeyError = null;
+                }} />
+              <div id="local-encryption-key-help" class="help">Enter a Base64-encoded 32-byte key or leave this blank to generate one.</div>
+            ` : nothing}
+          ` : c.encryptLocalStore ? html`<div class="help">Local database encryption is enabled.</div>` : nothing}
+          ${this.encryptionKeyError ? html`
+            <div id="local-encryption-key-error" class="setting-error" role="alert">${this.encryptionKeyError}</div>
+          ` : nothing}
+
           <h2>Collection Sync Scopes</h2>
           <div class="help">Control where each user collection may synchronize. Changes apply the next time this connection starts.</div>
 

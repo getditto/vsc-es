@@ -76,7 +76,7 @@ function makeManager() {
       return [];
     },
     newAttachment: async (_path: string, metadata: Record<string, string>) => ({
-      id: 'att-new', len: Number(metadata.length ?? 0), metadata,
+      id: 'att-new', len: Number(metadata.length ?? 0), metadata, close: async () => {},
     }),
   };
   return { manager, recorded };

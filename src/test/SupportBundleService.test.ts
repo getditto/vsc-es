@@ -75,11 +75,13 @@ function mockManager(opts: {
       }
       return [];
     },
+    saveAttachmentToPath: (attachment: { copyToPath(path: string): Promise<void> }, dest: string) => attachment.copyToPath(dest),
     fetchAttachment: opts.fetchNull
       ? () => null
       : (_token: unknown) => {
           // Return a proper PromiseLike that resolves with the mock attachment.
           const attachment = {
+            close: async () => {},
             copyToPath: async (destPath: string) => {
               await fs.writeFile(destPath, attachmentBytes);
             },

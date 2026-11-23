@@ -1,6 +1,6 @@
 import type {
   StoredDittoConfig,
-  SecretSet,
+  ConnectionCredentials,
   PeerListSnapshot,
   SystemSettingOption,
 } from '../models/DittoConfig.js';
@@ -34,16 +34,16 @@ export type WelcomeOut =
 
 // ─── Database editor panel ─────────────────────────────────────
 export type EditorIn =
-  | { type: 'editor.save'; config: StoredDittoConfig; secrets: SecretSet }
+  | { type: 'editor.save'; config: StoredDittoConfig; secrets: ConnectionCredentials; encryptionKey?: string }
   | { type: 'editor.cancel' };
 
 export type EditorOut =
-  | { type: 'editor.init'; config: StoredDittoConfig; secrets: SecretSet; isActiveConnection: boolean }
+  | { type: 'editor.init'; config: StoredDittoConfig; secrets: ConnectionCredentials; isNewConnection: boolean; isActiveConnection: boolean }
   | { type: 'editor.initError'; message: string }
   | { type: 'editor.activeConnectionChanged'; isActiveConnection: boolean }
   | { type: 'editor.systemSettingsLoaded'; options: SystemSettingOption[] }
   | { type: 'editor.systemSettingsLoadError'; message: string }
-  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' | undefined };
+  | { type: 'editor.validationError'; message: string; field?: 'advancedConfig' | 'encryptionKey' | undefined };
 
 // ─── Subscription editor panel ─────────────────────────────────
 export type SubIn =

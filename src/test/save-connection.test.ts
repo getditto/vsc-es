@@ -152,6 +152,24 @@ test('saveConnectionAtomically removes a newly created config after secret failu
   assert.equal(deleted, true);
 });
 
+test('failed encrypted creation removes the partial key and database configuration', async () => {
+  let storedConfig: StoredDittoConfig | undefined;
+  let storedSecrets: SecretSet = { token: '' };
+  await assert.rejects(saveConnectionAtomically({
+    get: () => storedConfig,
+    async save(value) { storedConfig = value; },
+    async delete() { storedConfig = undefined; },
+  }, {
+    async read() { return storedSecrets; },
+    async write(_id, value) {
+      storedSecrets = value;
+      if (value.encryptionKey) { throw new Error('Failed after writing the key'); }
+    },
+  }, { ...config('new'), encryptLocalStore: true }, { token: 'new-token' }), ConnectionPersistenceError);
+  assert.equal(storedConfig, undefined);
+  assert.deepEqual(storedSecrets, { token: '' });
+});
+
 test('saveConnectionAtomically does not touch secrets when config save fails', async () => {
   let secretWrites = 0;
   await assert.rejects(saveConnectionAtomically({

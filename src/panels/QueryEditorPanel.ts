@@ -5,6 +5,7 @@ import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
 import { MAX_QUERY_ROWS } from '../ditto/query-projection.js';
+import { withSdkResource } from '../ditto/sdk-resources.js';
 import { OpenPanelsTracker } from '../ditto/OpenPanelsTracker.js';
 import type { QueryIn, QueryOut, QueryMode } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
@@ -818,10 +819,10 @@ export class QueryEditorPanel {
             contentType,
             length: String(size),
           });
-          await this.manager.executeRaw(
+          await withSdkResource(att, log, att => this.manager.executeRaw(
             `UPDATE ${quoteIdentifier(collection, 'collection')} SET ${quoteIdentifier(field, 'field')} = :att WHERE _id = :docId`,
             { att, docId: documentId },
-          );
+          ));
         },
       );
       vscode.window.showInformationMessage(

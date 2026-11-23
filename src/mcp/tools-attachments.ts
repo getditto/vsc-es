@@ -9,9 +9,10 @@ import { ok, err } from './tool-result.js';
 import { requireActiveConfig } from './guards.js';
 import { tool, type ToolDef } from './define-tool.js';
 import type { McpToolContext } from './context.js';
+import { withSdkResource } from '../ditto/sdk-resources.js';
 
-/** Attachment blobs never enter the LLM context — downloads go straight
- *  to disk via the SDK's native copy (no heap double). Attachment ADD
+/** Attachment blobs stay out of the LLM context — downloads are saved
+ *  to disk. Attachment ADD
  *  works through execute_dql using newAttachment… which the MCP surface
  *  intentionally doesn't expose as a standalone upload tool today. */
 const MAX_ATTACHMENT_BYTES = 512 * 1024 * 1024;
@@ -222,26 +223,30 @@ async function fetchAttachment(ctx: McpToolContext, args: FetchArgs): Promise<Ca
 
     // Keep the native SDK's write in OS scratch space under a private
     // directory instead of giving it a path in the caller's workspace.
-    return await withStagedAttachment(await fs.realpath(os.tmpdir()), async (staged, verifyStage) => {
-      // Read the default mode from a new file without querying the
-      // process-wide umask, which Node implements by rewriting it.
-      await fs.writeFile(staged, '', { flag: 'wx' });
-      const initialMode = (await fs.lstat(staged)).mode;
-      await ctx.manager.saveAttachmentToPath(attachment, staged);
-      await verifyStage();
-      const written = await fs.lstat(staged);
-      if (!written.isFile()) { return err('The attachment download did not produce a regular file.'); }
-      const mode = (existing?.mode ?? initialMode) & 0o777;
-      await fs.chmod(staged, mode);
-      await verifyParent();
-      try {
-        await publishAttachment(staged, dest.path, args.overwrite, mode, verifyParent);
-      } catch (error) {
-        if (!args.overwrite && (error as NodeJS.ErrnoException).code === 'EEXIST') { return existsError(); }
-        throw error;
-      }
-      return ok({ savedTo: args.save_to_path, bytes: written.size, attachmentId: args.token.id });
-    });
+    return await withSdkResource(attachment, ctx.log, async (download) =>
+      withStagedAttachment(await fs.realpath(os.tmpdir()), async (staged, verifyStage) => {
+        // Read the default mode from a new file without querying the
+        // process-wide umask, which Node implements by rewriting it.
+        await fs.writeFile(staged, '', { flag: 'wx' });
+        const initialMode = (await fs.lstat(staged)).mode;
+        // The SDK copies exclusively. Keep the measured mode and free the
+        // private path before letting it create the attachment file.
+        await fs.unlink(staged);
+        await ctx.manager.saveAttachmentToPath(download, staged);
+        await verifyStage();
+        const written = await fs.lstat(staged);
+        if (!written.isFile()) { return err('The attachment download did not produce a regular file.'); }
+        const mode = (existing?.mode ?? initialMode) & 0o777;
+        await fs.chmod(staged, mode);
+        await verifyParent();
+        try {
+          await publishAttachment(staged, dest.path, args.overwrite, mode, verifyParent);
+        } catch (error) {
+          if (!args.overwrite && (error as NodeJS.ErrnoException).code === 'EEXIST') { return existsError(); }
+          throw error;
+        }
+        return ok({ savedTo: args.save_to_path, bytes: written.size, attachmentId: args.token.id });
+      }));
   } finally {
     if (reservation !== undefined) { pendingExclusiveDownloads.delete(reservation); }
   }

@@ -7,6 +7,7 @@ import * as zlib from 'node:zlib';
 import { promisify } from 'node:util';
 import type { DittoManager } from './DittoManager.js';
 import type { Logger } from '../logging/types.js';
+import { withSdkResource } from './sdk-resources.js';
 
 const gzip = promisify(zlib.gzip);
 
@@ -254,11 +255,10 @@ export class SupportBundleService {
     // as soon as either side settles so a fast fetch doesn't leave a
     // dangling setTimeout keeping the process alive.
     let timer: ReturnType<typeof setTimeout> | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let attachment: any;
+    let attachment;
     try {
       attachment = await Promise.race([
-        fetcher as PromiseLike<unknown>,
+        fetcher,
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error('Attachment fetch timed out')), FETCH_TIMEOUT_MS);
         }),
@@ -267,23 +267,20 @@ export class SupportBundleService {
       if (timer !== undefined) { clearTimeout(timer); }
     }
 
-    // Read the attachment bytes via copyToPath → readFile → cleanup.
-    // We use a temp file because `attachment.data()` would double the
-    // heap for large bundles, and `copyToPath` does a native file copy.
-    const tmpDir = await fs.mkdtemp(path.join(
-      // Use the OS temp dir — the file is small enough (a few MB) that
-      // any disk works, and we clean up immediately after reading.
-      process.env.TMPDIR ?? '/tmp',
-      'ditto-bundle-',
-    ));
-    const tmpPath = path.join(tmpDir, 'bundle.tar');
-    try {
-      await attachment.copyToPath(tmpPath);
-      const bytes = await fs.readFile(tmpPath);
-      log.info('Bundle attachment saved to temp file', { bytes: bytes.length });
-      return bytes;
-    } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-    }
+    if (!attachment) { throw new Error('Support bundle attachment is unavailable'); }
+    return withSdkResource(attachment, log, async attachment => {
+      // Export through the same path as regular attachments, including
+      // support for bundles stored in an encrypted database.
+      const tmpDir = await fs.mkdtemp(path.join(process.env.TMPDIR ?? '/tmp', 'ditto-bundle-'));
+      const tmpPath = path.join(tmpDir, 'bundle.tar');
+      try {
+        await this.manager.saveAttachmentToPath(attachment, tmpPath);
+        const bytes = await fs.readFile(tmpPath);
+        log.info('Bundle attachment saved to temp file', { bytes: bytes.length });
+        return bytes;
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      }
+    });
   }
 }

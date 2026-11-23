@@ -74,6 +74,8 @@ export interface StoredDittoConfig {
   allowUntrustedCerts: boolean;
   logLevel: SdkLogLevel;
   isStrictModeEnabled: boolean;
+  /** Chosen when the connection is registered. Absent on legacy connections. */
+  encryptLocalStore?: boolean;
   /** Optional for backward compatibility with configs saved before DA-198. */
   advancedConfig?: AdvancedConfig;
   /**
@@ -87,10 +89,24 @@ export interface StoredDittoConfig {
   isAwdlEnabled?: boolean;
 }
 
-export interface SecretSet {
+export interface ConnectionCredentials {
   token: string;
   secretKey?: string;
   httpApiKey?: string;
+}
+
+export interface SecretSet extends ConnectionCredentials {
+  /** Base64-encoded SDK encryption key, held in SecretStorage and the host. */
+  encryptionKey?: string;
+}
+
+export function connectionCredentials(secrets: ConnectionCredentials): ConnectionCredentials {
+  const { token, secretKey, httpApiKey } = secrets;
+  return {
+    token,
+    ...(secretKey !== undefined ? { secretKey } : {}),
+    ...(httpApiKey !== undefined ? { httpApiKey } : {}),
+  };
 }
 
 export function newConfig(): StoredDittoConfig {

@@ -11,6 +11,7 @@ import { attachmentContentType, attachmentFilename } from './inspector-state.js'
 import { webviewMessageHandler, webviewNonce } from '../panels/webview-utils.js';
 import type { MetricsPreferencesStore } from '../storage/MetricsPreferencesStore.js';
 import type { AttachmentCache } from './AttachmentCache.js';
+import { closeSdkResource } from '../ditto/sdk-resources.js';
 
 /** Inline previews base64 the whole attachment into a `data:` URI (~1.33×
  *  the bytes on top of the fetched buffer), so they get a hard cap at the
@@ -241,9 +242,7 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
     // when they switch tabs and come back. Cache is cleared on disconnect
     // (see extension.ts), so a stale entry can't outlive its database.
     //
-    // The save path deliberately skips the byte cache: saving streams
-    // natively via `Attachment.copyToPath` (see saveAttachment below) and
-    // never touches a JS-side buffer, so cached bytes are irrelevant to it.
+    // The save path uses the SDK attachment directly and skips the preview cache.
     const activeDbId = this.manager.getActiveConfigId();
     if (!save && activeDbId) {
       const cached = this.attachmentCache.get(activeDbId, tokenAny.id);
@@ -267,8 +266,9 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'inspector.attachmentError', tokenId, message: 'No active database' });
       return;
     }
+    let att: Attachment | null = null;
     try {
-      const att = await fetcher;
+      att = await fetcher;
       if (!att) {
         this.post({ type: 'inspector.attachmentError', tokenId, message: 'Fetch returned null' });
         return;
@@ -286,7 +286,8 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         return;
       }
 
-      const buf = await att.data();
+      const bytes = await att.data();
+      const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       const contentType = attachmentContentType(meta) ?? 'application/octet-stream';
 
       // Populate cache before delivery — a later switch-back will hit.
@@ -313,22 +314,12 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
         tokenId,
         message: err instanceof Error ? err.message : String(err),
       });
+    } finally {
+      if (att) { await closeSdkResource(att, log); }
     }
   }
 
-  /**
-   * The Download path. Opens the OS save dialog (cancelling is a silent
-   * no-op, unchanged from the literal-write behaviour) and copies the
-   * attachment STRAIGHT to the picked file via `Attachment.copyToPath`
-   * through the manager — the blob never becomes a JS `Uint8Array` here.
-   *
-   * Download is intentionally uncapped (the user explicitly asked for the
-   * file), so the old `att.data()` + `fs.writeFile` route transiently held
-   * the full attachment in the shared extension host's heap; for a big
-   * blob that is a real heap spike. The SDK's native copy avoids it
-   * entirely. Errors surface through fetchAttachment's single catch, which
-   * posts `inspector.attachmentError`.
-   */
+  /** Export to the selected file. Cancelling the save dialog ends the download. */
   private async saveAttachment(
     tokenId: string,
     att: Attachment,
@@ -339,7 +330,7 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider {
       defaultUri: vscode.Uri.file(filename ?? `attachment.${ext}`),
     });
     if (!uri) { return; }
-    await this.manager.saveAttachmentToPath(att, uri.fsPath);
+    await this.manager.saveAttachmentToPath(att, uri.fsPath, true);
     this.post({ type: 'inspector.attachmentSaved', tokenId, path: uri.fsPath });
   }
 

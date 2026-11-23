@@ -522,11 +522,13 @@ test('fetch_attachment streams the blob to disk via the native copy path', async
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const dest = path.join(dir, 'photo.png');
   const bundle = makeContext({ activeId: 'cfg-1' });
+  let closed = false;
   bundle.manager.state.attachmentScript = {
     fetchCalls: [],
     savedTo: [],
     fetch: () => Promise.resolve({
-      copyToPath: (d: string) => { fs.writeFileSync(d, Buffer.from('PNGDATA')); return Promise.resolve(); },
+      copyToPath: (d: string) => fs.promises.writeFile(d, 'PNGDATA', { flag: 'wx' }),
+      close: async () => { closed = true; },
     }),
   };
   const tool = find(attachmentTools, 'fetch_attachment');
@@ -537,6 +539,7 @@ test('fetch_attachment streams the blob to disk via the native copy path', async
   }));
   assert.equal(payload.savedTo, dest);
   assert.equal(payload.bytes, 7);
+  assert.equal(closed, true);
   assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
   const [staged] = bundle.manager.state.attachmentScript.savedTo;
   assert.ok(staged, 'the SDK copied to a staging file');
@@ -582,7 +585,8 @@ function pngScript(): NonNullable<ReturnType<typeof makeContext>['manager']['sta
     fetchCalls,
     savedTo,
     fetch: () => Promise.resolve({
-      copyToPath: (d: string) => { fs.writeFileSync(d, Buffer.from('PNGDATA')); return Promise.resolve(); },
+      copyToPath: (d: string) => fs.promises.writeFile(d, 'PNGDATA', { flag: 'wx' }),
+      close: async () => {},
     }),
   };
 }
@@ -626,7 +630,7 @@ test('fetch_attachment confines downloads to workspace / extension-storage / OS-
   assert.equal(fs.readFileSync(path.join(workspaceDir, 'ok.bin'), 'utf8'), 'PNGDATA');
 });
 
-test('fetch_attachment overwrite:false claims the destination atomically — concurrent pair, one winner', async (t) => {
+test('fetch_attachment overwrite:false relies on exclusive copy when two downloads race', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const dest = path.join(dir, 'race.bin');
@@ -642,7 +646,6 @@ test('fetch_attachment overwrite:false claims the destination atomically — con
   const outcomes = [first, second].map(r => r.isError ?? false);
   assert.deepEqual(outcomes.sort(), [false, true], 'exactly one concurrent caller may win the path');
   assert.match(errText([first, second].find(r => r.isError) as CallToolResult), /already exists/);
-  assert.equal(bundle.manager.state.attachmentScript.fetchCalls.length, 1, 'the loser never fetches');
   assert.equal(fs.readFileSync(dest, 'utf8'), 'PNGDATA');
 });
 
@@ -657,6 +660,7 @@ test('fetch_attachment keeps a file created by another writer during the downloa
       await fs.promises.writeFile(staged, 'PNGDATA');
       await fs.promises.writeFile(dest, 'keep', { flag: 'wx' });
     },
+    close: async () => {},
   });
   bundle.manager.state.attachmentScript = script;
 
@@ -688,6 +692,7 @@ test('fetch_attachment stops if the destination directory moves during the downl
       await fs.promises.mkdir(parent);
       await fs.promises.writeFile(staged, 'PNGDATA');
     },
+    close: async () => {},
   });
   bundle.manager.state.attachmentScript = script;
 
@@ -818,6 +823,7 @@ test('fetch_attachment keeps an existing file if the native copy fails partway',
         await fs.promises.writeFile(staged, 'partial');
         throw new Error('disk full');
       },
+      close: async () => {},
     }),
   };
   const tool = find(attachmentTools, 'fetch_attachment');
@@ -831,16 +837,18 @@ test('fetch_attachment keeps an existing file if the native copy fails partway',
   assert.deepEqual(fs.readdirSync(dir), ['keep.bin'], 'partial staging data is removed');
 });
 
-test('fetch_attachment leaves no destination entry when the download fails', async (t) => {
+test('fetch_attachment closes the attachment and leaves no destination entry on copy failure', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-att-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const dest = path.join(dir, 'will-fail.bin');
   const bundle = makeContext({ activeId: 'cfg-1' });
+  let closed = false;
   bundle.manager.state.attachmentScript = {
     fetchCalls: [],
     savedTo: [],
     fetch: () => Promise.resolve({
       copyToPath: () => Promise.reject(new Error('disk full')),
+      close: async () => { closed = true; },
     }),
   };
   const tool = find(attachmentTools, 'fetch_attachment');
@@ -849,5 +857,6 @@ test('fetch_attachment leaves no destination entry when the download fails', asy
   });
   assert.equal(res.isError, true);
   assert.match(errText(res), /disk full/);
+  assert.equal(closed, true);
   assert.equal(fs.existsSync(dest), false, 'a failed download must not strand a 0-byte claim file');
 });

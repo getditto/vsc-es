@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Host-side Ditto v5 (JS SDK 5.1) injector — a local test app for exercising the
+// Host-side Ditto v5 injector — a local test app for exercising the
 // extension's diagnostics features (Debug Console, system:metrics, Log Analyzer).
 // Concept ported from memory-benchmarks-compare/injector/dittov5-node with two
 // additions for diagnostics testing:
@@ -94,7 +94,7 @@ async function main() {
   const debugSocket = args['debug-socket'];
   const metrics = 'metrics' in args;
   const databaseId = args['database-id'] || env.DITTO_DATABASE_ID || 'ditto-edge-studio-injector';
-  const license = args.license || env.DITTO_LICENSE || '';
+  const license = args.license ?? env.DITTO_LICENSE;
 
   if (metrics) {
     // Startup-gated system parameter — must be in the env before Ditto.open.
@@ -102,12 +102,16 @@ async function main() {
   }
 
   fs.mkdirSync(workDir, { recursive: true });
+  const lines = fs.readFileSync(datasetPath, 'utf8').split('\n').filter(l => l.trim() !== '');
   const { Ditto, DittoConfig } = await import('@dittolive/ditto');
   const ditto = await Ditto.open(
     new DittoConfig(databaseId, { mode: 'smallPeersOnly', privateKey: null }, workDir),
   );
 
-  const lines = fs.readFileSync(datasetPath, 'utf8').split('\n').filter(l => l.trim() !== '');
+  const execute = async (query, parameters) => {
+    const result = await ditto.store.execute(query, parameters);
+    await result.close();
+  };
   const tick = makePacer(ratePerSec);
   const deadlineNs = process.hrtime.bigint() + BigInt(durationMs) * 1_000_000n;
 
@@ -118,7 +122,7 @@ async function main() {
   try {
     if (license) {
       await ditto.setOfflineOnlyLicenseToken(license);
-      await ditto.store.execute(
+      await execute(
         'ALTER SYSTEM SET USER_COLLECTION_SYNC_SCOPES = :scopes',
         { scopes: { [collection]: 'SmallPeersOnly' } },
       );
@@ -132,13 +136,13 @@ async function main() {
     }
 
     if (debugSocket) {
-      await ditto.store.execute(`ALTER SYSTEM SET debug_socket = '${debugSocket}'`);
+      await execute('ALTER SYSTEM SET debug_socket = :socket', { socket: debugSocket });
     }
 
     let pushed = 0;
     const start = skip;
     for (let i = start; i < lines.length && process.hrtime.bigint() < deadlineNs; i++) {
-      await ditto.store.execute(
+      await execute(
         `INSERT INTO ${collection} DOCUMENTS (deserialize_json(:doc)) ON ID CONFLICT DO UPDATE`,
         { doc: lines[i] },
       );
@@ -150,18 +154,24 @@ async function main() {
 
     // Keep the process alive past the injection window when a debug socket or
     // sync is active, so the console/mesh can be exercised after the feed ends.
-    // (A never-resolving promise is NOT enough — Node exits when the event loop
-    // has no active handles.)
+    // The keepalive below holds the event loop open.
     if (debugSocket || license) {
       console.log('[injector] staying alive (Ctrl+C to exit)');
-      await new Promise(() => setInterval(() => {}, 60_000));
+      await new Promise(() => {});
     }
   } finally {
     await ditto.close();
   }
 }
 
-main().catch(err => {
+// SDK 5.3 RC1 can exit or abort a standalone Node process while an
+// asynchronous native query is still pending when the event loop is idle.
+const keepAlive = setInterval(() => {}, 60_000);
+try {
+  await main();
+} catch (err) {
   console.error('[injector] fatal:', err.message);
-  process.exit(1);
-});
+  process.exitCode = 1;
+} finally {
+  clearInterval(keepAlive);
+}
