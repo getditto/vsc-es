@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import {
   Ditto,
   DittoConfig,
+  DittoEncryptionKey,
   DittoError,
   Authenticator,
   Differ,
@@ -11,6 +12,9 @@ import {
   Logger as DittoLogger,
   type LogLevel as DittoSdkLogLevel,
   type DQLQueryArguments,
+  type DittoConfigOptions,
+  type QueryResult,
+  type SyncSubscription,
   type TransportConfig,
   type PresenceGraph,
   type Attachment,
@@ -45,6 +49,8 @@ import { installSessionLogObservers } from './session-log-observers.js';
 import { startSyncWithCollectionScopes } from './sync-scopes.js';
 import { applySystemSettings, parseShowAllOptions } from './system-settings.js';
 import { withConnectionPersistenceLock } from '../storage/connection-persistence-lock.js';
+import { closeSdkResource, withSdkResource } from './sdk-resources.js';
+import { decodeLocalStoreKey } from './local-store-key.js';
 
 export interface TransportPrefs {
   isLanEnabled: boolean;
@@ -67,7 +73,7 @@ interface ActiveSession {
    *  for one, and condition changes are exactly what the user wants to see
    *  during it. */
   logObservers?: { dispose(): void } | undefined;
-  subscriptionHandles: Map<string, { cancel: () => void }>;
+  subscriptionHandles: Map<string, SyncSubscription>;
   presenceCoalesceTimer?: NodeJS.Timeout | undefined;
 }
 
@@ -76,6 +82,21 @@ interface ActiveSession {
  *  pushed over postMessage is capped, mirroring the MAX_QUERY_ROWS /
  *  DETAIL_ROW_CAP conventions used by the query paths. */
 const OBSERVER_ROW_CAP = 1000;
+
+function importLocalStoreKey(encodedKey: string | undefined): DittoEncryptionKey {
+  if (!encodedKey) {
+    throw new Error('The local database encryption key is missing from VS Code Secret Storage.');
+  }
+  const bytes = decodeLocalStoreKey(encodedKey);
+  if (!bytes) {
+    throw new Error('The local database encryption key in VS Code Secret Storage is invalid.');
+  }
+  try {
+    return DittoEncryptionKey.raw(bytes);
+  } finally {
+    bytes.fill(0);
+  }
+}
 
 
 export class DittoManager {
@@ -134,7 +155,7 @@ export class DittoManager {
       throw new Error('Connect this database to load its current system settings.');
     }
     const result = await this.session.ditto.store.execute('SHOW ALL');
-    return parseShowAllOptions(result);
+    return withSdkResource(result, this.log, parseShowAllOptions);
   }
   getLatestSnapshot(): PeerListSnapshot { return this.latestSnapshot; }
   getSyncState(): SyncState { return this.syncState; }
@@ -214,7 +235,7 @@ export class DittoManager {
         systemParams.metrics_exporter_virtual_collection_enabled = true;
       }
 
-      const dittoCfg = new DittoConfig({
+      const dittoOptions = {
         databaseID: config.databaseId,
         connect: config.mode === 'server'
           ? { mode: 'server', url: normalizeDittoServerUrl(config.authUrl) }
@@ -226,7 +247,7 @@ export class DittoManager {
             },
         persistenceDirectory: persistenceDir,
         systemParameters: systemParams,
-      });
+      } satisfies DittoConfigOptions;
 
       // Apply per-DB SDK log level before opening the SDK. `config.logLevel`
       // is `SdkLogLevel` (lowercase 'warning'/'verbose'); the SDK runtime
@@ -239,8 +260,14 @@ export class DittoManager {
       this.log.info('Applied per-DB SDK log level', { configId: config.id, level: config.logLevel });
 
       let ditto: Ditto;
+      const encryptionKey = config.encryptLocalStore === true
+        ? importLocalStoreKey(secrets.encryptionKey)
+        : undefined;
       try {
-        ditto = await Ditto.open(dittoCfg);
+        ditto = await Ditto.open(new DittoConfig({
+          ...dittoOptions,
+          ...(encryptionKey ? { encryptionKey } : {}),
+        }));
       } catch (openErr) {
         // The SDK uses an OS-level advisory lock on `__ditto_lock_file` inside
         // the working directory; the file itself is an empty placeholder. When
@@ -267,6 +294,10 @@ export class DittoManager {
           );
         }
         throw openErr;
+      } finally {
+        if (encryptionKey) {
+          await encryptionKey.destroy().catch(() => { this.log.warn('Could not release the local encryption key handle'); });
+        }
       }
       openedDitto = ditto;
 
@@ -328,21 +359,29 @@ export class DittoManager {
       }
 
       const configuredScopes = config.advancedConfig?.collectionSyncScopes ?? [];
-      await startSyncWithCollectionScopes(ditto, configuredScopes, async () => {
+      // Startup statements only need their side effects. Release each result
+      // as soon as the statement completes.
+      const startupStore = {
+        execute: async (query: string, args?: Record<string, unknown>): Promise<void> => {
+          const result = await ditto.store.execute(query, args as DQLQueryArguments | undefined);
+          await closeSdkResource(result, this.log);
+        },
+      };
+      await startSyncWithCollectionScopes({ store: startupStore, sync: ditto.sync }, configuredScopes, async () => {
         if (configuredScopes.length > 0) {
           this.log.info('Applied collection sync scopes before sync start', {
             configId: config.id,
             count: configuredScopes.length,
           });
         }
-        await ditto.store.execute(
+        await startupStore.execute(
           'ALTER SYSTEM SET DQL_STRICT_MODE TO :value',
           { value: config.isStrictModeEnabled },
         );
-        await ditto.store.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 12');
+        await startupStore.execute('ALTER SYSTEM SET mesh_chooser_max_wlan_clients = 12');
         this.log.info('Set mesh_chooser_max_wlan_clients to 12 to improve amount of peers connectivity.');
         const systemSettings = config.advancedConfig?.systemSettings ?? [];
-        await applySystemSettings(ditto.store, systemSettings);
+        await applySystemSettings(startupStore, systemSettings);
         if (systemSettings.length > 0) {
           this.log.info('Applied startup system settings before sync start', {
             configId: config.id,
@@ -396,7 +435,7 @@ export class DittoManager {
       if (partial) {
         this.session = null;
         if (partial.presenceCoalesceTimer) { clearTimeout(partial.presenceCoalesceTimer); }
-        for (const h of partial.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
+        await Promise.all([...partial.subscriptionHandles.values()].map(h => closeSdkResource(h, this.log)));
         try { partial.presenceObserver?.stop?.(); } catch { /* ignore */ }
         try { partial.logObservers?.dispose(); } catch { /* ignore */ }
         try {
@@ -442,7 +481,7 @@ export class DittoManager {
     this.session = null;
     if (s.presenceCoalesceTimer) { clearTimeout(s.presenceCoalesceTimer); }
     try {
-      for (const h of s.subscriptionHandles.values()) { try { h.cancel(); } catch { /* ignore */ } }
+      await Promise.all([...s.subscriptionHandles.values()].map(h => closeSdkResource(h, this.log)));
       try { s.presenceObserver?.stop?.(); } catch { /* ignore */ }
       try { s.logObservers?.dispose(); } catch { /* ignore */ }
       try { s.ditto.sync.stop(); } catch { /* ignore */ }
@@ -525,7 +564,7 @@ export class DittoManager {
   cancelSubscription(subId: string) {
     if (!this.session) { return; }
     const h = this.session.subscriptionHandles.get(subId);
-    if (h) { try { h.cancel(); } catch { /* ignore */ } }
+    if (h) { void closeSdkResource(h, this.log); }
     this.session.subscriptionHandles.delete(subId);
   }
 
@@ -548,21 +587,41 @@ export class DittoManager {
   }
 
   /**
-   * Save a fetched attachment to `destPath` WITHOUT materializing its bytes
-   * in the extension-host heap: the SDK's `Attachment.copyToPath` performs a
-   * native store-to-disk copy, so the whole blob never becomes a JS
-   * `Uint8Array` (which `attachment.data()` + `fs.writeFile` would give you,
-   * doubling peak memory for the duration of the write).
-   *
-   * Used by the Inspector's uncapped Download action — the user explicitly
-   * asked for the file, so large attachments must be writable without heap
-   * pressure on the shared extension host.
-   *
-   * Throws whatever the SDK throws (e.g. permission errors surface as a
-   * `DittoError` whose message the caller reports).
+   * Export an attachment by native copy when possible. The SDK exposes
+   * encrypted attachments through its decrypted byte API.
    */
-  async saveAttachmentToPath(attachment: Attachment, destPath: string): Promise<void> {
-    await attachment.copyToPath(destPath);
+  async saveAttachmentToPath(attachment: Attachment, destPath: string, overwrite = false): Promise<void> {
+    const copyNative = async (filePath: string): Promise<boolean> => {
+      try {
+        await attachment.copyToPath(filePath);
+        return true;
+      } catch (err) {
+        if (!(err instanceof DittoError) || err.code !== 'unsupported') { throw err; }
+        return false;
+      }
+    };
+    if (!overwrite && await copyNative(destPath)) { return; }
+
+    // Stage replacements and decrypted files beside the destination. A
+    // failed decrypt or write cannot alter the final path.
+    const workDir = await fs.promises.mkdtemp(path.join(path.dirname(destPath), '.ditto-download-'));
+    try {
+      const stagedPath = path.join(workDir, 'attachment');
+      if (!overwrite || !await copyNative(stagedPath)) {
+        await fs.promises.writeFile(stagedPath, await attachment.data(), { flag: 'wx', mode: 0o600 });
+      }
+      if (overwrite) {
+        await fs.promises.rename(stagedPath, destPath);
+      } else {
+        await fs.promises.copyFile(stagedPath, destPath, fs.constants.COPYFILE_EXCL);
+      }
+    } finally {
+      await fs.promises.rm(workDir, { recursive: true, force: true }).catch((err: unknown) => {
+        this.log.warn('Attachment staging cleanup failed', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
   }
 
   /** Run a raw DQL query and return its rows. No EXPLAIN side-trip, no
@@ -592,30 +651,21 @@ export class DittoManager {
       // value union `unknown` isn't assignable to. The runtime accepts any
       // JSON-shaped value, so a one-way narrowing cast is correct here.
       : await this.session.ditto.store.execute(query, args as unknown as DQLQueryArguments);
-    // Dematerialize each item right after reading its value — otherwise
-    // items pin themselves in native memory for the life of the result
-    // (same discipline as registerStoreObserver).
-    const rows: Record<string, unknown>[] = [];
-    for (const item of result.items) {
+    return withSdkResource(result, this.log, (result) => {
+      const { rows } = projectQueryRows(result.items, { expectsEnvelope: false, maxRows: Infinity });
+      let mutated: string[] = [];
       try {
-        rows.push(item.value as Record<string, unknown>);
-      } finally {
-        try { item.dematerialize(); } catch { /* ignore */ }
-      }
-    }
-    let mutated: string[] = [];
-    try {
-      mutated = result.mutatedDocumentIDsV2().map(id => String(id));
-    } catch { /* read path — no mutation envelope */ }
-    let commitId: string | null = null;
-    try {
-      // SDK exposes `get commitID(): bigint | null`; read defensively.
-      const raw: unknown = (result as { commitID?: unknown }).commitID;
-      commitId = typeof raw === 'bigint' || typeof raw === 'number' || typeof raw === 'string'
-        ? String(raw)
-        : null;
-    } catch { /* absent on reads */ }
-    return { rows, mutatedDocumentIds: mutated, commitId };
+        mutated = result.mutatedDocumentIDsV2().map(id => String(id));
+      } catch { /* read path — no mutation envelope */ }
+      let commitId: string | null = null;
+      try {
+        const raw: unknown = result.commitID;
+        commitId = typeof raw === 'bigint' || typeof raw === 'number' || typeof raw === 'string'
+          ? String(raw)
+          : null;
+      } catch { /* absent on reads */ }
+      return { rows, mutatedDocumentIds: mutated, commitId };
+    });
   }
 
   /**
@@ -632,18 +682,13 @@ export class DittoManager {
   ): Promise<{ documentCount: number; totalBytes: number }> {
     if (!this.session) { throw new Error('No active database.'); }
     const result = await this.session.ditto.store.execute(`SELECT * FROM ${collectionExpr}`);
-    let totalBytes = 0;
-    let documentCount = 0;
-    for (const item of result.items) {
-      try {
-        const bytes: Uint8Array = item.cborData();
-        totalBytes += bytes.byteLength;
-        documentCount += 1;
-      } finally {
-        try { item.dematerialize?.(); } catch { /* ignore */ }
+    return withSdkResource(result, this.log, (result) => {
+      let totalBytes = 0;
+      for (const item of result.items) {
+        totalBytes += item.cborData().byteLength;
       }
-    }
-    return { documentCount, totalBytes };
+      return { documentCount: result.items.length, totalBytes };
+    });
   }
 
   /** Create a new Ditto attachment from a local file path. The returned
@@ -653,7 +698,7 @@ export class DittoManager {
   async newAttachment(
     filePath: string,
     metadata: Record<string, string>,
-  ): Promise<unknown> {
+  ): Promise<Attachment> {
     if (!this.session) { throw new Error('No active database.'); }
     return this.session.ditto.store.newAttachment(filePath, metadata);
   }
@@ -668,31 +713,18 @@ export class DittoManager {
    * responsible for invoking on teardown, or `null` if there is no
    * active session.
    *
-   * Each item is `dematerialize()`d immediately after we read its
-   * `.value` so the SDK can release the materialized object —
-   * matches the SwiftUI repository's pattern, otherwise items pin
-   * themselves in memory for the life of the result.
+   * Delivers plain rows and releases the native result after each firing.
    */
   registerStoreObserver(
     query: string,
     callback: (rows: Record<string, unknown>[]) => void,
   ): { cancel(): void } | null {
     if (!this.session) { return null; }
-    const observer = this.session.ditto.store.registerObserver(query, (queryResult) => {
-      const rows: Record<string, unknown>[] = [];
-      for (const item of queryResult.items) {
-        const value = item.value as Record<string, unknown>;
-        item.dematerialize();
-        rows.push(value);
-      }
-      try { callback(rows); }
-      catch (err) {
-        this.log.warn('Store observer callback threw', {
-          query, err: err instanceof Error ? err.message : String(err),
-        });
-      }
+    const observer = this.observeResults(this.session.ditto, query, 'Store observer callback threw', (result) => {
+      const { rows } = projectQueryRows(result.items, { expectsEnvelope: false, maxRows: Infinity });
+      callback(rows);
     });
-    return { cancel: () => { try { observer.cancel(); } catch { /* ignore */ } } };
+    return { cancel: () => { void closeSdkResource(observer, this.log); } };
   }
 
   /** Register a Ditto store observer for `query`, wrapping the SDK's
@@ -732,44 +764,49 @@ export class DittoManager {
     // SDK's documented "first call shows everything as inserted"
     // behaviour) instead of silently emitting wrong diffs forever.
     let differ = new Differ();
-    const observer = this.session.ditto.store.registerObserver(query, (queryResult) => {
+    const deliver = (result: QueryResult) => {
       let diff: Diff;
       try {
-        diff = differ.diff(queryResult.items);
+        diff = differ.diff(result.items);
       } catch (err) {
         this.log.warn('Differ.diff threw — resetting differ and emitting empty diff', {
           query, err: err instanceof Error ? err.message : String(err),
         });
         diff = { insertions: [], deletions: [], updates: [], moves: [] };
+        void closeSdkResource(differ, this.log);
         differ = new Differ();
       }
-      const rows: Record<string, unknown>[] = [];
-      let totalRows = 0;
-      for (const item of queryResult.items) {
-        totalRows += 1;
-        if (rows.length < OBSERVER_ROW_CAP) {
-          rows.push(item.value as Record<string, unknown>);
-        }
-        // Dematerialize EVERY item, capped or not — otherwise items pin
-        // themselves in native memory for the life of the result.
-        try { item.dematerialize(); } catch { /* ignore */ }
-      }
-      try {
-        callback({
-          rows,
-          totalRows,
-          insertions: diff.insertions,
-          updates: diff.updates,
-          deletions: diff.deletions,
-          moves: diff.moves,
+      const { rows, totalRowCount } = projectQueryRows(result.items, {
+        expectsEnvelope: false,
+        maxRows: OBSERVER_ROW_CAP,
+      });
+      callback({ rows, totalRows: totalRowCount, ...diff });
+    };
+    try {
+      const observer = this.observeResults(this.session.ditto, query, 'Observer callback threw', deliver);
+      return {
+        cancel: () => {
+          void closeSdkResource(observer, this.log);
+          void closeSdkResource(differ, this.log);
+        },
+      };
+    } catch (err) {
+      void closeSdkResource(differ, this.log);
+      throw err;
+    }
+  }
+
+  private observeResults(ditto: Ditto, query: string, failureMessage: string, deliver: (result: QueryResult) => void) {
+    return ditto.store.registerObserverWithSignalNext(query, (result, signalNext) => {
+      // Keep at most one delivered native result in flight per observer.
+      void withSdkResource(result, this.log, deliver)
+        .finally(signalNext)
+        .catch((err: unknown) => {
+          this.log.warn(failureMessage, {
+            query, err: err instanceof Error ? err.message : String(err),
+          });
         });
-      } catch (err) {
-        this.log.warn('Observer callback threw', {
-          query, err: err instanceof Error ? err.message : String(err),
-        });
-      }
     });
-    return { cancel: () => { try { observer.cancel(); } catch { /* ignore */ } } };
   }
 
   /** Run a one-shot DQL query against the active database. Used by QueryEditorPanel.
@@ -823,8 +860,9 @@ export class DittoManager {
 
     // Bounded projection + profile-envelope handling live in
     // query-projection so the row cap is unit-testable without an SDK.
-    const { rows, profile, totalRowCount, truncated } =
-      projectQueryRows(result.items, { expectsEnvelope });
+    const { rows, profile, totalRowCount, truncated } = await withSdkResource(
+      result, this.log, result => projectQueryRows(result.items, { expectsEnvelope }),
+    );
 
     // Capture the EXPLAIN plan as a non-fatal side-trip, gated on the
     // metrics setting. We pass the ORIGINAL (non-PROFILE-prefixed)
@@ -868,9 +906,10 @@ export class DittoManager {
     if (query.trimStart().toUpperCase().startsWith('EXPLAIN')) { return ''; }
     try {
       const result = await this.session.ditto.store.execute(`EXPLAIN ${query}`);
-      const first = result.items[0]?.value;
-      if (!first) { return ''; }
-      return JSON.stringify(first, null, 2);
+      return await withSdkResource(result, this.log, (result) => {
+        const first = result.items[0]?.value;
+        return first ? JSON.stringify(first, null, 2) : '';
+      });
     } catch (err) {
       this.log.warn('EXPLAIN failed; metrics tab will show plan unavailable', {
         err: err instanceof Error ? err.message : String(err),
@@ -1107,12 +1146,14 @@ export class DittoManager {
   private async refreshSyncMetrics(ditto: Ditto): Promise<void> {
     try {
       const result = await ditto.store.execute('SELECT * FROM system:data_sync_info');
-      const next = new Map<string, SyncStatusRow>();
-      for (const item of result.items) {
-        const row = parseSyncStatusRow(item.value);
-        if (row) { next.set(row._id, row); }
-      }
-      this.syncStatusByPeerKey = next;
+      this.syncStatusByPeerKey = await withSdkResource(result, this.log, (result) => {
+        const next = new Map<string, SyncStatusRow>();
+        for (const item of result.items) {
+          const row = parseSyncStatusRow(item.value);
+          if (row) { next.set(row._id, row); }
+        }
+        return next;
+      });
     } catch (err) {
       this.log.warn('system:data_sync_info query failed', {
         err: err instanceof Error ? err.message : String(err),
@@ -1126,8 +1167,9 @@ export class DittoManager {
       const result = await ditto.store.execute(
         'SELECT ditto_sdk_language, ditto_sdk_platform, ditto_sdk_version FROM __small_peer_info'
       );
-      const items = result.items ?? [];
-      const first: Record<string, unknown> = (items[0]?.value ?? {}) as Record<string, unknown>;
+      const first = await withSdkResource(result, this.log, (result): Record<string, unknown> => (
+        result.items[0]?.value ?? {}
+      ));
       this.localPeerInfo = {
         // peerKey is stamped by firePresence when the first presence
         // graph arrives — at construction time we don't have it yet.

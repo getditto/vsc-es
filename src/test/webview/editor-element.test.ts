@@ -31,7 +31,7 @@ async function mount(advancedConfig?: unknown, isActiveConnection = false): Prom
   const el = document.createElement('ditto-database-editor') as any;
   document.body.appendChild(el);
   window.dispatchEvent(new window.MessageEvent('message', {
-    data: { type: 'editor.init', config: config(advancedConfig), secrets: { token: 'token' }, isActiveConnection },
+    data: { type: 'editor.init', config: config(advancedConfig), secrets: { token: 'token' }, isNewConnection: false, isActiveConnection },
   }));
   await el.updateComplete;
   return el;

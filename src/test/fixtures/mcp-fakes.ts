@@ -118,7 +118,7 @@ export interface FakeManagerState {
   /** Scripted attachment fetch for fetch_attachment tests. */
   attachmentScript?: {
     fetch(token: { id: string; len: number | bigint; metadata: Record<string, string> }):
-      Promise<{ copyToPath(dest: string): Promise<void> } | null>;
+      Promise<{ copyToPath(dest: string): Promise<void>; close(): Promise<void> } | null>;
     fetchCalls: { id: string }[];
     savedTo: string[];
   };

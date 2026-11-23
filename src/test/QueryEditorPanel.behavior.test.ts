@@ -166,7 +166,7 @@ function makeDeps(opts: {
     newAttachment: async (filePath: string, metadata: Record<string, string>) => {
       attachments.push({ filePath, metadata });
       if (opts.newAttachmentImpl) { return opts.newAttachmentImpl(); }
-      return { id: 'att-new', len: Number(metadata.length ?? 0), metadata };
+      return { id: 'att-new', len: Number(metadata.length ?? 0), metadata, close: async () => {} };
     },
   };
 

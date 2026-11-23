@@ -234,12 +234,18 @@ unencrypted; loopback (the expected local-Big-Peer case) stays quiet.
 | Key | Where | Why |
 |---|---|---|
 | Database configs | `globalState['dittoConfigs.v1']` | Non-secret metadata |
-| Secrets (token, secret key, http API key) | `SecretStorage`, key `ditto.<configId>.<which>` | OS-native vault |
+| Secrets (token, shared secret, HTTP API key, local database encryption key) | `SecretStorage`, key `ditto.<configId>.<which>` | VS Code credential vault |
 | Subscriptions | `globalState['dittoSubscriptions.v1.<dbId>']` | Per-database list |
 | Ditto local persistence | `globalStorageUri/dittoData/<configId>/` | Per-config isolation; deleted with the config |
 
 Versioning is handled by the `.v1` suffix on the keys — bump it and add a
 migration function inside the relevant store if the shape ever changes.
+
+A new connection can opt into local database encryption under **Advanced
+Configuration**. The host accepts a Base64-encoded 32-byte key or generates
+one when the field is blank. It writes the key to SecretStorage. The optional
+`encryptLocalStore` flag in the connection record is fixed at registration.
+The SDK uses the stored key each time it opens the local database.
 
 Connection records may include an optional `advancedConfig`. Collection sync
 scopes live there as an ordered list of collection/scope pairs so the database

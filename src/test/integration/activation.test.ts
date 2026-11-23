@@ -1,5 +1,10 @@
 import * as assert from 'assert';
+import { randomBytes } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { Ditto, DittoConfig } from '@dittolive/ditto';
 import { panelHtml } from '../../panels/webview-utils.js';
 import { newConfig } from '../../models/DittoConfig.js';
 import type { EditorIn } from '../../ipc/messages.js';
@@ -10,6 +15,39 @@ suite('Activation', () => {
     assert.ok(ext, 'extension ditto.ditto-vsce should be installed');
     if (!ext.isActive) { await ext.activate(); }
     assert.strictEqual(ext.isActive, true);
+  });
+
+  test('the pinned native SDK opens and runs DQL in the extension host', async () => {
+    const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
+    assert.ok(ext);
+    const pinnedVersion = ext.packageJSON.dependencies['@dittolive/ditto'];
+    assert.strictEqual(Ditto.VERSION, pinnedVersion);
+    const dir = await mkdtemp(join(tmpdir(), 'ditto-extension-sdk-'));
+    try {
+      const ditto = await Ditto.open(new DittoConfig(
+        '00000000-0000-4000-8000-000000000000',
+        { mode: 'smallPeersOnly', privateKey: null },
+        dir,
+      ));
+      try {
+        const write = await ditto.store.execute(
+          'INSERT INTO sdk_smoke DOCUMENTS (:doc)',
+          { doc: { _id: 'one', value: 1 } },
+        );
+        await write.close();
+
+        const result = await ditto.store.execute('SELECT * FROM sdk_smoke');
+        try {
+          assert.deepStrictEqual(result.items.map(item => item.value), [{ _id: 'one', value: 1 }]);
+        } finally {
+          await result.close();
+        }
+      } finally {
+        await ditto.close();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
   });
 
   test('Ditto activity bar container is registered', () => {
@@ -44,6 +82,7 @@ suite('Activation', () => {
       vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [assets] });
     const config = { ...newConfig(), id: 'registration-smoke', name: 'Before edit',
       databaseId: '00000000-0000-4000-8000-000000000000', authUrl: 'https://example.test' };
+    const encryptionKey = randomBytes(32).toString('base64');
     const scaffold = panelHtml({ title: 'Registration smoke test',
       scriptUri: panel.webview.asWebviewUri(vscode.Uri.joinPath(assets, 'editor.js')),
       cspSource: panel.webview.cspSource });
@@ -65,11 +104,17 @@ suite('Activation', () => {
         const probe = setInterval(async () => {
           const editor = document.querySelector('ditto-database-editor');
           const name = editor?.shadowRoot?.querySelector('#connection-name');
-          if (!name) { return; }
+          const encryption = editor?.shadowRoot?.querySelector('details.advanced #cb-encrypt-local-store');
+          if (!name || !encryption) { return; }
           clearInterval(probe);
           name.value = 'Registration smoke test';
           name.dispatchEvent(new Event('input'));
+          encryption.closest('details').open = true;
+          encryption.click();
           await editor.updateComplete;
+          const key = editor.shadowRoot.querySelector('#local-encryption-key');
+          key.value = ${JSON.stringify(encryptionKey)};
+          key.dispatchEvent(new Event('input'));
           editor.shadowRoot.querySelector('.save').click();
         }, 25);
       </script></body>`);
@@ -79,12 +124,14 @@ suite('Activation', () => {
       sendTimer = setInterval(() => {
         panel.reveal();
         void panel.webview.postMessage({ type: 'editor.init', config,
-          secrets: { token: 'test-only-placeholder' }, isActiveConnection: false });
+          secrets: { token: 'test-only-placeholder' }, isNewConnection: true, isActiveConnection: false });
       }, 100);
       const message = await saved;
       assert.strictEqual(message.type, 'editor.save');
       if (message.type === 'editor.save') {
         assert.strictEqual(message.config.id, config.id);
+        assert.strictEqual(message.config.encryptLocalStore, true);
+        assert.strictEqual(message.encryptionKey, encryptionKey);
         assert.strictEqual(message.config.name, 'Registration smoke test');
         assert.strictEqual(message.secrets.token, 'test-only-placeholder');
       }

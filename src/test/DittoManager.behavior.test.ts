@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { Ditto, DittoConfig, Logger as DittoLogger } from '@dittolive/ditto';
 import { DittoManager } from '../ditto/DittoManager.js';
@@ -137,7 +138,7 @@ interface ManagerInternals {
     ditto: Ditto;
     presenceObserver?: { stop?: () => void } | undefined;
     logObservers?: { dispose(): void } | undefined;
-    subscriptionHandles: Map<string, { cancel: () => void }>;
+    subscriptionHandles: Map<string, { close: () => Promise<void> }>;
     presenceCoalesceTimer?: NodeJS.Timeout | undefined;
   } | null;
   syncState: 'active' | 'idle';
@@ -265,6 +266,87 @@ test('saveAttachmentToPath delegates to the attachment (and rethrows its failure
   await assert.rejects(() => mgr.saveAttachmentToPath(failing as never, '/x'), /disk full/);
 });
 
+test('saveAttachmentToPath adapts the SDK exclusive copy for an approved replacement', async t => {
+  const { mgr, dir, ditto } = await stageSession(t, makeConfig());
+  const attachment = await ditto.store.newAttachment(Buffer.from('downloaded'), {});
+  try {
+    const destPath = path.join(dir, 'download.bin');
+    await fs.promises.writeFile(destPath, 'original');
+    await assert.rejects(() => mgr.saveAttachmentToPath(attachment, destPath), { code: 'EEXIST' });
+    assert.equal(await fs.promises.readFile(destPath, 'utf8'), 'original');
+
+    const failedCopy = { copyToPath: () => Promise.reject(new Error('disk full')) };
+    await assert.rejects(() => mgr.saveAttachmentToPath(failedCopy as never, destPath, true), /disk full/);
+    assert.equal(await fs.promises.readFile(destPath, 'utf8'), 'original');
+
+    await mgr.saveAttachmentToPath(attachment, destPath, true);
+    assert.equal(await fs.promises.readFile(destPath, 'utf8'), 'downloaded');
+    assert.deepEqual((await fs.promises.readdir(dir)).filter(name => name.startsWith('.ditto-download-')), []);
+  } finally {
+    await attachment.close();
+  }
+});
+
+test('encrypted connections reopen with the saved key and can export decrypted attachments', async t => {
+  const dir = tmpdir();
+  const cfg = makeConfig({ encryptLocalStore: true });
+  const key = randomBytes(32);
+  const secrets = { token: '', encryptionKey: key.toString('base64') };
+  key.fill(0);
+  const mgr = new DittoManager(contextIn(dir), recordingLogger().logger);
+  t.after(async () => {
+    await mgr.disconnect();
+    removeTempDir(dir);
+  });
+
+  const open = Ditto.open.bind(Ditto);
+  // Keep the real store and key handling. Skip only network activation.
+  t.mock.method(Ditto, 'open', async (config: DittoConfig) => {
+    const ditto = await open(config);
+    ditto.sync.start = () => {};
+    return ditto;
+  });
+
+  await mgr.connect(cfg, secrets);
+  const contents = 'encrypted attachment contents';
+  const source = path.join(dir, 'source.bin');
+  const output = path.join(dir, 'output.bin');
+  await fs.promises.writeFile(source, contents);
+  const attachment = await mgr.newAttachment(source, {});
+  try {
+    await assert.rejects(() => attachment.copyToPath(output), { code: 'unsupported' });
+    await mgr.saveAttachmentToPath(attachment, output);
+    assert.equal(await fs.promises.readFile(output, 'utf8'), contents);
+    await fs.promises.writeFile(output, 'existing file');
+    await assert.rejects(() => mgr.saveAttachmentToPath(attachment, output), { code: 'EEXIST' });
+    assert.equal(await fs.promises.readFile(output, 'utf8'), 'existing file');
+    await mgr.saveAttachmentToPath(attachment, output, true);
+    assert.equal(await fs.promises.readFile(output, 'utf8'), contents);
+  } finally {
+    await attachment.close();
+  }
+
+  await mgr.executeRaw('INSERT INTO encrypted_docs DOCUMENTS (:doc)', { doc: { _id: 'one', count: 1 } });
+  await mgr.disconnect();
+  await assert.rejects(() => open(new DittoConfig(
+    cfg.databaseId, { mode: 'smallPeersOnly', privateKey: null }, path.join(dir, 'dittoData', cfg.id),
+  )), { code: 'encryption/key-required' });
+
+  await mgr.connect(cfg, secrets);
+  assert.deepEqual(await mgr.executeRaw('SELECT * FROM encrypted_docs'), [{ _id: 'one', count: 1 }]);
+});
+
+test('an encrypted connection with a missing or invalid key never opens the store', async t => {
+  const dir = tmpdir();
+  t.after(() => removeTempDir(dir));
+  const cfg = makeConfig({ encryptLocalStore: true });
+  const mgr = new DittoManager(contextIn(dir), recordingLogger().logger);
+  const open = t.mock.method(Ditto, 'open', async () => { throw new Error('unexpected open'); });
+  await assert.rejects(() => mgr.connect(cfg, NO_SECRETS), /encryption key is missing/);
+  await assert.rejects(() => mgr.connect(cfg, { token: '', encryptionKey: 'invalid' }), /encryption key.+invalid/);
+  assert.equal(open.mock.callCount(), 0);
+});
+
 // ─── getSystemSettingOptions against a real offline store ──────
 
 test('getSystemSettingOptions runs SHOW ALL against the active store', async t => {
@@ -307,8 +389,8 @@ test('registerSubscription dedupes by id; cancelSubscription cancels the handle 
   let registrations = 0;
   session.ditto.sync.registerSubscription = (query: string) => {
     registrations += 1;
-    const h = original(query) as { cancel(): void };
-    return { cancel: () => { cancellations.push(query); h.cancel(); } } as never;
+    const h = original(query);
+    return { close: () => { cancellations.push(query); return h.close(); } } as never;
   };
 
   mgr.registerSubscription('s1', 'SELECT * FROM a');
@@ -331,8 +413,8 @@ test('disconnect cancels live subscription handles and fires presence + sync + s
   const original = session.ditto.sync.registerSubscription.bind(session.ditto.sync);
   let cancels = 0;
   session.ditto.sync.registerSubscription = (query: string) => {
-    const h = original(query) as { cancel(): void };
-    return { cancel: () => { cancels += 1; h.cancel(); } } as never;
+    const h = original(query);
+    return { close: () => { cancels += 1; return h.close(); } } as never;
   };
   mgr.registerSubscription('s1', 'SELECT * FROM t');
 
@@ -601,9 +683,9 @@ test('applyTransportConfig refuses a concurrent apply', async t => {
       execute: (q: string) => {
         if (q.includes('__small_peer_info')) {
           enteredRecovery!(); // recovery reached its one awaited step
-          return new Promise(r => { parked = () => r({ items: [] }); });
+          return new Promise(r => { parked = () => r({ items: [], close: async () => {} }); });
         }
-        return Promise.resolve({ items: [] });
+        return Promise.resolve({ items: [], close: async () => {} });
       },
     },
   };
@@ -801,9 +883,20 @@ test('registerStoreObserver fires with the current rows, and callback throws are
   assert.equal(deliveries.length, settled, 'a cancelled observer stops firing');
 });
 
-test('registerObserver ships rows, diff indexes, and the totalRows cap contract', async t => {
-  const { mgr } = await stageSession(t, makeConfig());
+test('registerObserver releases each result before requesting the next one and preserves diffs', async t => {
+  const { mgr, ditto } = await stageSession(t, makeConfig());
   await mgr.executeRaw('INSERT INTO obs DOCUMENTS (:doc)', { doc: { _id: 'a', n: 1 } });
+
+  const lifecycle: string[] = [];
+  const register = ditto.store.registerObserverWithSignalNext.bind(ditto.store);
+  ditto.store.registerObserverWithSignalNext = (query, handler, args) => register(query, (result, next) => {
+    const close = result.close.bind(result);
+    result.close = async () => {
+      await close();
+      lifecycle.push('close');
+    };
+    handler(result, () => { lifecycle.push('next'); next(); });
+  }, args);
 
   const events: { rows: Record<string, unknown>[]; totalRows: number; insertions: number[] }[] = [];
   const handle = mgr.registerObserver('SELECT * FROM obs ORDER BY _id', e => events.push(e));
@@ -816,7 +909,8 @@ test('registerObserver ships rows, diff indexes, and the totalRows cap contract'
   assert.deepEqual(events[0]!.insertions, [0], 'first firing reports everything as inserted');
 
   await mgr.executeRaw('INSERT INTO obs DOCUMENTS (:doc)', { doc: { _id: 'b', n: 2 } });
-  await waitFor(() => events.length > 1);
+  await waitFor(() => lifecycle.length === 4);
+  assert.deepEqual(lifecycle, ['close', 'next', 'close', 'next']);
   assert.equal(events[1]!.totalRows, 2);
   assert.equal(events[1]!.rows.length, 2);
   assert.ok(events[1]!.insertions.length > 0, 'the Differ reported the new row');
@@ -842,13 +936,27 @@ test('registerObserver and registerStoreObserver return null without a session',
 
 // ─── executeRaw argument binding ───────────────────────────────
 
-test('executeRaw binds DQL arguments and dematerializes every item', async t => {
-  const { mgr } = await stageSession(t, makeConfig());
-  await mgr.executeRaw(
+test('executeRawDetailed binds arguments and closes the result after reading rows and mutation metadata', async t => {
+  const { mgr, ditto } = await stageSession(t, makeConfig());
+  const execute = ditto.store.execute.bind(ditto.store);
+  let closed = 0;
+  ditto.store.execute = async (query, args) => {
+    const result = await execute(query, args);
+    const close = result.close.bind(result);
+    result.close = async () => {
+      await close();
+      closed += 1;
+    };
+    return result;
+  };
+  const mutation = await mgr.executeRawDetailed(
     'INSERT INTO args DOCUMENTS (:a), (:b)',
     { a: { _id: 'x1', v: 1 }, b: { _id: 'x2', v: 2 } },
   );
+  assert.deepEqual([...mutation.mutatedDocumentIds].sort(), ['x1', 'x2']);
+  assert.ok(mutation.commitId);
   const rows = await mgr.executeRaw('SELECT * FROM args ORDER BY _id');
+  assert.equal(closed, 2);
   assert.deepEqual(rows, [{ _id: 'x1', v: 1 }, { _id: 'x2', v: 2 }]);
 });
 

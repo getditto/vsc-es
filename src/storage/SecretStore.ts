@@ -6,7 +6,8 @@ export interface SecretStorageLike {
   delete(key: string): Thenable<void> | Promise<void>;
 }
 
-const FIELDS = ['token', 'secretKey', 'httpApiKey'] as const;
+const OPTIONAL_FIELDS = ['secretKey', 'httpApiKey', 'encryptionKey'] as const;
+const FIELDS = ['token', ...OPTIONAL_FIELDS] as const;
 type Field = typeof FIELDS[number];
 
 function key(id: string, field: Field): string {
@@ -19,24 +20,22 @@ export class SecretStore {
   async read(id: string): Promise<SecretSet> {
     const out: SecretSet = { token: '' };
     out.token = (await this.secrets.get(key(id, 'token'))) ?? '';
-    const sk = await this.secrets.get(key(id, 'secretKey'));
-    const hk = await this.secrets.get(key(id, 'httpApiKey'));
-    if (sk !== undefined) { out.secretKey = sk; }
-    if (hk !== undefined) { out.httpApiKey = hk; }
+    for (const field of OPTIONAL_FIELDS) {
+      const value = await this.secrets.get(key(id, field));
+      if (value !== undefined) { out[field] = value; }
+    }
     return out;
   }
 
   async write(id: string, set: SecretSet): Promise<void> {
     await this.secrets.store(key(id, 'token'), set.token);
-    if (set.secretKey !== undefined && set.secretKey !== '') {
-      await this.secrets.store(key(id, 'secretKey'), set.secretKey);
-    } else {
-      await this.secrets.delete(key(id, 'secretKey'));
-    }
-    if (set.httpApiKey !== undefined && set.httpApiKey !== '') {
-      await this.secrets.store(key(id, 'httpApiKey'), set.httpApiKey);
-    } else {
-      await this.secrets.delete(key(id, 'httpApiKey'));
+    for (const field of OPTIONAL_FIELDS) {
+      const value = set[field];
+      if (value) {
+        await this.secrets.store(key(id, field), value);
+      } else {
+        await this.secrets.delete(key(id, field));
+      }
     }
   }
 

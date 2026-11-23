@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { DatabaseEditorPanel } from '../panels/DatabaseEditorPanel.js';
 import { ConfigStore } from '../storage/ConfigStore.js';
@@ -185,11 +186,13 @@ function fireSave(
   id: string,
   over: Record<string, unknown> = {},
   secretOver: Record<string, unknown> = {},
+  encryptionKey?: unknown,
 ): void {
   panel.fireMessage({
     type: 'editor.save',
     config: validConfig(id, over),
     secrets: { token: 'tok', ...secretOver },
+    encryptionKey,
   });
 }
 
@@ -197,6 +200,104 @@ function validationErrors(panel: FakePanel): Array<{ message: string; field: str
   return postedOfType<EditorOut & { type: 'editor.validationError' }>(panel, 'editor.validationError')
     .map(e => ({ message: e.message, field: e.field }));
 }
+
+test('registering an encrypted database stores a key that survives edits and stays off the webview', async () => {
+  teardown();
+  const world = makeWorld();
+  const create = showEditor(world);
+  await settle();
+  const init = postedOfType<EditorOut & { type: 'editor.init' }>(create, 'editor.init')[0]!;
+  assert.equal(init.isNewConnection, true);
+
+  fireSave(create, init.config.id, { encryptLocalStore: true });
+  await settle();
+  const saved = world.configs.get(init.config.id);
+  assert.ok(saved);
+  assert.equal(saved.encryptLocalStore, true);
+  assert.equal('encryptionKey' in saved, false);
+  const key = world.storage.map.get(`ditto.${saved.id}.encryptionKey`);
+  assert.ok(key);
+  assert.equal(Buffer.from(key, 'base64').length, 32);
+
+  const edit = showEditor(world, saved);
+  await settle();
+  const editInit = postedOfType<EditorOut & { type: 'editor.init' }>(edit, 'editor.init')[0]!;
+  assert.equal(editInit.isNewConnection, false);
+  assert.equal(editInit.config.encryptLocalStore, true);
+  assert.equal('encryptionKey' in editInit.secrets, false);
+  assert.equal('encryptionKey' in editInit, false);
+
+  fireSave(edit, saved.id, { encryptLocalStore: true }, {}, randomBytes(32).toString('base64'));
+  await settle();
+  assert.match(validationErrors(edit)[0]!.message, /only be supplied when registering/);
+  assert.equal((await world.secrets.read(saved.id)).encryptionKey, key);
+
+  fireSave(edit, saved.id, { encryptLocalStore: false });
+  await settle();
+  assert.match(validationErrors(edit)[1]!.message, /only be set when registering/);
+  assert.equal(edit.disposed, false);
+
+  fireSave(edit, saved.id, { name: 'Renamed encrypted DB' }, { token: 'updated-token' });
+  await settle();
+  assert.equal(world.configs.get(saved.id)?.name, 'Renamed encrypted DB');
+  assert.equal(world.configs.get(saved.id)?.encryptLocalStore, true);
+  const updated = await world.secrets.read(saved.id);
+  assert.equal(updated.encryptionKey, key);
+  assert.equal(updated.token, 'updated-token');
+});
+
+test('registration validates a supplied encryption key and persists it only in Secret Storage', async () => {
+  teardown();
+  const world = makeWorld();
+  const panel = showEditor(world);
+  await settle();
+  const { config: { id } } = postedOfType<EditorOut & { type: 'editor.init' }>(panel, 'editor.init')[0]!;
+  const key = randomBytes(32).toString('base64');
+
+  fireSave(panel, id, {}, {}, key);
+  await settle();
+  assert.match(validationErrors(panel)[0]!.message, /with encryption enabled/);
+
+  fireSave(panel, id, { encryptLocalStore: true }, {}, 42);
+  await settle();
+  assert.match(validationErrors(panel)[1]!.message, /must be Base64 text/);
+
+  const malformed = key.replace(/=$/, '?');
+  fireSave(panel, id, { encryptLocalStore: true }, {}, malformed);
+  await settle();
+  assert.deepEqual(validationErrors(panel)[2], {
+    message: 'Enter a Base64-encoded key that decodes to exactly 32 bytes.',
+    field: 'encryptionKey',
+  });
+  assert.equal(world.configs.get(id), undefined);
+  assert.equal(world.storage.map.size, 0);
+  assert.equal(panel.disposed, false);
+
+  fireSave(panel, id, { encryptLocalStore: true }, {}, ` ${key.slice(0, -1)} `);
+  await settle();
+  const saved = world.configs.get(id);
+  assert.equal(saved?.encryptLocalStore, true);
+  assert.equal((await world.secrets.read(id)).encryptionKey, key);
+  assert.ok(!JSON.stringify(saved).includes(key));
+  assert.ok(!JSON.stringify(panel.webview.posted).includes(key));
+  assert.ok(!JSON.stringify([world.warnings, world.errors]).includes(key));
+  assert.equal(panel.disposed, true);
+});
+
+test('editing a legacy database cannot enable encryption or supply a key', async () => {
+  teardown();
+  const world = makeWorld();
+  const panel = await showExistingEditor(world, validConfig('legacy'));
+  fireSave(panel, 'legacy', { encryptLocalStore: true });
+  await settle();
+  assert.match(validationErrors(panel)[0]!.message, /only be set when registering/);
+
+  fireSave(panel, 'legacy', {}, { encryptionKey: 'unexpected-field' });
+  await settle();
+  assert.match(validationErrors(panel)[1]!.message, /malformed/);
+  assert.equal(world.configs.get('legacy')?.encryptLocalStore, undefined);
+  assert.equal((await world.secrets.read('legacy')).encryptionKey, undefined);
+});
 
 // ─── show() gating ─────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import './setup.js';
 
 /** The api must exist before the element module runs — `messaging.ts` calls
@@ -42,7 +43,7 @@ function baseConfig(overrides: Record<string, unknown> = {}): Record<string, unk
 async function mount(
   t: { after(fn: () => void): void },
   configOverrides: Record<string, unknown> = {},
-  opts: { isActiveConnection?: boolean; secrets?: Record<string, unknown> } = {},
+  opts: { isNewConnection?: boolean; isActiveConnection?: boolean; secrets?: Record<string, unknown> } = {},
 ): Promise<El> {
   posted.length = 0;
   const el = document.createElement('ditto-database-editor') as El;
@@ -53,6 +54,7 @@ async function mount(
       type: 'editor.init',
       config: baseConfig(configOverrides),
       secrets: { token: 'token', ...opts.secrets },
+      isNewConnection: opts.isNewConnection ?? false,
       isActiveConnection: opts.isActiveConnection ?? false,
     },
   }));
@@ -90,6 +92,65 @@ function savePayload(): Record<string, unknown> {
   assert.ok(msg, 'an editor.save message was posted');
   return msg;
 }
+
+test('local encryption is off by default and can be enabled under Advanced with an automatic key', async t => {
+  const el = await mount(t, {}, { isNewConnection: true });
+  const advanced = q<HTMLDetailsElement>(el, 'details.advanced');
+  const checkbox = q<HTMLInputElement>(el, '#cb-encrypt-local-store');
+  assert.equal(advanced.open, false);
+  assert.equal(checkbox.closest('details'), advanced);
+  assert.equal(checkbox.checked, false);
+  assert.equal(el.shadowRoot!.querySelector('#local-encryption-key'), null);
+  toggle(checkbox, true);
+  await el.updateComplete;
+  assert.equal(q<HTMLInputElement>(el, '#local-encryption-key').type, 'password');
+  q<HTMLButtonElement>(el, '.save').click();
+  assert.equal((savePayload().config as Record<string, unknown>).encryptLocalStore, true);
+  assert.equal('encryptionKey' in savePayload(), false);
+});
+
+test('registration posts the key separately, reopens Advanced on error, and clears the draft when unchecked', async t => {
+  const el = await mount(t, {}, { isNewConnection: true });
+  const checkbox = q<HTMLInputElement>(el, '#cb-encrypt-local-store');
+  toggle(checkbox, true);
+  await el.updateComplete;
+  const key = randomBytes(32).toString('base64');
+  type(q<HTMLInputElement>(el, '#local-encryption-key'), key);
+  q<HTMLButtonElement>(el, '.save').click();
+  const save = savePayload();
+  assert.equal(save.encryptionKey, key);
+  assert.equal('encryptionKey' in (save.config as Record<string, unknown>), false);
+  assert.equal('encryptionKey' in (save.secrets as Record<string, unknown>), false);
+
+  send({ type: 'editor.validationError', field: 'encryptionKey', message: 'Enter a 32-byte key.' });
+  await el.updateComplete;
+  assert.equal(q<HTMLDetailsElement>(el, 'details.advanced').open, true);
+  assert.equal(q(el, '#local-encryption-key-error').textContent, 'Enter a 32-byte key.');
+  assert.equal(q<HTMLInputElement>(el, '#local-encryption-key').getAttribute('aria-invalid'), 'true');
+
+  toggle(checkbox, false);
+  await el.updateComplete;
+  assert.equal(el.shadowRoot!.querySelector('#local-encryption-key'), null);
+  toggle(checkbox, true);
+  await el.updateComplete;
+  assert.equal(q<HTMLInputElement>(el, '#local-encryption-key').value, '');
+  assert.equal(el.shadowRoot!.querySelector('#local-encryption-key-error'), null);
+});
+
+test('the encryption checkbox is absent for encrypted and unencrypted edits', async t => {
+  const el = await mount(t, { encryptLocalStore: true });
+  assert.equal(el.shadowRoot!.querySelector('#cb-encrypt-local-store'), null);
+  assert.equal(el.shadowRoot!.querySelector('#local-encryption-key'), null);
+  assert.match(q(el, 'details.advanced').textContent, /Local database encryption is enabled/);
+
+  send({
+    type: 'editor.init', config: baseConfig(), secrets: { token: 'token' },
+    isNewConnection: false, isActiveConnection: false,
+  });
+  await el.updateComplete;
+  assert.equal(el.shadowRoot!.querySelector('#cb-encrypt-local-store'), null);
+  assert.doesNotMatch(el.shadowRoot!.textContent, /Local database encryption is enabled/);
+});
 
 function settingError(el: El): string {
   return q(el, '.setting-error').textContent ?? '';

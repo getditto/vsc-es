@@ -38,10 +38,16 @@ interface FakeView {
   messageListeners: ((msg: unknown) => void)[];
 }
 
+interface FakeAttachment {
+  data(): Promise<Buffer>;
+  close(): Promise<void>;
+  metadata?: unknown;
+}
+
 function resolveProvider(manager: {
   fetchAttachmentCalls: number;
-  fetchAttachment(token: unknown, cb: (ev: unknown) => void): Promise<{ data(): Promise<Buffer>; metadata?: unknown }> | undefined;
-  saveAttachmentToPath?(att: unknown, destPath: string): Promise<void>;
+  fetchAttachment(token: unknown, cb: (ev: unknown) => void): Promise<FakeAttachment> | undefined;
+  saveAttachmentToPath?(att: unknown, destPath: string, overwrite: boolean): Promise<void>;
 }): { posted: FakeView['posted'] } & { fire(msg: unknown): void } {
   const view: FakeView = { posted: [], messageListeners: [] };
   // Real cache — it's plain in-memory and participates in the byte-count
@@ -89,7 +95,7 @@ test('inspector: an over-cap token is refused by DECLARED length, before any fet
     fetchAttachmentCalls: 0,
     fetchAttachment(_token: unknown, _cb: (ev: unknown) => void) {
       manager.fetchAttachmentCalls += 1;
-      return Promise.resolve({ data: async () => Buffer.from('') });
+      return Promise.resolve({ data: async () => Buffer.from(''), close: async () => {} });
     },
   };
   const p = resolveProvider(manager);
@@ -114,7 +120,7 @@ test('inspector: the over-cap gate does NOT block the Download/save flow', async
     fetchAttachmentCalls: 0,
     fetchAttachment(_token: unknown, _cb: (ev: unknown) => void) {
       manager.fetchAttachmentCalls += 1;
-      return Promise.resolve({ data: async () => Buffer.from('') });
+      return Promise.resolve({ data: async () => Buffer.from(''), close: async () => {} });
     },
   };
   const p = resolveProvider(manager);
@@ -136,7 +142,8 @@ test('inspector: Download saves through the native copy — data() never runs, n
   // asserting the save goes through manager.saveAttachmentToPath
   // (Attachment.copyToPath under the hood) with the dialog-picked path.
   let dataCalls = 0;
-  const saves: { dest: string }[] = [];
+  const saves: { dest: string; overwrite: boolean }[] = [];
+  let closed = false;
   const manager = {
     fetchAttachmentCalls: 0,
     fetchAttachment(_token: unknown, _cb: (ev: unknown) => void) {
@@ -144,10 +151,11 @@ test('inspector: Download saves through the native copy — data() never runs, n
       return Promise.resolve({
         data: async () => { dataCalls += 1; return Buffer.from('blob'); },
         metadata: { filename: 'photo.png' },
+        close: async () => { closed = true; },
       });
     },
-    async saveAttachmentToPath(_att: unknown, destPath: string) {
-      saves.push({ dest: destPath });
+    async saveAttachmentToPath(_att: unknown, destPath: string, overwrite: boolean) {
+      saves.push({ dest: destPath, overwrite });
     },
   };
   const p = resolveProvider(manager);
@@ -162,7 +170,8 @@ test('inspector: Download saves through the native copy — data() never runs, n
     await settle();
 
     assert.equal(dataCalls, 0, 'att.data() must never run on the save path');
-    assert.deepEqual(saves, [{ dest: '/tmp/out.png' }]);
+    assert.deepEqual(saves, [{ dest: '/tmp/out.png', overwrite: true }]);
+    assert.equal(closed, true);
     const savedMsgs = p.posted.filter(m => m.type === 'inspector.attachmentSaved');
     assert.equal(savedMsgs.length, 1, `saw ${JSON.stringify(p.posted.map(m => m.type))}`);
     assert.equal(savedMsgs[0]?.path, '/tmp/out.png');
@@ -182,6 +191,7 @@ test('inspector: Download with a cancelled save dialog is a silent no-op', async
       return Promise.resolve({
         data: async () => { dataCalls += 1; return Buffer.from('blob'); },
         metadata: {},
+        close: async () => {},
       });
     },
     async saveAttachmentToPath() {
@@ -217,7 +227,7 @@ test('inspector: a cache hit with a lying token is refused by ACTUAL byte count,
     fetchAttachmentCalls: 0,
     fetchAttachment(_token: unknown, _cb: (ev: unknown) => void) {
       manager.fetchAttachmentCalls += 1;
-      return Promise.resolve({ data: async () => bigBuffer });
+      return Promise.resolve({ data: async () => bigBuffer, close: async () => {} });
     },
   };
   const p = resolveProvider(manager);
@@ -313,7 +323,7 @@ function buildProvider(opts: {
   favoriteEntries?: Record<string, unknown[]>;
   hideLimitHint?: boolean;
   activeDbId?: string | null;
-  fetchResult?: { data(): Promise<Buffer>; metadata?: unknown } | null | undefined;
+  fetchResult?: FakeAttachment | null | undefined;
 } = {}): BuiltProvider {
   const view: FullView = { posted: [], messageListeners: [], disposeListeners: [], html: '' };
 
@@ -390,7 +400,7 @@ function buildProvider(opts: {
         manager.fetchAttachmentCalls += 1;
         manager.eventCb = cb;
         if (!('fetchResult' in opts)) {
-          return Promise.resolve({ data: async () => Buffer.from('blob'), metadata: {} });
+          return Promise.resolve({ data: async () => Buffer.from('blob'), close: async () => {}, metadata: {} });
         }
         return opts.fetchResult === null
           ? Promise.resolve(null)
@@ -790,6 +800,7 @@ test('a preview fetch accepts contentType/filename metadata and caches the bytes
   const p = buildProvider({
     fetchResult: {
       data: async () => Buffer.from('png-bytes'),
+      close: async () => {},
       metadata: { contentType: 'image/png', filename: 'photo.png' },
     },
   });
@@ -822,7 +833,7 @@ test('a preview fetch accepts contentType/filename metadata and caches the bytes
 test('a disconnect mid-fetch skips the cache write', async () => {
   stubAll.__resetStub();
   const p = buildProvider({
-    fetchResult: { data: async () => Buffer.from('blob'), metadata: {} },
+    fetchResult: { data: async () => Buffer.from('blob'), close: async () => {}, metadata: {} },
   });
 
   p.fire({
@@ -849,7 +860,7 @@ test('a disconnect mid-fetch skips the cache write', async () => {
 test('a save without a filename defaults the dialog to attachment.bin', async () => {
   stubAll.__resetStub();
   const p = buildProvider({
-    fetchResult: { data: async () => Buffer.from('blob'), metadata: {} },
+    fetchResult: { data: async () => Buffer.from('blob'), close: async () => {}, metadata: {} },
   });
 
   stubAll.window.saveDialogResult = vscode.Uri.file('/tmp/out.bin');

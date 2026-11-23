@@ -8,7 +8,7 @@ import {
 import { randomId } from '../util/id.js';
 import type { ConfigStore } from '../storage/ConfigStore.js';
 import type { SecretStore } from '../storage/SecretStore.js';
-import { newConfig, type StoredDittoConfig, type SecretSet } from '../models/DittoConfig.js';
+import { connectionCredentials, newConfig, type StoredDittoConfig, type ConnectionCredentials } from '../models/DittoConfig.js';
 import type { EditorIn, EditorOut } from '../ipc/messages.js';
 import type { Logger } from '../logging/types.js';
 import type { DittoManager } from '../ditto/DittoManager.js';
@@ -21,7 +21,7 @@ import {
   systemSettingsEqual,
   validateSystemSettings,
 } from '../ditto/system-settings.js';
-import { assertEditorSaveIsCurrent, saveConnectionAtomically } from './save-connection.js';
+import { assertEditorSaveIsCurrent, LocalStoreKeyInputError, saveConnectionAtomically } from './save-connection.js';
 import {
   isConnectionPersistenceBusy,
   withConnectionPersistenceLock,
@@ -130,9 +130,9 @@ export class DatabaseEditorPanel {
     const config = existing
       ? this.configs.get(existing.id) ?? existing
       : { ...newConfig(), id: randomId(16) };
-    let secrets: SecretSet;
+    let secrets: ConnectionCredentials;
     try {
-      secrets = existing ? await this.secrets.read(existing.id) : { token: '' };
+      secrets = existing ? connectionCredentials(await this.secrets.read(existing.id)) : { token: '' };
     } catch {
       if (!this.disposed && generation === this.initGeneration) {
         this.post({
@@ -148,7 +148,7 @@ export class DatabaseEditorPanel {
     this.baselineConfig = existing ? structuredClone(config) : undefined;
     const isActiveConnection = existing !== undefined
       && this.manager.getActiveConfigId() === config.id;
-    this.post({ type: 'editor.init', config, secrets, isActiveConnection });
+    this.post({ type: 'editor.init', config, secrets, isNewConnection: !this.editingExisting, isActiveConnection });
     if (isActiveConnection) {
       try {
         const options = await this.manager.getSystemSettingOptions(config.id);
@@ -203,6 +203,10 @@ export class DatabaseEditorPanel {
         return;
       }
       if (this.saving) { return; }
+      if (msg.encryptionKey !== undefined && typeof msg.encryptionKey !== 'string') {
+        this.post({ type: 'editor.validationError', message: 'The encryption key must be Base64 text.', field: 'encryptionKey' });
+        return;
+      }
       const err = validate(msg.config, msg.secrets, this.configs.list());
       if (err) {
         this.post({ type: 'editor.validationError', message: err.message, field: err.field });
@@ -245,7 +249,7 @@ export class DatabaseEditorPanel {
             baseline: this.baselineConfig,
             current: this.configs.get(normalizedConfig.id),
           });
-          await saveConnectionAtomically(this.configs, this.secrets, normalizedConfig, msg.secrets);
+          await saveConnectionAtomically(this.configs, this.secrets, normalizedConfig, msg.secrets, msg.encryptionKey);
         });
       } catch (saveErr) {
         this.saving = false;
@@ -254,6 +258,7 @@ export class DatabaseEditorPanel {
         this.post({
           type: 'editor.validationError',
           message: saveErr instanceof Error ? saveErr.message : String(saveErr),
+          field: saveErr instanceof LocalStoreKeyInputError ? 'encryptionKey' : undefined,
         });
         return;
       }
@@ -291,7 +296,7 @@ interface ValidationFailure {
 
 function validate(
   config: StoredDittoConfig,
-  secrets: SecretSet,
+  secrets: ConnectionCredentials,
   existingConfigs: StoredDittoConfig[],
 ): ValidationFailure | null {
   if (typeof config.name !== 'string'
@@ -303,6 +308,9 @@ function validate(
     || typeof config.allowUntrustedCerts !== 'boolean'
     || !['error', 'warning', 'info', 'debug', 'verbose'].includes(config.logLevel)
     || typeof config.isStrictModeEnabled !== 'boolean'
+    || (config.encryptLocalStore !== undefined && typeof config.encryptLocalStore !== 'boolean')
+    || 'encryptionKey' in config
+    || 'encryptionKey' in secrets
     || (config.isLanEnabled !== undefined && typeof config.isLanEnabled !== 'boolean')
     || (config.isBluetoothLeEnabled !== undefined && typeof config.isBluetoothLeEnabled !== 'boolean')
     || (config.isAwdlEnabled !== undefined && typeof config.isAwdlEnabled !== 'boolean')
@@ -332,7 +340,7 @@ function validate(
   if (httpApiUrlError) { return { message: `HTTP API URL: ${httpApiUrlError}` }; }
   const advanced = config.advancedConfig as unknown;
   if (advanced !== undefined && (
-    !advanced || typeof advanced !== 'object' || Array.isArray(advanced)
+    !advanced || typeof advanced !== 'object' || Array.isArray(advanced) || 'encryptionKey' in advanced
   )) {
     return { message: 'Advanced configuration is invalid.', field: 'advancedConfig' };
   }

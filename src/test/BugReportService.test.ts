@@ -62,7 +62,9 @@ function mockManager(opts: { connected?: boolean; bundleFails?: boolean } = {}) 
         file: { id: 'att-1', len: tarBytes.length, metadata: {} },
       }];
     },
+    saveAttachmentToPath: (attachment: { copyToPath(path: string): Promise<void> }, dest: string) => attachment.copyToPath(dest),
     fetchAttachment: () => Promise.resolve({
+      close: async () => {},
       copyToPath: async (destPath: string) => { await fs.writeFile(destPath, tarBytes); },
     }),
   } as unknown as DittoManager;
