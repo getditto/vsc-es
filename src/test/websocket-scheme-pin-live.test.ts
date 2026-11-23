@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { removeSdkTempDir } from './fixtures/remove-sdk-temp-dir.js';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -42,18 +43,6 @@ function tmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ditto-ws-pin-test-'));
 }
 
-function removeTempDir(dir: string): void {
-  try {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  } catch (error: unknown) {
-    if (process.platform === 'win32' && typeof error === 'object' && error !== null
-      && 'code' in error && 'code' in error && error.code === 'EBUSY') {
-      return;
-    }
-    throw error;
-  }
-}
-
 /**
  * The scheme mapping the pin applies, expressed as a pure function so
  * it can be asserted directly. Mirrors the inline transform in
@@ -71,7 +60,7 @@ test('ws pin: the SDK upgrades a server-mode URL to wss:// unconditionally', asy
   // ever stops upgrading to wss://, this pin becomes unnecessary and the
   // test must fail rather than silently passing for a new reason.
   const dir = tmpdir();
-  t.after(() => removeTempDir(dir));
+  t.after(() => removeSdkTempDir(dir));
 
   const cfg = new DittoConfig({
     databaseID: '44444444-4444-4444-4444-444444444444',
@@ -123,7 +112,7 @@ test('ws pin: the pinned value survives the SDK transport-config round-trip', as
   // renaming or re-deriving the field) fails here rather than at runtime
   // against a Big Peer.
   const dir = tmpdir();
-  t.after(() => removeTempDir(dir));
+  t.after(() => removeSdkTempDir(dir));
 
   const cfg = new DittoConfig({
     databaseID: '55555555-5555-5555-5555-555555555555',
@@ -160,7 +149,7 @@ test('ws pin: the pin survives a later transport-config apply', async t => {
   // rebuilt the config from scratch (or the SDK reset the default), the
   // wss:// default would silently return and the Big Peer would break again.
   const dir = tmpdir();
-  t.after(() => removeTempDir(dir));
+  t.after(() => removeSdkTempDir(dir));
 
   const cfg = new DittoConfig({
     databaseID: '66666666-6666-6666-6666-666666666666',

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { removeSdkTempDir } from './fixtures/remove-sdk-temp-dir.js';
 import assert from 'node:assert/strict';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -31,21 +32,6 @@ import type { Logger } from '../logging/types.js';
 // assertion below anyway, and the thrown DittoError carries the reason.
 DittoLogger.enabled = false;
 
-function removeTempDir(dir: string): void {
-  // Ditto's native attachment handles can outlive close() on Windows, even
-  // beyond rimraf's retry window. The OS temp directory owns test-only
-  // residue; do not conceal cleanup errors on other platforms.
-  try {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  } catch (error: unknown) {
-    if (process.platform === 'win32' && typeof error === 'object' && error !== null
-      && 'code' in error && error.code === 'EBUSY') {
-      return;
-    }
-    throw error;
-  }
-}
-
 const noopLogger = (): Logger => {
   const self = {
     error: () => {}, warn: () => {}, info: () => {}, debug: () => {}, trace: () => {},
@@ -72,7 +58,8 @@ async function withStore<T>(
     const r = args === undefined
       ? await ditto.store.execute(q)
       : await ditto.store.execute(q, args as never);
-    return r.items.map(i => i.value as Record<string, unknown>);
+    try { return r.items.map(i => i.value as Record<string, unknown>); }
+    finally { await r.close(); }
   };
   // CollectionsRepository only reaches the store through executeRaw, so a
   // manager that forwards to the real store exercises the real query text.
@@ -84,7 +71,7 @@ async function withStore<T>(
     return await body({ ditto, exec, repo });
   } finally {
     try { await ditto.close(); } catch { /* closing a test store is best-effort */ }
-    removeTempDir(dir);
+    removeSdkTempDir(dir);
   }
 }
 

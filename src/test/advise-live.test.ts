@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { removeSdkTempDir } from './fixtures/remove-sdk-temp-dir.js';
 import assert from 'node:assert/strict';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -57,7 +58,8 @@ async function withStore<T>(
     const r = args === undefined
       ? await ditto.store.execute(q)
       : await ditto.store.execute(q, args as never);
-    return r.items.map(i => i.value as Record<string, unknown>);
+    try { return r.items.map(i => i.value as Record<string, unknown>); }
+    finally { await r.close(); }
   };
   const repo = new CollectionsRepository(
     { executeRaw: exec } as unknown as DittoManager,
@@ -67,7 +69,7 @@ async function withStore<T>(
     return await body({ ditto, exec, repo });
   } finally {
     try { await ditto.close(); } catch { /* closing a test store is best-effort */ }
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeSdkTempDir(dir);
   }
 }
 
