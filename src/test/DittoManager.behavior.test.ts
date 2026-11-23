@@ -166,8 +166,7 @@ async function stageSession(
   internals(mgr).session = { configId: config.id, ditto, subscriptionHandles: new Map() };
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* already down */ }
-    try { await ditto.close(); } catch { /* disconnect owns it */ }
-    await removeSdkTempDir(dir);
+    removeSdkTempDir(dir);
   });
   if (opts.attachPresence) { internals(mgr).attachPresenceObserver(ditto); }
   return { mgr, dir, ditto, log };
@@ -281,7 +280,7 @@ test('encrypted connections reopen with the saved key and can export decrypted a
   const mgr = new DittoManager(contextIn(dir), recordingLogger().logger);
   t.after(async () => {
     await mgr.disconnect();
-    await removeSdkTempDir(dir);
+    removeSdkTempDir(dir);
   });
 
   const open = Ditto.open.bind(Ditto);
@@ -476,12 +475,14 @@ test('toggleSync stays active when sync.stop() throws', async t => {
   internals(mgr).syncState = 'active';
   const realStop = ditto.sync.stop.bind(ditto.sync);
   ditto.sync.stop = () => { throw new Error('teardown in flight'); };
-  t.after(() => { ditto.sync.stop = realStop; });
-
-  const state = await mgr.toggleSync();
-  assert.equal(state, 'active', 'a failed stop must not lie to the UI');
-  assert.equal(mgr.getSyncState(), 'active');
-  assert.ok(log.warns.some(w => w.includes('sync.stop() failed')));
+  try {
+    const state = await mgr.toggleSync();
+    assert.equal(state, 'active', 'a failed stop must not lie to the UI');
+    assert.equal(mgr.getSyncState(), 'active');
+    assert.ok(log.warns.some(w => w.includes('sync.stop() failed')));
+  } finally {
+    ditto.sync.stop = realStop;
+  }
 });
 
 // ─── applyTransportConfig against a live (offline) session ─────
@@ -646,7 +647,7 @@ test('applyTransportConfig refuses a concurrent apply', async t => {
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    await removeSdkTempDir(dir);
+    removeSdkTempDir(dir);
   });
 
   let parked: (() => void) | undefined;
@@ -984,7 +985,7 @@ test('a failed connect still applies the config transport prefs before sync.star
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    await removeSdkTempDir(dir);
+    removeSdkTempDir(dir);
   });
 
   const cfg = makeConfig({ isLanEnabled: false });
@@ -1001,7 +1002,7 @@ test('an invalid startup system setting fails the connect with the parameter nam
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    await removeSdkTempDir(dir);
+    removeSdkTempDir(dir);
   });
 
   const cfg = makeConfig({
@@ -1025,7 +1026,7 @@ test('a failed connect clears the redaction set it never registered', async t =>
   const mgr = new DittoManager(contextIn(dir), log.logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* down */ }
-    await removeSdkTempDir(dir);
+    removeSdkTempDir(dir);
   });
 
   // A secretKey that is not valid base64 makes Ditto.open reject before the

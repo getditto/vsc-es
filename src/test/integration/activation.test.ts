@@ -47,7 +47,7 @@ suite('Activation', () => {
         await ditto.close();
       }
     } finally {
-      await removeSdkTempDir(dir);
+      removeSdkTempDir(dir);
     }
   });
 

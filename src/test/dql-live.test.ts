@@ -71,7 +71,7 @@ async function withStore<T>(
     return await body({ ditto, exec, repo });
   } finally {
     try { await ditto.close(); } catch { /* closing a test store is best-effort */ }
-    await removeSdkTempDir(dir);
+    removeSdkTempDir(dir);
   }
 }
 

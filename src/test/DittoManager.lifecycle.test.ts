@@ -99,7 +99,7 @@ function withManager(t: { after(fn: () => void | Promise<void>): void }): {
   const mgr = new DittoManager(contextIn(dir), logger);
   t.after(async () => {
     try { await mgr.disconnect(); } catch { /* already down */ }
-    await removeSdkTempDir(dir);
+    removeSdkTempDir(dir);
   });
   return { mgr, dir, errors, warns };
 }
