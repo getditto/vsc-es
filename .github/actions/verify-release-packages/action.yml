@@ -1,0 +1,76 @@
+name: Verify GitHub Release packages
+description: Download the four Ditto Edge Studio VSIX files and verify their digests and manifests.
+inputs:
+  tag:
+    description: Published GitHub Release tag
+    required: true
+outputs:
+  directory:
+    description: Directory containing the verified VSIX files
+    value: ${{ steps.verify.outputs.directory }}
+runs:
+  using: composite
+  steps:
+    - id: verify
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ inputs.tag }}
+      run: |
+        if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+          echo 'Enter a stable release tag in the form vMAJOR.MINOR.PATCH.' >&2
+          exit 1
+        fi
+        packages="$RUNNER_TEMP/verified-release-packages"
+        metadata="$RUNNER_TEMP/verified-release.json"
+        gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+          --json tagName,isDraft,isPrerelease,assets > "$metadata"
+        gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+          --pattern 'ditto-vsce-*.vsix' --dir "$packages"
+
+        python3 - "$metadata" "$packages" "$RELEASE_TAG" <<'PY'
+        import hashlib
+        import json
+        import sys
+        import xml.etree.ElementTree as ET
+        from pathlib import Path
+        from zipfile import ZipFile
+
+        metadata_path, packages_dir, tag = sys.argv[1:]
+        release = json.loads(Path(metadata_path).read_text())
+        if release['tagName'] != tag or release['isDraft'] or release['isPrerelease']:
+            sys.exit(f'{tag} must be a published stable GitHub Release.')
+
+        version = tag[1:]
+        targets = ('darwin-arm64', 'linux-arm64', 'linux-x64', 'win32-x64')
+        expected = {f'ditto-vsce-{target}-{version}.vsix': target for target in targets}
+        packages = {path.name: path for path in Path(packages_dir).glob('*.vsix')}
+        if packages.keys() != expected.keys():
+            sys.exit(f'Expected these packages: {", ".join(expected)}. Found: {", ".join(sorted(packages))}.')
+
+        assets = {asset['name']: asset for asset in release['assets']}
+        for name, target in expected.items():
+            path = packages[name]
+            with path.open('rb') as stream:
+                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            asset = assets.get(name, {})
+            if asset.get('state') != 'uploaded' or asset.get('digest') != f'sha256:{digest}':
+                sys.exit(f'{name} failed GitHub Release digest verification.')
+
+            with ZipFile(path) as package:
+                manifest = json.loads(package.read('extension/package.json'))
+                if (manifest.get('publisher'), manifest.get('name'), manifest.get('version')) != ('DittoLive', 'ditto-vsce', version):
+                    sys.exit(f'{name} has an unexpected publisher, extension name, or version.')
+                identity = ET.fromstring(package.read('extension.vsixmanifest')).find('.//{*}Identity')
+                expected_identity = {
+                    'Publisher': 'DittoLive', 'Id': 'ditto-vsce', 'Version': version, 'TargetPlatform': target,
+                }
+                if identity is None or any(identity.get(key) != value for key, value in expected_identity.items()):
+                    sys.exit(f'{name} has an unexpected VSIX identity or target platform.')
+                native_dir = 'extension/node_modules/@dittolive/ditto/node/'
+                binaries = [entry for entry in package.namelist() if entry.startswith(native_dir) and entry.endswith('.node')]
+                if binaries != [f'{native_dir}ditto.{target}.node']:
+                    sys.exit(f'{name} does not contain exactly one Ditto SDK binary for {target}.')
+            print(f'Verified {name}')
+        PY
+        printf 'directory=%s\n' "$packages" >> "$GITHUB_OUTPUT"

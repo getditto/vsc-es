@@ -1,0 +1,65 @@
+name: Publish to Visual Studio Marketplace
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published GitHub Release tag (for example, v0.96.1)'
+        required: true
+        type: string
+      publish:
+        description: 'Upload the verified packages to Visual Studio Marketplace'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visual-studio-marketplace-publish
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main' && !inputs.publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/verify-release-packages
+        with:
+          tag: ${{ inputs.tag }}
+
+  publish:
+    if: github.ref == 'refs/heads/main' && inputs.publish
+    runs-on: ubuntu-24.04
+    environment: visual-studio-marketplace
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: release
+        uses: ./.github/actions/verify-release-packages
+        with:
+          tag: ${{ inputs.tag }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Install the locked Marketplace CLI
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Publish verified VSIX files with Trusted Publishing
+        shell: bash
+        env:
+          PACKAGES: ${{ steps.release.outputs.directory }}
+        run: |
+          ./node_modules/.bin/vsce publish --oidc --skip-duplicate --packagePath "$PACKAGES/"*.vsix
