@@ -22,6 +22,8 @@ SwiftUI Ditto Edge Studio. From the user's perspective: register a database,
 connect, subscribe, see peers, run queries.
 
 The extension is published as a `.vsix` (built via `npm run package`).
+See [Visual Studio Marketplace](releases/VISUAL_STUDIO_MARKETPLACE.md) and
+[Open VSX](releases/OPEN_VSX.md) for the publishing workflows.
 
 ### Reference apps
 
@@ -709,7 +711,6 @@ at the defaults.
   Adding `registerObserver` would be ~10 host lines + a Lit toggle.
 - **Identity webhook config from the IDE** — not implemented; SwiftUI app
   doesn't have it either.
-- **Marketplace publication pipeline** — manual `vsce package` only.
 - **No marketplace icon.** `package.json` has no top-level `icon`, so `vsce`
   warns and the listing renders without one. It needs a 128×128 PNG;
   `resources/ditto-icon.svg` is `fill="currentColor"` and themed by the
