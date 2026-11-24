@@ -12,9 +12,16 @@ on:
         type: boolean
         default: false
       create_namespace:
-        description: 'Create the ditto namespace if it is missing'
+        description: 'Create the selected namespace if it is missing'
         type: boolean
         default: false
+      namespace:
+        description: 'Namespace to check'
+        type: choice
+        options:
+          - ditto
+          - DittoLive
+        default: ditto
 
 permissions:
   contents: read
@@ -136,10 +143,12 @@ jobs:
         env:
           OVSX_PAT: ${{ secrets.VSX_TOKEN }}
           CREATE_NAMESPACE: ${{ inputs.create_namespace }}
+          OVSX_NAMESPACE: ${{ inputs.namespace }}
         run: |
           node --input-type=module <<'JS'
           const registry = 'https://open-vsx.org';
           const token = process.env.OVSX_PAT;
+          const namespace = process.env.OVSX_NAMESPACE;
 
           function fail(message) {
             console.error(message);
@@ -148,6 +157,9 @@ jobs:
 
           if (!token) {
             fail('The VSX_TOKEN secret is unavailable to this workflow.');
+          }
+          if (namespace !== 'ditto' && namespace !== 'DittoLive') {
+            fail('Select ditto or DittoLive as the Open VSX namespace.');
           }
 
           function request(path, options = {}) {
@@ -160,43 +172,44 @@ jobs:
           }
 
           async function verifyAccess() {
-            const response = await request('/api/ditto/verify-pat');
+            const response = await request(`/api/${namespace}/verify-pat`);
             if (response.status === 200) return true;
             if (response.status === 404) {
               const result = await response.json().catch(() => null);
-              if (result?.error === 'Namespace not found: ditto') return false;
+              if (result?.error === `Namespace not found: ${namespace}`) return false;
             }
-            fail(`Open VSX could not verify publishing access to ditto (HTTP ${response.status}).`);
+            fail(`Open VSX could not verify publishing access to ${namespace} (HTTP ${response.status}).`);
           }
 
           if (await verifyAccess()) {
-            console.log('The ditto namespace already exists and the token can publish there.');
+            console.log(`The ${namespace} namespace already exists and the token can publish there.`);
           } else if (process.env.CREATE_NAMESPACE !== 'true') {
-            console.log('Open VSX accepted the token. The ditto namespace does not exist.');
+            console.log(`Open VSX accepted the token. The ${namespace} namespace does not exist.`);
           } else {
-            console.log('The ditto namespace is missing. Requesting its creation.');
+            console.log(`The ${namespace} namespace is missing. Requesting its creation.`);
             const response = await request('/api/-/namespace/create', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: 'ditto' }),
+              body: JSON.stringify({ name: namespace }),
             });
 
             if (response.status === 201) {
-              console.log('Open VSX created the ditto namespace.');
+              console.log(`Open VSX created the ${namespace} namespace.`);
             } else {
               const result = await response.json().catch(() => null);
-              if (result?.error === 'Namespace already exists: ditto') {
-                console.log('The ditto namespace was created after the initial check.');
-              } else if (response.status === 401 || result?.error === 'Invalid access token.') {
+              const error = typeof result?.error === 'string' ? result.error : '';
+              if (error.toLowerCase() === `Namespace already exists: ${namespace}`.toLowerCase()) {
+                console.log(`The ${namespace} namespace was created after the initial check.`);
+              } else if (response.status === 401 || error === 'Invalid access token.') {
                 fail(`Open VSX rejected the token for namespace creation (HTTP ${response.status}).`);
-              } else if (typeof result?.error === 'string' && /publisher agreement/i.test(result.error)) {
+              } else if (/publisher agreement/i.test(error)) {
                 fail(`Open VSX requires the token owner to sign the Publisher Agreement (HTTP ${response.status}).`);
               } else {
-                fail(`Open VSX refused to create the ditto namespace (HTTP ${response.status}).`);
+                fail(`Open VSX refused to create the ${namespace} namespace (HTTP ${response.status}).`);
               }
             }
 
-            if (!(await verifyAccess())) fail('Open VSX still reports that the ditto namespace is missing.');
-            console.log('Open VSX confirmed that the token can publish to ditto.');
+            if (!(await verifyAccess())) fail(`Open VSX still reports that the ${namespace} namespace is missing.`);
+            console.log(`Open VSX confirmed that the token can publish to ${namespace}.`);
           }
           JS
