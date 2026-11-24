@@ -22,7 +22,7 @@ const ITEMS: HelpNode[] = [
   { kind: 'action', label: 'Welcome to Ditto',      icon: 'rocket',         command: 'dittoVsce.openWelcome' },
   { kind: 'action', label: 'Get Quickstarts',       icon: 'cloud-download', command: 'dittoVsce.getQuickstarts' },
   { kind: 'link', label: "What's New",              icon: 'star',      url: 'https://docs.ditto.live/release-notes' },
-  { kind: 'link', label: 'Ditto Documentation',     icon: 'book',      url: 'https://docs.ditto.live' },
+  { kind: 'link', label: 'Ditto Documentation',     icon: 'book',      url: 'https://docs.ditto.live/sdk/latest/tools/vsc-es' },
   { kind: 'link', label: 'Ditto Portal',            icon: 'cloud',     url: 'https://portal.ditto.live' },
   { kind: 'link', label: 'Quickstart Repos',        icon: 'package',   url: 'https://github.com/getditto/quickstart' },
   // GitHub issue-form templates so the user lands directly in the
@@ -30,8 +30,8 @@ const ITEMS: HelpNode[] = [
   // the filenames in .github/ISSUE_TEMPLATE/ on the repo. If a
   // template is renamed or removed, the link still works — GitHub
   // falls back to the issue chooser page.
-  { kind: 'link', label: 'Suggest a Feature',       icon: 'lightbulb', url: 'https://github.com/getditto/vsc-esc/issues/new?template=feature_request.yml' },
-  { kind: 'link', label: 'Report a Bug',            icon: 'bug',       url: 'https://github.com/getditto/vsc-esc/issues/new?template=bug_report.yml' },
+  { kind: 'link', label: 'Suggest a Feature',       icon: 'lightbulb', url: 'https://github.com/getditto/vsc-es/issues/new?template=feature_request.yml' },
+  { kind: 'link', label: 'Report a Bug',            icon: 'bug',       url: 'https://github.com/getditto/vsc-es/issues/new?template=bug_report.yml' },
   // In-extension action — re-enables every dismissable tip the user
   // has hidden. Sits with the help links because that's where users
   // look when they want to "make this thing show up again."

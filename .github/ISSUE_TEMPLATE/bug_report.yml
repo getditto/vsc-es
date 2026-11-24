@@ -11,7 +11,7 @@ body:
 
         **Before you submit**, please check that the bug isn't already
         reported in the
-        [open issues](https://github.com/getditto/vsc-esc/issues).
+        [open issues](https://github.com/getditto/vsc-es/issues).
 
   - type: textarea
     id: what-happened

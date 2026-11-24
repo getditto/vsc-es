@@ -171,6 +171,7 @@ test('Welcome: links out to the docs and the quickstart repo', async t => {
     'https://docs.ditto.live/home/about-ditto',
     'https://github.com/getditto/quickstart',
     'https://docs.ditto.live/dql/dql',
+    'https://docs.ditto.live/sdk/latest/tools/vsc-es',
   ]) {
     assert.ok(hrefs.has(url), `missing link ${url}`);
   }
