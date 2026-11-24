@@ -115,3 +115,63 @@ jobs:
           for package in "$RUNNER_TEMP/open-vsx-packages/"*.vsix; do
             "$ovsx" publish --skip-duplicate "$package"
           done
+
+  check-token:
+    if: github.ref == 'refs/heads/ci/open-vsx-token-check' && !inputs.publish
+    permissions: {}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Check Open VSX authentication and namespace access
+        shell: bash
+        env:
+          OVSX_PAT: ${{ secrets.VSX_TOKEN }}
+        run: |
+          node --input-type=module <<'JS'
+          const token = process.env.OVSX_PAT;
+          if (!token) {
+            console.error('The VSX_TOKEN secret is unavailable to this workflow.');
+            process.exit(1);
+          }
+
+          const response = await fetch('https://open-vsx.org/api/ditto/verify-pat', {
+            headers: { Authorization: `Bearer ${token}` },
+            redirect: 'error',
+            signal: AbortSignal.timeout(15_000),
+          }).catch(() => {
+            console.error('The request to Open VSX failed.');
+            process.exit(1);
+          });
+
+          switch (response.status) {
+            case 200:
+              console.log('Open VSX reports that the token can publish to ditto.');
+              break;
+            case 401:
+              console.error('Open VSX rejected the token (HTTP 401).');
+              process.exitCode = 1;
+              break;
+            case 403:
+              console.error('Open VSX denied publishing access to ditto (HTTP 403).');
+              process.exitCode = 1;
+              break;
+            case 404: {
+              const result = await response.json().catch(() => null);
+              if (result?.error === 'Namespace not found: ditto') {
+                console.log('Open VSX accepted the token. The ditto namespace does not exist.');
+                break;
+              }
+              console.error('Open VSX returned an unexpected HTTP 404.');
+              process.exitCode = 1;
+              break;
+            }
+            default:
+              console.error(`Open VSX returned unexpected HTTP status ${response.status}.`);
+              process.exitCode = 1;
+          }
+          JS
