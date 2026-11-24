@@ -12,14 +12,14 @@ import type { EditorIn } from '../../ipc/messages.js';
 
 suite('Activation', () => {
   test('extension is present and active', async () => {
-    const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
-    assert.ok(ext, 'extension ditto.ditto-vsce should be installed');
+    const ext = vscode.extensions.getExtension('DittoLive.ditto-vsce');
+    assert.ok(ext, 'extension DittoLive.ditto-vsce should be installed');
     if (!ext.isActive) { await ext.activate(); }
     assert.strictEqual(ext.isActive, true);
   });
 
   test('the pinned native SDK opens and runs DQL in the extension host', async () => {
-    const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
+    const ext = vscode.extensions.getExtension('DittoLive.ditto-vsce');
     assert.ok(ext);
     const pinnedVersion = ext.packageJSON.dependencies['@dittolive/ditto'];
     assert.strictEqual(Ditto.VERSION, pinnedVersion);
@@ -52,7 +52,7 @@ suite('Activation', () => {
   });
 
   test('Ditto activity bar container is registered', () => {
-    const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
+    const ext = vscode.extensions.getExtension('DittoLive.ditto-vsce');
     assert.ok(ext);
     const containers = ext.packageJSON?.contributes?.viewsContainers?.activitybar as { id: string }[] | undefined;
     assert.ok(Array.isArray(containers), 'activitybar viewsContainers must be an array');
@@ -76,7 +76,7 @@ suite('Activation', () => {
 
   test('bundled database editor receives real host messages and submits the form', async function () {
     this.timeout(20_000);
-    const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
+    const ext = vscode.extensions.getExtension('DittoLive.ditto-vsce');
     assert.ok(ext);
     const assets = vscode.Uri.joinPath(ext.extensionUri, 'dist', 'webview-ui');
     const panel = vscode.window.createWebviewPanel('dittoRegistrationTest', 'Registration smoke test',

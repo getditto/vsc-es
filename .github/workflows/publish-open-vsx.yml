@@ -72,11 +72,11 @@ jobs:
 
               with ZipFile(path) as package:
                   manifest = json.loads(package.read('extension/package.json'))
-                  if (manifest.get('publisher'), manifest.get('name'), manifest.get('version')) != ('ditto', 'ditto-vsce', version):
+                  if (manifest.get('publisher'), manifest.get('name'), manifest.get('version')) != ('DittoLive', 'ditto-vsce', version):
                       sys.exit(f'{name} has an unexpected publisher, extension name, or version.')
                   identity = ET.fromstring(package.read('extension.vsixmanifest')).find('.//{*}Identity')
                   expected_identity = {
-                      'Publisher': 'ditto', 'Id': 'ditto-vsce', 'Version': version, 'TargetPlatform': target,
+                      'Publisher': 'DittoLive', 'Id': 'ditto-vsce', 'Version': version, 'TargetPlatform': target,
                   }
                   if identity is None or any(identity.get(key) != value for key, value in expected_identity.items()):
                       sys.exit(f'{name} has an unexpected VSIX identity or target platform.')
@@ -111,7 +111,7 @@ jobs:
             exit 1
           fi
           ovsx="$RUNNER_TEMP/open-vsx-cli/node_modules/.bin/ovsx"
-          "$ovsx" verify-pat ditto
+          "$ovsx" verify-pat DittoLive
           for package in "$RUNNER_TEMP/open-vsx-packages/"*.vsix; do
             "$ovsx" publish --skip-duplicate "$package"
           done
