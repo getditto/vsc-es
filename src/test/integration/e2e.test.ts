@@ -9,7 +9,7 @@ suite('E2E sync', function () {
 
   suiteSetup(async function () {
     if (process.env.DITTO_CI_MODE !== '1') { this.skip(); }
-    const ext = vscode.extensions.getExtension<TestApi | undefined>('ditto.ditto-vsce');
+    const ext = vscode.extensions.getExtension<TestApi | undefined>('DittoLive.ditto-vsce');
     assert.ok(ext);
     api = await ext.activate();
     assert.ok(api, 'extension did not return TestApi when DITTO_CI_MODE=1');

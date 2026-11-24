@@ -20,7 +20,7 @@ Inspect, query, and troubleshoot Ditto databases from your editor.
 
 ## Installation
 
-1. In an editor that uses Open VSX, search for **Ditto Edge Studio** (`ditto.ditto-vsce`). If you have a VSIX file, use **Extensions → … → Install from VSIX…**.
+1. In your editor’s extension marketplace, search for **Ditto Edge Studio** (`DittoLive.ditto-vsce`). If you have a VSIX file, use **Extensions → … → Install from VSIX…**.
 2. Run **Ditto: Register Connection…** and enter your database ID and token. For **Server** mode, also enter your Ditto Server URL.
 3. In the **Ditto** activity bar view, right-click the connection and select **Connect**. Open **Query Editor** to run a query.
 

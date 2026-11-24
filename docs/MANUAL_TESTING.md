@@ -555,7 +555,7 @@ still require manual verification.
 
 **Pre-conditions:** none. The log lives in the extension's global storage —
 run **Ditto: Show Log File in Finder** to reveal it, or inspect
-`$(ls -d ~/Library/Application\ Support/Code/User/globalStorage/getditto.ditto-vsce/logs)` on
+`~/Library/Application Support/Code/User/globalStorage/dittolive.ditto-vsce/logs` on
 macOS (the folder name varies by VS Code flavour — Cursor, Antigravity).
 
 **Steps:**

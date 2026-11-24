@@ -5,8 +5,8 @@ suite('Log Analyzer integration', function () {
   this.timeout(15_000);
 
   suiteSetup(async () => {
-    const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
-    assert.ok(ext, 'ditto.ditto-vsce extension must be installed');
+    const ext = vscode.extensions.getExtension('DittoLive.ditto-vsce');
+    assert.ok(ext, 'DittoLive.ditto-vsce extension must be installed');
     if (!ext.isActive) { await ext.activate(); }
   });
 
@@ -49,7 +49,7 @@ suite('Log Analyzer integration', function () {
     // The Log Analyzer is no longer in the global Logging sidebar (it's
     // per-database now), but the Pattern Editor still is, so the view
     // must remain. The dittoLogging view is contributed by package.json.
-    const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
+    const ext = vscode.extensions.getExtension('DittoLive.ditto-vsce');
     const views = ext!.packageJSON?.contributes?.views?.dittoVsce as { id: string }[] | undefined;
     assert.ok(Array.isArray(views), 'dittoVsce views must be an array');
     assert.ok(
@@ -61,7 +61,7 @@ suite('Log Analyzer integration', function () {
   test('bundled pattern catalog ships in dist/', async () => {
     // Smoke check that Task 21's esbuild step deposited the JSON catalog
     // where PatternStore expects it (context.asAbsolutePath('dist/patterns/...')).
-    const ext = vscode.extensions.getExtension('ditto.ditto-vsce');
+    const ext = vscode.extensions.getExtension('DittoLive.ditto-vsce');
     const root = ext!.extensionPath;
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
