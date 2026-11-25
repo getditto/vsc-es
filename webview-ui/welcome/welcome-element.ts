@@ -21,7 +21,7 @@ const FEATURES: Feature[] = [
   {
     title: 'Multiple connections',
     body:
-      'Register every Ditto app you work with — dev, staging, prod — and switch between them with one click.',
+      'Register every Ditto database you work with — dev, staging, prod — and switch between them with one click.',
   },
   {
     title: 'DQL Query Editor',
@@ -327,7 +327,7 @@ export class WelcomeElement extends LitElement {
           <p class="hero-subtitle">
             ${this.hasExistingDatabases
               ? 'A quick reference for the Ditto extension and how to add another connection.'
-              : 'A quick tour of what this extension does and how to connect your first Ditto app.'}
+              : 'A quick tour of what this extension does and how to connect your first Ditto database.'}
           </p>
         </div>
       </div>
@@ -364,7 +364,7 @@ export class WelcomeElement extends LitElement {
       <section>
         <h2>What this extension does</h2>
         <p>
-          Ditto Edge Studio is a control panel for your Ditto apps — manage
+          Ditto Edge Studio is a control panel for your Ditto databases — manage
           one or many database connections, inspect their live state, and
           move data in and out without ever leaving VS Code.
         </p>
@@ -389,7 +389,7 @@ export class WelcomeElement extends LitElement {
             <div class="step-body">
               <p class="step-title">Sign up for the Ditto Portal</p>
               <p class="step-text">
-                The Portal is where you create Ditto apps and generate the
+                The Portal is where you create Ditto databases and generate the
                 credentials this extension needs (a Database ID, a URL, and
                 a Development Token).
               </p>
@@ -402,9 +402,9 @@ export class WelcomeElement extends LitElement {
           </li>
           <li class="step">
             <div class="step-body">
-              <p class="step-title">Create a new app</p>
+              <p class="step-title">Create a new database</p>
               <p class="step-text">
-                From the Portal, create an app. Its details page lists every
+                From the Portal, create a database. Its details page lists every
                 value you'll paste into the Register dialog: the Database ID,
                 the URL, the Development Token, and the optional HTTP API key.
               </p>
@@ -412,7 +412,7 @@ export class WelcomeElement extends LitElement {
                 class="step-link"
                 href="https://docs.ditto.live/cloud/portal/creating-a-new-app"
                 target="_blank" rel="noopener"
-              >Create a new app in the Portal</a>
+              >Create a new database in the Portal</a>
             </div>
           </li>
           <li class="step">
@@ -468,7 +468,7 @@ export class WelcomeElement extends LitElement {
     return html`
       <div class="learn-more">
         Want more depth? See the
-        <a href="https://docs.ditto.live/home/about-ditto" target="_blank" rel="noopener">Ditto documentation</a>,
+        <a href="https://docs.ditto.live/sdk/latest/tools/vsc-es" target="_blank" rel="noopener">Ditto documentation</a>,
         the
         <a href="https://docs.ditto.live/dql/dql" target="_blank" rel="noopener">DQL reference</a>,
         and the

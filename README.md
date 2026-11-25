@@ -24,4 +24,4 @@ Inspect, query, and troubleshoot Ditto databases from your editor.
 2. Run **Ditto: Register Connection…** and enter your database ID and token. For **Server** mode, also enter your Ditto Server URL.
 3. In the **Ditto** activity bar view, right-click the connection and select **Connect**. Open **Query Editor** to run a query.
 
-[Ditto documentation](https://docs.ditto.live/)
+[Ditto documentation](https://docs.ditto.live/sdk/latest/tools/vsc-es)

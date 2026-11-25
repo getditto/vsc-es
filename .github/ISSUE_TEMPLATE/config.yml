@@ -8,7 +8,7 @@ blank_issues_enabled: false
 # Keeps off-topic questions out of the issue tracker.
 contact_links:
   - name: Ditto Documentation
-    url: https://docs.ditto.live
+    url: https://docs.ditto.live/sdk/latest/tools/vsc-es
     about: |
       Looking for how-to guides, the DQL reference, or SDK docs?
       The Ditto documentation site covers most usage questions.
