@@ -23,3 +23,18 @@ eslint.config.mjs
 .gitignore
 .vscodeignore
 screens/**
+.githooks/**
+.gitleaks.toml
+knip.config.js
+.npmrc
+**/.DS_Store
+plugins/**
+# esbuild bundles every runtime dependency except the native Ditto SDK, so
+# ship only the SDK's Node entry (node/ + package.json) and its license; the
+# rest would be unused duplicates of dist/extension.js or the SDK's React
+# Native, web/WASM, and Swift sources. vsce applies `!` patterns after all
+# exclusions regardless of order, so keep these negations narrow.
+node_modules/**
+!node_modules/@dittolive/ditto/package.json
+!node_modules/@dittolive/ditto/LICENSE.md
+!node_modules/@dittolive/ditto/node/**
